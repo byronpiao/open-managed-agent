@@ -1,0 +1,26 @@
+{
+  "name": "@cloudbase/managed-agent",
+  "version": "0.1.0",
+  "description": "CloudBase Managed Agent SDK - mirrors Claude's @anthropic-ai/sdk beta.agents interface",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": ["cloudbase", "ai", "agent", "managed-agent"],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
