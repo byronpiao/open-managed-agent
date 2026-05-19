@@ -19,12 +19,10 @@
  */
 
 import type { Express, Request, Response } from "express";
+import expressLib from "express";
 import cloudbase from "@cloudbase/node-sdk";
 import { HunyuanAgent } from "./hunyuan-agent.js";
-import type { RunAgentInput } from "@ag-ui/client";
 import { EventType } from "@ag-ui/client";
-import { firstValueFrom } from "rxjs";
-import { toArray } from "rxjs/operators";
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 
@@ -211,8 +209,8 @@ async function handleSessionPrompt(
   const abortController = new AbortController();
   abortControllers.set(sessionId, abortController);
 
-  // Build AG-UI RunAgentInput from session messages
-  const aguiMessages: RunAgentInput["messages"] = messages.map((m) => ({
+  // Build agent input from session messages
+  const aguiMessages = messages.map((m) => ({
     id: m.id,
     role: m.role as "user" | "assistant",
     content: m.content,
@@ -227,8 +225,9 @@ async function handleSessionPrompt(
       runId,
       messages: aguiMessages,
       tools: [],
+      context: [],
       state: {},
-    });
+    } as any);
 
     await new Promise<void>((resolve, reject) => {
       stream$.subscribe({
@@ -269,7 +268,7 @@ async function handleSessionPrompt(
               break;
             }
 
-            case EventType.TOOL_CALL_RESULT: {
+            case EventType.CUSTOM: {
               const e = event as { toolCallId?: string; content?: string };
               res.write(
                 ndjsonNotification("session/update", {
@@ -354,8 +353,13 @@ interface AgentConfig {
 export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   const agent = new HunyuanAgent(agentConfig);
 
-  // ── POST /acp — main JSON-RPC dispatcher ─────────────────────────────────
-  app.post("/acp", async (req: Request, res: Response) => {
+  // Ensure JSON body parsing is available for ACP routes
+  // Support both direct /acp and gateway-proxied /v1/aibot/bots/:botId/acp paths
+  app.use("/acp", expressLib.json());
+  app.use("/v1/aibot/bots", expressLib.json());
+
+  // ── ACP JSON-RPC dispatcher handler ────────────────────────────────────────
+  const acpHandler = async (req: Request, res: Response) => {
     const body = req.body as {
       jsonrpc: string;
       id?: unknown;
@@ -418,20 +422,26 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
         return res.status(500).json(rpcError(id, -32000, String(err)));
       }
     }
-  });
+  };
 
-  // ── GET /acp/sessions — convenience REST endpoint ────────────────────────
-  app.get("/acp/sessions", async (_req: Request, res: Response) => {
+  // ── Mount ACP handler on both paths ────────────────────────────────────────
+  // Direct path: POST /acp
+  app.post("/acp", acpHandler);
+  // Gateway-proxied path: POST /v1/aibot/bots/:botId/acp
+  app.post("/v1/aibot/bots/:botId/acp", acpHandler);
+
+  // ── REST convenience endpoints ─────────────────────────────────────────────
+
+  const sessionsListHandler = async (_req: Request, res: Response) => {
     try {
       const result = await handleSessionList();
       return res.json(result);
     } catch (err) {
       return res.status(500).json({ error: String(err) });
     }
-  });
+  };
 
-  // ── GET /acp/sessions/:id — get single session with full history ─────────
-  app.get("/acp/sessions/:sessionId", async (req: Request, res: Response) => {
+  const sessionGetHandler = async (req: Request, res: Response) => {
     try {
       const { sessionId } = req.params;
       const result = await db.collection(SESSIONS_COL).where({ sessionId }).get();
@@ -440,10 +450,9 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
     } catch (err) {
       return res.status(500).json({ error: String(err) });
     }
-  });
+  };
 
-  // ── DELETE /acp/sessions/:id ─────────────────────────────────────────────
-  app.delete("/acp/sessions/:sessionId", async (req: Request, res: Response) => {
+  const sessionDeleteHandler = async (req: Request, res: Response) => {
     try {
       const { sessionId } = req.params;
       await db.collection(SESSIONS_COL).where({ sessionId }).remove();
@@ -451,7 +460,17 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
     } catch (err) {
       return res.status(500).json({ error: String(err) });
     }
-  });
+  };
 
-  console.log("[ACP] Endpoints mounted: POST /acp, GET /acp/sessions");
+  // Direct paths
+  app.get("/acp/sessions", sessionsListHandler);
+  app.get("/acp/sessions/:sessionId", sessionGetHandler);
+  app.delete("/acp/sessions/:sessionId", sessionDeleteHandler);
+
+  // Gateway-proxied paths
+  app.get("/v1/aibot/bots/:botId/acp/sessions", sessionsListHandler);
+  app.get("/v1/aibot/bots/:botId/acp/sessions/:sessionId", sessionGetHandler);
+  app.delete("/v1/aibot/bots/:botId/acp/sessions/:sessionId", sessionDeleteHandler);
+
+  console.log("[ACP] Endpoints mounted: POST /acp, POST /v1/aibot/bots/:botId/acp, GET /acp/sessions");
 }

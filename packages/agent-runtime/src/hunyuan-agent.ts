@@ -1,4 +1,4 @@
-import { AbstractAgent, RunAgentInput, BaseEvent, EventType } from "@ag-ui/client";
+import { RunAgentInput, BaseEvent, EventType } from "@ag-ui/client";
 import { Observable, Subscriber } from "rxjs";
 import cloudbase from "@cloudbase/node-sdk";
 import { exec } from "child_process";
@@ -104,12 +104,11 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
 
 // ── HunyuanAgent ─────────────────────────────────────────────────────────────
 
-export class HunyuanAgent extends AbstractAgent {
+export class HunyuanAgent {
   private model: string;
   private system: string;
 
   constructor(opts: HunyuanAgentOptions) {
-    super();
     this.model  = opts.model;
     this.system = opts.system;
   }
@@ -154,10 +153,16 @@ export class HunyuanAgent extends AbstractAgent {
       iterations++;
 
       // Call CloudBase AI (streamText for streaming)
-      const stream = await cbAI.streamText({
+      // createModel takes the provider name: "hunyuan-exp" for Hunyuan models, "deepseek" for DeepSeek
+      const provider = this.model.startsWith("deepseek") ? "deepseek" : "hunyuan-exp";
+      const aiModel = cbAI.createModel(provider);
+      const { dataStream: stream } = await aiModel.streamText({
         model: this.model,
-        messages: cbMessages,
-        tools: allTools,
+        messages: cbMessages as any,
+        tools: allTools.map(t => ({
+          type: "function",
+          function: { name: t.name, description: t.description, parameters: t.parameters },
+        })) as any,
       });
 
       const messageId = `msg_${runId}_${iterations}`;
@@ -166,8 +171,15 @@ export class HunyuanAgent extends AbstractAgent {
 
       // Process stream chunks
       for await (const chunk of stream) {
+        const choice = chunk.choices?.[0];
+        if (!choice?.delta) continue;
+
+        const delta = choice.delta as any;
+        const textContent = delta.content;
+        const toolCallsList = delta.tool_calls;
+
         // Text delta
-        if (chunk.textDelta) {
+        if (textContent) {
           if (!textStarted) {
             subscriber.next({
               type: EventType.TEXT_MESSAGE_START,
@@ -176,31 +188,32 @@ export class HunyuanAgent extends AbstractAgent {
             } as BaseEvent);
             textStarted = true;
           }
-          currentText += chunk.textDelta;
+          currentText += textContent;
           subscriber.next({
             type: EventType.TEXT_MESSAGE_CONTENT,
             messageId,
-            delta: chunk.textDelta,
+            delta: textContent,
           } as BaseEvent);
         }
 
         // Tool call
-        if (chunk.toolCalls?.length) {
+        if (toolCallsList?.length) {
           if (textStarted) {
             subscriber.next({ type: EventType.TEXT_MESSAGE_END, messageId } as BaseEvent);
             textStarted = false;
             cbMessages.push({ role: "assistant", content: currentText });
           }
 
-          for (const toolCall of chunk.toolCalls) {
+          for (const toolCall of toolCallsList) {
             const toolCallId = toolCall.id ?? `tc_${Date.now()}`;
-            const argsStr = JSON.stringify(toolCall.input ?? {});
+            const toolName = toolCall.function?.name ?? "";
+            const argsStr = toolCall.function?.arguments ?? "{}";
 
             // Emit tool call events
             subscriber.next({
               type: EventType.TOOL_CALL_START,
               toolCallId,
-              toolCallName: toolCall.name,
+              toolCallName: toolName,
               parentMessageId: messageId,
             } as BaseEvent);
             subscriber.next({
@@ -214,7 +227,7 @@ export class HunyuanAgent extends AbstractAgent {
             } as BaseEvent);
 
             // Check if this is a client tool (not built-in)
-            const isClientTool = clientTools?.some((t) => t.name === toolCall.name);
+            const isClientTool = clientTools?.some((t) => t.name === toolName);
 
             if (isClientTool) {
               // Pause: emit RUN_FINISHED so client can execute and resume
@@ -224,10 +237,12 @@ export class HunyuanAgent extends AbstractAgent {
             }
 
             // Execute built-in tool
-            const result = await executeTool(toolCall.name, toolCall.input ?? {});
+            let parsedArgs: Record<string, unknown> = {};
+            try { parsedArgs = JSON.parse(argsStr); } catch {}
+            const result = await executeTool(toolName, parsedArgs);
 
             subscriber.next({
-              type: EventType.TOOL_CALL_RESULT,
+              type: EventType.CUSTOM,
               toolCallId,
               messageId: `tr_${toolCallId}`,
               content: result,
