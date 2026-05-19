@@ -148,8 +148,31 @@ export function getMcpToolsets(config: AgentConfig): McpToolset[] {
 }
 
 // ── Loader ────────────────────────────────────────────────────────────────────
+//
+// Loading priority:
+//   1. AGENT_CONFIG env var (full JSON) — highest priority, set by `cbagent agent:update`
+//   2. agent.yaml / agent.yml file — bundled with code at deploy time
+//   3. Individual env vars (AGENT_MODEL, AGENT_SYSTEM, AGENT_NAME) — backward compat fallback
+//
+// Within each level, individual env vars (AGENT_MODEL etc.) can still override scalar fields.
 
 export async function loadAgentConfig(): Promise<AgentConfig> {
+  // Priority 1: AGENT_CONFIG env var (full JSON config from `cbagent agent:update`)
+  if (process.env.AGENT_CONFIG) {
+    try {
+      const config = JSON.parse(process.env.AGENT_CONFIG) as AgentConfig;
+      console.log(`[Config] Loaded from AGENT_CONFIG env var`);
+      // Individual env vars still override scalar fields
+      if (process.env.AGENT_MODEL) config.model = process.env.AGENT_MODEL;
+      if (process.env.AGENT_SYSTEM) config.system = decodeURIComponent(process.env.AGENT_SYSTEM);
+      if (process.env.AGENT_NAME) config.name = process.env.AGENT_NAME;
+      return config;
+    } catch (err) {
+      console.warn(`[Config] Failed to parse AGENT_CONFIG env var:`, err);
+    }
+  }
+
+  // Priority 2: YAML file
   const searchPaths = [
     path.resolve("agent.yaml"),
     path.resolve("agent.yml"),
@@ -174,7 +197,7 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
     }
   }
 
-  // Fallback: pure env vars (backward compatible)
+  // Priority 3: pure env vars (backward compatible)
   console.log("[Config] No agent.yaml found, using environment variables");
   return {
     name: process.env.AGENT_NAME ?? "cloudbase-managed-agent",

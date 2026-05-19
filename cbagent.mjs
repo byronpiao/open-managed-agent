@@ -26,9 +26,12 @@
 
 import { parseArgs } from "util";
 import { createInterface } from "readline";
+import { execSync } from "child_process";
+import { readFileSync } from "fs";
 
 const BASE_URL = process.env.CLOUDBASE_SERVER_URL ?? "http://localhost:3000";
 const ENV_ID   = process.env.CLOUDBASE_ENV_ID ?? "";
+const AGENT_ID = process.env.CLOUDBASE_AGENT_ID ?? "";
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
 
@@ -189,6 +192,107 @@ const COMMANDS = {
     if (!args.id) throw new Error("--id is required");
     await del(`/agents/${args.id}`);
     console.log(green(`✅ Agent ${args.id} deleted.`));
+  },
+
+  // ─── Agent Update (config via env var) ───────────────────────────────────
+
+  "agent:update": async (args) => {
+    const agentId = args.id ?? AGENT_ID;
+    if (!agentId) throw new Error("--id is required (or set CLOUDBASE_AGENT_ID)");
+    const envId = args.env ?? ENV_ID;
+    if (!envId) throw new Error("--env is required (or set CLOUDBASE_ENV_ID)");
+
+    // Load current config: try fetching from the running agent via ACP initialize
+    let currentConfig = {};
+    const agentUrl = args.url ?? `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}/acp`;
+    const apiKey = args["api-key"] ?? process.env.CLOUDBASE_API_KEY ?? "";
+
+    try {
+      process.stdout.write(dim("Fetching current config... "));
+      const initRes = await fetch(agentUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "cbagent", version: "0.1.0" } } }),
+      });
+      const initData = await initRes.json();
+      if (initData.result?.agentConfig) {
+        currentConfig = initData.result.agentConfig;
+        // Also grab name/description from agentInfo
+        if (initData.result.agentInfo?.name) currentConfig.name = initData.result.agentInfo.name;
+        if (initData.result.agentInfo?.title) currentConfig.description = initData.result.agentInfo.title;
+      }
+      console.log(green("OK"));
+    } catch (err) {
+      console.log(yellow("(could not fetch, starting fresh)"));
+    }
+
+    // Merge updates
+    const updates = {};
+    if (args.name)    updates.name = args.name;
+    if (args.model)   updates.model = args.model;
+    if (args.system)  updates.system = args.system;
+    if (args.description) updates.description = args.description;
+    if (args.tools)   updates.tools = JSON.parse(args.tools);
+    if (args["mcp-servers"]) updates.mcp_servers = JSON.parse(args["mcp-servers"]);
+    if (args.skills)  updates.skills = JSON.parse(args.skills);
+
+    // Load from YAML file if --file is provided
+    if (args.file) {
+      try {
+        const content = readFileSync(args.file, "utf-8");
+        // Simple YAML-like parse: if it starts with { it's JSON, otherwise try to load as YAML
+        let fileConfig;
+        if (content.trim().startsWith("{")) {
+          fileConfig = JSON.parse(content);
+        } else {
+          // Basic YAML import (requires yaml package in the environment)
+          const { parse } = await import("yaml");
+          fileConfig = parse(content);
+        }
+        Object.assign(updates, fileConfig);
+      } catch (err) {
+        throw new Error(`Failed to load config file ${args.file}: ${err.message}`);
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      console.log(yellow("No updates specified. Use --system, --model, --tools, --file, etc."));
+      return;
+    }
+
+    // Merge: currentConfig + updates
+    const merged = { ...currentConfig, ...updates };
+    // Ensure required fields
+    if (!merged.name) merged.name = "cloudbase-managed-agent";
+    if (!merged.model) merged.model = "hunyuan-t1-latest";
+    if (!merged.system) merged.system = "You are a helpful assistant.";
+
+    const configJson = JSON.stringify(merged);
+
+    console.log(dim(`\nUpdated config (${configJson.length} bytes):`));
+    console.log(dim(`  name: ${merged.name}`));
+    console.log(dim(`  model: ${merged.model}`));
+    console.log(dim(`  system: ${merged.system?.slice(0, 60)}${merged.system?.length > 60 ? "..." : ""}`));
+    console.log(dim(`  tools: ${merged.tools?.length ?? 0} items`));
+    console.log(dim(`  mcp_servers: ${merged.mcp_servers?.length ?? 0} items`));
+    console.log(dim(`  skills: ${merged.skills?.length ?? 0} items`));
+    console.log();
+
+    // Apply via tcb agent update --env
+    process.stdout.write("Applying via tcb agent update... ");
+    try {
+      const envVars = `AGENT_CONFIG=${configJson}`;
+      const cmd = `tcb agent update ${agentId} --env "${envVars.replace(/"/g, '\\"')}" -e ${envId} --json`;
+      const result = execSync(cmd, { encoding: "utf-8", timeout: 120000 });
+      const data = JSON.parse(result.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
+      console.log(green("OK"));
+      if (data.data?.elapsedTime) {
+        console.log(dim(`  Elapsed: ${Math.round(data.data.elapsedTime / 1000)}s`));
+      }
+      console.log(green(`\n✅ Agent ${agentId} updated successfully.`));
+    } catch (err) {
+      throw new Error(`tcb agent update failed: ${err.message}`);
+    }
   },
 
   // ─── Environment ──────────────────────────────────────────────────────────
@@ -370,12 +474,28 @@ ${bold("USAGE")}
 ${bold("ENVIRONMENT")}
   CLOUDBASE_SERVER_URL   Server URL (default: http://localhost:3000)
   CLOUDBASE_ENV_ID       CloudBase environment ID
+  CLOUDBASE_AGENT_ID     Default agent ID for agent:update
+  CLOUDBASE_API_KEY      API key for agent ACP access
 
 ${bold("AGENT COMMANDS")}
   agent:create  --name <name> [--model <model>] [--system <prompt>]
   agent:list
   agent:get     --id <agent-id>
   agent:delete  --id <agent-id>
+  agent:update  --id <agent-id> [options]
+                Update agent configuration (tools, MCP, skills, system prompt)
+                without redeploying code. Uses AGENT_CONFIG env var.
+
+    Options:
+      --system <prompt>       Update system prompt
+      --model <model>         Update model
+      --name <name>           Update agent name
+      --tools <json>          Replace tools array (JSON)
+      --mcp-servers <json>    Replace mcp_servers array (JSON)
+      --skills <json>         Replace skills array (JSON)
+      --file <path>           Load full config from YAML/JSON file
+      --env <envId>           CloudBase environment ID
+      --api-key <key>         API key for fetching current config
 
 ${bold("ENVIRONMENT COMMANDS")}
   env:create    --name <name>
