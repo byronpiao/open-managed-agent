@@ -27,9 +27,10 @@ const agentConfig = { model, system };
 
 // AG-UI server (provides /send-message + /agui + /healthz)
 const app = createExpressServer({
-  createAgent: (ctx) => {
-    ctx.logger?.info({ model }, "HunyuanAgent starting");
-    return { agent: new HunyuanAgent(agentConfig) };
+  createAgent: (ctx: any) => {
+    ctx?.logger?.info({ model }, "HunyuanAgent starting");
+    const agent = new HunyuanAgent(agentConfig);
+    return { agent: agent as any };
   },
   cors: true,
 });
