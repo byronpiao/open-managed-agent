@@ -5,13 +5,10 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
+import type { AgentConfig, ResolvedToolPolicy } from "./config.js";
+import { resolveBuiltinTools, getCustomTools } from "./config.js";
 
 const execAsync = promisify(exec);
-
-interface HunyuanAgentOptions {
-  model: string;
-  system: string;
-}
 
 // ── CloudBase AI client ───────────────────────────────────────────────────────
 
@@ -107,10 +104,14 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
 export class HunyuanAgent {
   private model: string;
   private system: string;
+  private builtinToolPolicies: Map<string, ResolvedToolPolicy>;
+  private config: AgentConfig;
 
-  constructor(opts: HunyuanAgentOptions) {
-    this.model  = opts.model;
-    this.system = opts.system;
+  constructor(config: AgentConfig) {
+    this.model = config.model;
+    this.system = config.system;
+    this.config = config;
+    this.builtinToolPolicies = resolveBuiltinTools(config);
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -130,8 +131,11 @@ export class HunyuanAgent {
 
     subscriber.next({ type: EventType.RUN_STARTED, threadId, runId } as BaseEvent);
 
-    // Merge built-in tools with any client-provided tools
-    const allTools = [...BUILTIN_TOOLS, ...(clientTools ?? [])];
+    // Merge built-in tools (filtered by config) with any client-provided tools
+    const enabledBuiltins = BUILTIN_TOOLS.filter(
+      (t) => this.builtinToolPolicies.get(t.name)?.enabled !== false
+    );
+    const allTools = [...enabledBuiltins, ...(clientTools ?? [])];
 
     // Convert AG-UI messages to CloudBase AI format
     const cbMessages: Array<{ role: string; content: string }> = [];

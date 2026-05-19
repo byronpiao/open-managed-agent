@@ -1,0 +1,63 @@
+# CloudBase Managed Agent Configuration
+# Schema mirrors Anthropic Managed Agents API:
+# https://platform.claude.com/docs/en/managed-agents/agent-setup
+#
+# Environment variables AGENT_MODEL, AGENT_SYSTEM, AGENT_NAME
+# can override the corresponding fields below.
+
+name: CloudBase Coding Agent
+model: hunyuan-t1-latest
+system: You are a helpful coding assistant. You can read, write, and execute code.
+description: A coding agent with file system and shell access.
+
+# Tools configuration
+# Supported types: agent_toolset, custom, mcp_toolset
+tools:
+  # Built-in agent toolset (bash, read_file, write_file, list_files)
+  - type: agent_toolset
+    default_config:
+      enabled: true
+      permission_policy:
+        type: always_allow    # always_allow | always_ask
+    configs:
+      - name: bash
+        enabled: true
+        # permission_policy:
+        #   type: always_ask  # Uncomment to require confirmation for shell commands
+
+  # Custom tools (executed by client, not server)
+  # - type: custom
+  #   name: query_database
+  #   description: Execute a read-only SQL query against the application database.
+  #   input_schema:
+  #     type: object
+  #     properties:
+  #       sql:
+  #         type: string
+  #         description: The SQL SELECT query to execute
+  #     required: [sql]
+
+  # MCP toolset (tools from remote MCP server)
+  # - type: mcp_toolset
+  #   mcp_server_name: github
+  #   default_config:
+  #     permission_policy:
+  #       type: always_allow
+
+# MCP Servers
+# Each mcp_toolset above must reference a server declared here.
+mcp_servers: []
+  # - type: url
+  #   name: github
+  #   url: https://api.githubcopilot.com/mcp/
+
+# Skills (domain-specific context via markdown files)
+skills: []
+  # - name: code-review
+  #   description: Code review best practices
+  #   source: ./skills/code-review.md
+
+# Arbitrary metadata for tracking
+metadata:
+  runtime: cloudbase-managed-agent
+  version: "0.1.0"

@@ -23,6 +23,7 @@ import expressLib from "express";
 import cloudbase from "@cloudbase/node-sdk";
 import { HunyuanAgent } from "./hunyuan-agent.js";
 import { EventType } from "@ag-ui/client";
+import type { AgentConfig } from "./config.js";
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ function ndjsonNotification(method: string, params: unknown): string {
 
 // ── RPC Handlers ─────────────────────────────────────────────────────────────
 
-async function handleInitialize(params: Record<string, unknown>) {
+async function handleInitialize(params: Record<string, unknown>, config: AgentConfig) {
   return {
     protocolVersion: 1,
     agentCapabilities: {
@@ -83,9 +84,15 @@ async function handleInitialize(params: Record<string, unknown>) {
       promptCapabilities: { image: false, audio: false, embeddedContext: true },
     },
     agentInfo: {
-      name: process.env.AGENT_NAME ?? "cloudbase-managed-agent",
-      title: process.env.AGENT_TITLE ?? "CloudBase Managed Agent",
+      name: config.name ?? process.env.AGENT_NAME ?? "cloudbase-managed-agent",
+      title: config.description ?? process.env.AGENT_TITLE ?? "CloudBase Managed Agent",
       version: "0.1.0",
+    },
+    agentConfig: {
+      model: config.model,
+      tools: config.tools ?? [],
+      mcp_servers: config.mcp_servers ?? [],
+      skills: config.skills ?? [],
     },
     authMethods: [],
   };
@@ -345,11 +352,6 @@ function handleSessionCancel(params: Record<string, unknown>) {
 
 // ── Mount function ────────────────────────────────────────────────────────────
 
-interface AgentConfig {
-  model: string;
-  system: string;
-}
-
 export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   const agent = new HunyuanAgent(agentConfig);
 
@@ -376,7 +378,7 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
     try {
       switch (method) {
         case "initialize": {
-          const result = await handleInitialize(params);
+          const result = await handleInitialize(params, agentConfig);
           return res.json(rpcResult(id, result));
         }
 
