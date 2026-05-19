@@ -60,9 +60,10 @@ export interface Session {
 }
 
 export interface CreateSessionParams {
-  agent: string;
+  agent?: string;
   environment_id?: string;
   title?: string;
+  cwd?: string;          // working directory, passed to ACP session/new
 }
 
 // ============================================================

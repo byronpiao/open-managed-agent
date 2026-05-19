@@ -16,7 +16,6 @@ export class CloudbaseAgents {
   readonly agents: AgentsResource;
   readonly environments: EnvironmentsResource;
   readonly sessions: SessionsResource;
-  readonly acp: AcpClient;
 
   constructor(config: CloudbaseAgentsConfig) {
     if (!config.baseURL) {
@@ -25,7 +24,7 @@ export class CloudbaseAgents {
     this.agents = new AgentsResource(config);
     this.environments = new EnvironmentsResource(config);
     this.sessions = new SessionsResource(config);
-    this.acp = new AcpClient(config);
+    // Note: ACP is used internally by SessionsResource
   }
 }
 

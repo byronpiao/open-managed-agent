@@ -29,64 +29,50 @@ cloudbase-managed-agent/
 
 ## Quick Start
 
-### 1. Start the Server
+### 1. 部署 Agent
 
 ```bash
-cd packages/server
-npm install
-npm run build
+cd packages/agent-runtime
+npm install && npm run build
 
-# Set environment variables
-export CLOUDBASE_ENV_ID=your-env-id
-export TENCENTCLOUD_SECRETID=your-secret-id
-export TENCENTCLOUD_SECRETKEY=your-secret-key
-
-npm start
-# Server running on http://localhost:3000
+# 每个 agent 是一个独立云函数，7200s 超时
+tcb agent create \
+  --name my-agent \
+  --code . \
+  --env "AGENT_MODEL=hunyuan-2.0-instruct-20251111,AGENT_SYSTEM=You are a helpful assistant" \
+  -e $CLOUDBASE_ENV_ID
 ```
 
-### 2. Use the SDK
+### 2. 客户端直连 Agent（无需 proxy server）
 
 ```typescript
 import CloudbaseAgents from "@cloudbase/managed-agent";
 
+// 直接指向 tcb agent 端点
 const client = new CloudbaseAgents({
-  baseURL: "http://localhost:3000",
-  envId: process.env.CLOUDBASE_ENV_ID,
+  baseURL: `https://${ENV_ID}.service.tcloudbase.com/v1/aibot/bots/my-agent`,
 });
 
-// Create an agent
-const agent = await client.agents.create({
-  name: "Coding Assistant",
-  model: "hunyuan-2.0-instruct-20251111",
-  system: "You are a helpful coding assistant.",
-  tools: [{ type: "agent_toolset_20260401" }],
-});
+// 创建 session
+const session = await client.sessions.create({ title: "My task" });
 
-// Create a session
-const session = await client.sessions.create({
-  agent: agent.id,
-  title: "my task",
-});
-
-// Stream events
-const stream = client.sessions.events.stream(session.id);
-
-// Send a message
-await client.sessions.events.send(session.id, {
-  events: [{
-    type: "user.message",
-    content: [{ type: "text", text: "Write a hello world in Python" }],
-  }],
-});
-
-// Consume events
-for await (const event of stream) {
-  if (event.type === "agent.message") {
-    console.log(event.content[0]?.text);
-  }
-  if (event.type === "session.status_idle") break;
+// 发消息，流式获取结果（内部走 ACP）
+for await (const event of client.sessions.prompt(session.id, "Hello!")) {
+  if (event.type === "chunk") process.stdout.write(event.text);
+  if (event.type === "done")  console.log("\nDone:", event.stopReason);
 }
+
+// 多轮对话（上下文自动保留）
+for await (const event of client.sessions.prompt(session.id, "Now add tests")) {
+  if (event.type === "chunk") process.stdout.write(event.text);
+}
+
+// 查历史
+const history = await client.sessions.history(session.id);
+console.log(history.messages);
+
+// 清理
+await client.sessions.delete(session.id);
 ```
 
 ### 3. Run the Fibonacci Example
