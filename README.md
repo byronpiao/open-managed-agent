@@ -1,67 +1,300 @@
-# CloudBase Managed Agent SDK
+# CloudBase Managed Agent
 
-A TypeScript SDK inspired by Anthropic's Managed Agents concept, backed by CloudBase instead of Anthropic.
+一个兼容 Anthropic Managed Agents API 的 TypeScript SDK + Runtime，基于腾讯云 CloudBase 构建。
 
-## Overview
+## 它是什么
 
-This project provides a **drop-in compatible** API surface with Claude's Managed Agents:
-
-```typescript
-// Claude:
-const agent = await anthropic.beta.agents.create({ ... })
-
-// CloudBase (cleaner, no .beta):
-const agent = await client.agents.create({ ... })
-```
-
-## Project Structure
-
-```
-cloudbase-managed-agent/
-├── packages/
-│   ├── sdk/              # TypeScript 客户端 SDK (@cloudbase/managed-agent)
-│   └── agent-runtime/    # Agent 云函数代码 (部署到 tcb agent)
-├── examples/
-│   ├── fibonacci/        # 基础示例
-│   └── acp-client/       # ACP 协议完整示例
-├── cbagent.mjs           # CLI 工具
-├── docs/usage-guide.md   # 使用文档
-└── README.md
-```
-
-## Quick Start
-
-### 1. 部署 Agent
-
-```bash
-cd packages/agent-runtime
-npm install && npm run build
-
-# 每个 agent 是一个独立云函数，7200s 超时
-tcb agent create \
-  --name my-agent \
-  --code . \
-  --env "AGENT_MODEL=hunyuan-2.0-instruct-20251111,AGENT_SYSTEM=You are a helpful assistant" \
-  -e $CLOUDBASE_ENV_ID
-```
-
-### 2. 客户端直连 Agent（无需 proxy server）
+CloudBase Managed Agent 让你用与 [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents) 兼容的 API 构建 AI Agent，底层使用 CloudBase 云函数 + 混元大模型。
 
 ```typescript
 import CloudbaseAgents from "@cloudbase/managed-agent";
 
-// 直接指向 tcb agent 端点
 const client = new CloudbaseAgents({
-  baseURL: `https://${ENV_ID}.service.tcloudbase.com/v1/aibot/bots/my-agent`,
+  baseURL: `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}`,
+  apiKey: "<your-api-key>",
 });
 
-// 创建 session
-const session = await client.sessions.create({ title: "My task" });
+const session = await client.sessions.create({ title: "Code review" });
 
-// 发消息，流式获取结果（内部走 ACP）
+for await (const event of client.sessions.prompt(session.id, "Review this PR")) {
+  if (event.type === "chunk") process.stdout.write(event.text);
+}
+```
+
+---
+
+## 快速开始
+
+### 前置条件
+
+- Node.js ≥ 20
+- 腾讯云 CloudBase 环境（[创建环境](https://tcb.cloud.tencent.com)）
+- `tcb` CLI 已登录：`tcb login --apiKeyId <AK> --apiKey <SK>`
+
+### 1. 构建
+
+```bash
+git clone <this-repo>
+cd cloudbase-managed-agent
+npm install
+npm run build
+```
+
+### 2. 部署 Agent
+
+```bash
+# 构建部署包
+cd packages/agent-runtime
+npm install --production
+
+# 部署为 SCF Web 函数
+tcb agent create \
+  --name my-agent \
+  --runtime Nodejs20.19 \
+  --code . \
+  --install-dep \
+  --env "CLOUDBASE_ENV_ID=<your-env-id>,AGENT_MODEL=hunyuan-t1-latest" \
+  -e <your-env-id>
+```
+
+### 3. 使用 SDK 对话
+
+```typescript
+import CloudbaseAgents from "@cloudbase/managed-agent";
+
+const client = new CloudbaseAgents({
+  baseURL: `https://<env-id>.api.tcloudbasegateway.com/v1/aibot/bots/<agent-id>`,
+  apiKey: "<your-api-key>",
+});
+
+// 创建会话 → 发送消息 → 流式获取结果
+const session = await client.sessions.create({ title: "Hello" });
 for await (const event of client.sessions.prompt(session.id, "Hello!")) {
   if (event.type === "chunk") process.stdout.write(event.text);
-  if (event.type === "done")  console.log("\nDone:", event.stopReason);
+  if (event.type === "done") console.log(`\n[${event.stopReason}]`);
+}
+```
+
+---
+
+## Agent 配置
+
+Agent 通过 `agent.yaml` 文件配置，结构兼容 [Anthropic Agent Setup](https://platform.claude.com/docs/en/managed-agents/agent-setup)。
+
+### 完整配置示例
+
+```yaml
+# packages/agent-runtime/agent.yaml
+name: My Coding Agent
+model: hunyuan-t1-latest
+system: |
+  You are a helpful coding assistant.
+  You can read, write, and execute code.
+description: A coding agent with file system and shell access.
+
+# 工具配置
+tools:
+  # 内置工具集（bash, read_file, write_file, list_files）
+  - type: agent_toolset
+    default_config:
+      enabled: true
+      permission_policy:
+        type: always_allow          # always_allow | always_ask
+    configs:
+      - name: bash
+        permission_policy:
+          type: always_ask          # bash 需要用户确认
+      - name: web_fetch
+        enabled: false              # 禁用 web_fetch
+
+  # MCP 工具集（远程 MCP 服务器提供的工具）
+  - type: mcp_toolset
+    mcp_server_name: github
+    default_config:
+      permission_policy:
+        type: always_allow
+    configs:
+      - name: delete_repository
+        enabled: false              # 禁止危险操作
+
+  # 自定义工具（客户端执行，服务端只声明）
+  - type: custom
+    name: query_database
+    description: Execute a read-only SQL query
+    input_schema:
+      type: object
+      properties:
+        sql:
+          type: string
+          description: The SQL SELECT query to execute
+      required: [sql]
+
+# MCP 服务器声明
+mcp_servers:
+  - type: url
+    name: github
+    url: https://api.githubcopilot.com/mcp/
+
+# Skills（领域知识）
+skills:
+  - name: code-review
+    description: Code review best practices
+    source: ./skills/code-review.md
+
+# 自定义元数据
+metadata:
+  team: backend
+  version: "1.0"
+```
+
+### 配置字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | string | Agent 名称 |
+| `model` | string | 模型名。可选：`hunyuan-t1-latest`、`deepseek-v3.2` 等 |
+| `system` | string | System prompt，定义 Agent 行为 |
+| `description` | string | Agent 描述 |
+| `tools` | array | 工具配置（见下方详细说明） |
+| `mcp_servers` | array | MCP 服务器声明 |
+| `skills` | array | 领域知识文件 |
+| `metadata` | object | 自定义键值对 |
+
+### 工具类型
+
+| 类型 | 说明 | 执行方 |
+|------|------|--------|
+| `agent_toolset` | 内置工具（bash, read_file, write_file, list_files） | 服务端 |
+| `mcp_toolset` | 远程 MCP 服务器提供的工具 | 服务端代理 |
+| `custom` | 自定义工具，Agent 请求调用后由客户端执行 | 客户端 |
+
+### Permission Policy
+
+| 策略 | 行为 |
+|------|------|
+| `always_allow` | 工具自动执行，不需要确认 |
+| `always_ask` | 暂停等待客户端发送 `user.tool_confirmation` 事件 |
+
+---
+
+## 更新 Agent 配置
+
+**不需要重新部署代码。** 使用 `cbagent agent:update` 命令，通过环境变量注入配置，约 8 秒生效：
+
+```bash
+# 更新 system prompt
+cbagent agent:update --id <agent-id> \
+  --system "You are a strict code reviewer."
+
+# 从 YAML 文件加载完整配置
+cbagent agent:update --id <agent-id> \
+  --file ./new-config.yaml
+
+# 更新 model
+cbagent agent:update --id <agent-id> \
+  --model deepseek-v3.2
+
+# 添加 MCP 服务器
+cbagent agent:update --id <agent-id> \
+  --mcp-servers '[{"type":"url","name":"linear","url":"https://mcp.linear.app/sse"}]'
+
+# 修改工具权限（bash 需要确认）
+cbagent agent:update --id <agent-id> \
+  --tools '[{"type":"agent_toolset","configs":[{"name":"bash","permission_policy":{"type":"always_ask"}}]}]'
+```
+
+### 工作原理
+
+```
+cbagent agent:update --system "new prompt"
+    │
+    ├─ 1. GET 当前配置（via ACP initialize）
+    ├─ 2. Merge 用户指定的字段
+    ├─ 3. JSON 序列化为 AGENT_CONFIG
+    └─ 4. tcb agent update <id> --env "AGENT_CONFIG=..." (~8s)
+```
+
+### 配置加载优先级
+
+```
+AGENT_CONFIG 环境变量 (JSON)     ← cbagent agent:update 写入
+        ↓ fallback
+agent.yaml 文件                  ← 随代码部署
+        ↓ fallback
+AGENT_MODEL + AGENT_SYSTEM 环境变量  ← 向后兼容
+```
+
+---
+
+## CLI 参考 (`cbagent`)
+
+### 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `CLOUDBASE_ENV_ID` | CloudBase 环境 ID |
+| `CLOUDBASE_AGENT_ID` | 默认 Agent ID（可免 --id） |
+| `CLOUDBASE_API_KEY` | API Key（JWT Token） |
+| `CLOUDBASE_SERVER_URL` | 自定义 Server URL |
+
+### 命令列表
+
+```bash
+# Agent 管理
+cbagent agent:create  --name <name> [--model <model>] [--system <prompt>]
+cbagent agent:list
+cbagent agent:get     --id <agent-id>
+cbagent agent:delete  --id <agent-id>
+cbagent agent:update  --id <agent-id> [--system|--model|--file|--tools|...]
+
+# Session 管理
+cbagent session:create --agent <agent-id>
+cbagent session:list
+cbagent session:get    --id <session-id>
+cbagent session:delete --id <session-id>
+
+# 对话
+cbagent run   --agent <agent-id> --message "Write hello world in Python"
+cbagent chat  --session <session-id> --message "Add unit tests"
+cbagent repl  --agent <agent-id>
+```
+
+---
+
+## SDK 参考
+
+### 安装
+
+```bash
+npm install @cloudbase/managed-agent
+```
+
+### 初始化
+
+```typescript
+import CloudbaseAgents from "@cloudbase/managed-agent";
+
+const client = new CloudbaseAgents({
+  baseURL: `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}`,
+  apiKey: "your-jwt-token",   // 可选
+  envId: "your-env-id",       // 可选
+});
+```
+
+### Sessions API
+
+```typescript
+// 创建会话
+const session = await client.sessions.create({ title: "My task" });
+
+// 发送消息（流式响应）
+for await (const event of client.sessions.prompt(session.id, "Hello")) {
+  switch (event.type) {
+    case "chunk":     process.stdout.write(event.text); break;
+    case "tool_call": console.log(`Tool: ${event.name} [${event.status}]`); break;
+    case "error":     console.error(event.message); break;
+    case "done":      console.log(`\nDone: ${event.stopReason}`); break;
+  }
 }
 
 // 多轮对话（上下文自动保留）
@@ -69,123 +302,199 @@ for await (const event of client.sessions.prompt(session.id, "Now add tests")) {
   if (event.type === "chunk") process.stdout.write(event.text);
 }
 
-// 查历史
+// 列出会话
+const list = await client.sessions.list();
+
+// 获取历史
 const history = await client.sessions.history(session.id);
 console.log(history.messages);
 
-// 清理
+// 删除
 await client.sessions.delete(session.id);
 ```
 
-### 3. Run the Fibonacci Example
+### 流式事件类型
+
+| 事件 | 字段 | 说明 |
+|------|------|------|
+| `chunk` | `text` | 文本增量 |
+| `tool_call` | `name`, `status`, `result?` | 工具调用（pending → completed） |
+| `error` | `message` | 错误 |
+| `done` | `stopReason` | 完成（`end_turn` / `cancelled`） |
+
+---
+
+## 架构
+
+```
+┌─────────────────────┐         ┌──────────────────────────────────────┐
+│   Client            │         │   CloudBase SCF Web Function         │
+│   (SDK / CLI)       │         │   (packages/agent-runtime)           │
+│                     │         │                                      │
+│  CloudbaseAgents    │  HTTPS  │  Express Server                      │
+│    .sessions        ├────────►│    ├─ /v1/aibot/bots/:id/acp (ACP)  │
+│    .prompt()        │         │    ├─ /send-message (AG-UI SSE)      │
+│                     │◄────────┤    └─ /healthz                       │
+│  NDJSON Stream      │         │                                      │
+└─────────────────────┘         │  HunyuanAgent                        │
+                                │    ├─ CloudBase AI (hunyuan/deepseek)│
+                                │    ├─ 内置工具 (bash/file)            │
+                                │    └─ MCP 代理 (远程工具)             │
+                                │                                      │
+                                │  NoSQL DB: acp_sessions              │
+                                └──────────────────────────────────────┘
+```
+
+### 协议说明
+
+- **ACP (Agent Client Protocol)**: JSON-RPC 2.0 over HTTP + NDJSON 流式通知。SDK 默认使用此协议。
+- **AG-UI**: 兼容 CopilotKit 的 SSE 协议，通过 `/send-message` 端点访问。
+- **网关路由**: CloudBase 网关将完整路径 `/v1/aibot/bots/{agentId}/acp` 透传给 Express。
+
+---
+
+## 部署
+
+### SCF Web 函数部署（推荐）
 
 ```bash
-cd examples/fibonacci
-export CLOUDBASE_SERVER_URL=http://localhost:3000
-export CLOUDBASE_ENV_ID=your-env-id
-npx tsx index.ts
-```
+# 1. 构建
+cd packages/agent-runtime
+npm run build
 
-## API Reference
+# 2. 准备部署目录
+mkdir -p /tmp/deploy
+cp -r dist package.json scf_bootstrap agent.yaml /tmp/deploy/
+cd /tmp/deploy && npm install --production
 
-### CloudbaseAgents
-
-```typescript
-new CloudbaseAgents({ baseURL, envId?, apiKey? })
-```
-
-### client.agents
-
-| Method | Description |
-|--------|-------------|
-| `create(params)` | Create a new agent |
-| `retrieve(id)` | Get agent by ID |
-| `list()` | List all agents |
-| `delete(id)` | Delete an agent |
-
-### client.environments
-
-| Method | Description |
-|--------|-------------|
-| `create(params)` | Create an environment |
-| `retrieve(id)` | Get environment by ID |
-| `list()` | List all environments |
-| `delete(id)` | Delete an environment |
-
-### client.sessions
-
-| Method | Description |
-|--------|-------------|
-| `create(params)` | Create a session |
-| `retrieve(id)` | Get session by ID |
-| `list()` | List all sessions |
-| `delete(id)` | Delete a session |
-| `events.stream(id)` | Open SSE event stream |
-| `events.send(id, params)` | Send user events |
-
-## Supported Models
-
-- `hunyuan-2.0-instruct-20251111` (default, recommended)
-- `deepseek-v3.2`
-- `hunyuan-image` (image generation)
-- Any CloudBase-supported model
-
-## Event Types
-
-**Agent → Client:**
-- `agent.message` — text reply from the agent
-- `agent.thinking` — internal reasoning (CoT)
-- `agent.tool_use` — built-in tool call
-- `agent.tool_result` — result of a tool execution
-- `agent.custom_tool_use` — custom tool request (client handles)
-- `session.status_idle` — task complete
-- `session.status_terminated` — fatal error
-
-**Client → Agent:**
-- `user.message` — send a message
-- `user.interrupt` — interrupt the agent
-- `user.custom_tool_result` — return result of custom tool
-- `user.tool_confirmation` — approve/deny a tool call
-
-## Built-in Tools (Server-side)
-
-| Tool | Description |
-|------|-------------|
-| `bash` | Execute shell commands |
-| `read_file` | Read file contents |
-| `write_file` | Write/create files |
-| `list_files` | List directory contents |
-
-## Architecture
-
-```
-Client (SDK / CLI)                    CloudBase Agent (tcb agent)
-     │                                       │
-     ├─ POST /acp (session/new) ───────────►│ 创建 session 存 DB
-     ├─ POST /acp (session/prompt) ───────►│ HunyuanAgent.run()
-     │                                       ├─ cbAI.streamText() (Hunyuan)
-     │                                       └─ 工具执行 (bash/文件)
-     │◄─ NDJSON stream (session/update) ───│
-     ├─ GET  /acp/sessions ──────────────►│ 列出 sessions
-     └─ GET  /send-message (AG-UI SSE) ──►│ 备用单轮简单场景
-```
-
-### Agent 生命周期（`tcb agent` CLI）
-
-```bash
-# 创建
+# 3. 部署
 tcb agent create \
   --name my-agent \
-  --code ./packages/agent-runtime \
-  --env "AGENT_MODEL=hunyuan-2.0-instruct-20251111,AGENT_SYSTEM=You are a helpful assistant" \
-  -e $ENV_ID
+  --runtime Nodejs20.19 \
+  --code /tmp/deploy \
+  --timeout 7200 \
+  --memory-size 256 \
+  --env "CLOUDBASE_ENV_ID=<env-id>" \
+  -e <env-id>
 
-# 更新模型/配置
-tcb agent update my-agent --env "AGENT_MODEL=deepseek-v3.2" -e $ENV_ID
-
-# 删除
-tcb agent delete my-agent --yes -e $ENV_ID
+# 4. 验证
+tcb agent detail <agent-id> -e <env-id>
+# Ready: ✅ 已就绪
 ```
+
+### NoSQL 集合
+
+首次部署需要创建 `acp_sessions` 集合：
+
+```javascript
+const cloudbase = require("@cloudbase/node-sdk");
+const app = cloudbase.init({ env: "<env-id>", secretId: "<ak>", secretKey: "<sk>" });
+await app.database().createCollection("acp_sessions");
+```
+
+### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `CLOUDBASE_ENV_ID` | **必需**。CloudBase 环境 ID | - |
+| `AGENT_CONFIG` | 完整 JSON 配置（由 `agent:update` 写入） | - |
+| `AGENT_MODEL` | 覆盖模型名 | `hunyuan-t1-latest` |
+| `AGENT_SYSTEM` | 覆盖 system prompt | `You are a helpful assistant.` |
+| `AGENT_NAME` | 覆盖 agent 名称 | `cloudbase-managed-agent` |
+| `PORT` | 服务监听端口 | `9000` |
+
+---
+
+## 完整示例：从零到对话
+
+```bash
+# === 环境准备 ===
+export ENV_ID=test-6g2rfs50c69b7fb8
+export API_KEY="<your-jwt-token>"
+
+# === 部署 Agent ===
+cd packages/agent-runtime
+npm run build
+
+mkdir -p /tmp/deploy
+cp -r dist package.json scf_bootstrap agent.yaml /tmp/deploy/
+cd /tmp/deploy && npm install --production
+
+tcb agent create --name demo-agent --runtime Nodejs20.19 --code . \
+  --env "CLOUDBASE_ENV_ID=$ENV_ID" -e $ENV_ID
+
+# 等待就绪...
+tcb agent detail <agent-id> -e $ENV_ID
+
+# === 创建 NoSQL 集合 ===
+node -e "
+  const cb = require('@cloudbase/node-sdk');
+  cb.init({env:'$ENV_ID',secretId:'<ak>',secretKey:'<sk>'})
+    .database().createCollection('acp_sessions')
+    .then(() => console.log('OK'))
+"
+
+# === 更新配置 ===
+cbagent agent:update --id <agent-id> --env $ENV_ID \
+  --system "You are a Python expert. Always include type hints."
+
+# === 对话测试 ===
+cbagent run --agent <agent-id> --message "Write a fibonacci function"
+
+# === 或用 SDK ===
+cat > test.ts << 'EOF'
+import CloudbaseAgents from "@cloudbase/managed-agent";
+const client = new CloudbaseAgents({
+  baseURL: `https://${process.env.ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/<agent-id>`,
+  apiKey: process.env.API_KEY,
+});
+const session = await client.sessions.create({});
+for await (const e of client.sessions.prompt(session.id, "Hello!")) {
+  if (e.type === "chunk") process.stdout.write(e.text);
+}
+await client.sessions.delete(session.id);
+EOF
+npx tsx test.ts
+```
+
+---
+
+## 支持的模型
+
+| Provider | 模型 | 推荐 |
+|----------|------|------|
+| `hunyuan-exp` | `hunyuan-t1-latest`, `hunyuan-turbos-latest`, `hunyuan-2.0-instruct-20251111` | ✅ `hunyuan-t1-latest` |
+| `deepseek` | `deepseek-v3.2`, `deepseek-r1-0528` | ✅ `deepseek-v3.2` |
+
+---
+
+## 项目结构
+
+```
+cloudbase-managed-agent/
+├── packages/
+│   ├── sdk/                  # 客户端 SDK (@cloudbase/managed-agent)
+│   │   └── src/
+│   │       ├── index.ts      # CloudbaseAgents 入口
+│   │       ├── sessions.ts   # Sessions API (create/prompt/list/delete)
+│   │       ├── acp-client.ts # ACP JSON-RPC 客户端
+│   │       └── types.ts      # 类型定义
+│   └── agent-runtime/        # 服务端运行时（部署到 SCF）
+│       ├── src/
+│       │   ├── index.ts      # Express 服务入口
+│       │   ├── config.ts     # YAML 配置加载
+│       │   ├── acp-endpoint.ts # ACP JSON-RPC 处理
+│       │   └── hunyuan-agent.ts # AI Agent 核心逻辑
+│       ├── agent.yaml        # 默认配置模板
+│       └── scf_bootstrap     # SCF 启动脚本
+├── tests/
+│   ├── integration.ts        # SDK 集成测试（ACP 全流程）
+│   └── agui-integration.ts   # AG-UI 协议测试
+├── cbagent.mjs               # CLI 工具
+└── README.md
+```
+
+---
 
 ## License
 

@@ -279,10 +279,20 @@ const COMMANDS = {
     console.log();
 
     // Apply via tcb agent update --env
+    // Note: tcb --env uses comma-separated KEY=VALUE pairs.
+    // Since AGENT_CONFIG contains JSON with commas, we write it to a temp file
+    // and use the updateFunctionConfig approach, or we Base64 encode it.
+    // Simplest reliable approach: Base64 encode the config JSON.
     process.stdout.write("Applying via tcb agent update... ");
     try {
-      const envVars = `AGENT_CONFIG=${configJson}`;
-      const cmd = `tcb agent update ${agentId} --env "${envVars.replace(/"/g, '\\"')}" -e ${envId} --json`;
+      const configBase64 = Buffer.from(configJson).toString("base64");
+      // tcb --env comma-separates entries. CLOUDBASE_ENV_ID must be preserved.
+      const envParts = [
+        `CLOUDBASE_ENV_ID=${envId}`,
+        `AGENT_CONFIG_B64=${configBase64}`,
+      ];
+      const envStr = envParts.join(",");
+      const cmd = `tcb agent update ${agentId} --env "${envStr}" -e ${envId} --json`;
       const result = execSync(cmd, { encoding: "utf-8", timeout: 120000 });
       const data = JSON.parse(result.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
       console.log(green("OK"));
