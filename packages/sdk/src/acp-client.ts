@@ -1,0 +1,240 @@
+/**
+ * ACP (Agent Client Protocol) Client
+ *
+ * JSON-RPC 2.0 over HTTP, with NDJSON streaming for prompts and session/load.
+ *
+ * Usage:
+ *   const acp = new AcpClient({ baseURL: "http://localhost:9000" });
+ *   await acp.initialize();
+ *   const { sessionId } = await acp.sessionNew();
+ *   for await (const update of acp.sessionPrompt(sessionId, "Hello!")) {
+ *     if (update.type === "chunk") process.stdout.write(update.text);
+ *   }
+ */
+
+import type { CloudbaseAgentsConfig } from "./types.js";
+
+let _rpcId = 0;
+const nextId = () => ++_rpcId;
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface AcpSessionInfo {
+  sessionId: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
+export interface AcpSessionDetail {
+  sessionId: string;
+  model: string;
+  system: string;
+  messages: Array<{ id: string; role: string; content: string; timestamp: number }>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type AcpStreamEvent =
+  | { type: "chunk"; text: string }
+  | { type: "tool_call"; toolCallId: string; name: string; status: string; result?: string }
+  | { type: "error"; message: string }
+  | { type: "done"; stopReason: string };
+
+export interface AcpCapabilities {
+  loadSession: boolean;
+  sessionList: boolean;
+}
+
+// ── Client ────────────────────────────────────────────────────────────────────
+
+export class AcpClient {
+  private baseURL: string;
+  private headers: Record<string, string>;
+  capabilities: AcpCapabilities = { loadSession: false, sessionList: false };
+
+  constructor(config: CloudbaseAgentsConfig) {
+    this.baseURL = config.baseURL.replace(/\/$/, "");
+    this.headers = {
+      "Content-Type": "application/json",
+      ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+      ...(config.envId  ? { "X-CloudBase-Env-Id": config.envId }       : {}),
+    };
+  }
+
+  // ── JSON-RPC helper (non-streaming) ────────────────────────────────────────
+
+  private async rpc<T>(method: string, params: unknown = {}): Promise<T> {
+    const res = await fetch(`${this.baseURL}/acp`, {
+      method:  "POST",
+      headers: this.headers,
+      body:    JSON.stringify({ jsonrpc: "2.0", id: nextId(), method, params }),
+    });
+    const data = await res.json() as { result?: T; error?: { message: string } };
+    if (data.error) throw new Error(`ACP error: ${data.error.message}`);
+    return data.result as T;
+  }
+
+  // ── Streaming JSON-RPC (NDJSON) ───────────────────────────────────────────
+
+  private async *rpcStream<TNotification, TResult>(
+    method: string,
+    params: unknown = {}
+  ): AsyncGenerator<{ notification: TNotification } | { result: TResult }> {
+    const id = nextId();
+    const res = await fetch(`${this.baseURL}/acp`, {
+      method:  "POST",
+      headers: this.headers,
+      body:    JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+    });
+    if (!res.ok || !res.body) throw new Error(`ACP stream error: ${res.status}`);
+
+    const reader = res.body.getReader();
+    const dec    = new TextDecoder();
+    let buf      = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const msg = JSON.parse(trimmed) as Record<string, unknown>;
+        if ("method" in msg) {
+          yield { notification: msg as unknown as TNotification };
+        } else if ("result" in msg || "error" in msg) {
+          if (msg.error) throw new Error(`ACP error: ${(msg.error as { message: string }).message}`);
+          yield { result: msg.result as TResult };
+        }
+      }
+    }
+  }
+
+  // ── initialize ────────────────────────────────────────────────────────────
+
+  async initialize(): Promise<{ agentInfo: { name: string; version: string } }> {
+    const result = await this.rpc<{
+      agentCapabilities: AcpCapabilities;
+      agentInfo: { name: string; version: string };
+    }>("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "@cloudbase/managed-agent-sdk", version: "0.1.0" },
+    });
+    this.capabilities = result.agentCapabilities;
+    return result;
+  }
+
+  // ── session/new ───────────────────────────────────────────────────────────
+
+  async sessionNew(cwd = "/"): Promise<{ sessionId: string }> {
+    return this.rpc("session/new", { cwd, mcpServers: [] });
+  }
+
+  // ── session/list ──────────────────────────────────────────────────────────
+
+  async sessionList(): Promise<AcpSessionInfo[]> {
+    const result = await this.rpc<{ sessions: AcpSessionInfo[] }>("session/list", {});
+    return result.sessions;
+  }
+
+  // ── session/resume ────────────────────────────────────────────────────────
+
+  async sessionResume(sessionId: string): Promise<{ sessionId: string }> {
+    return this.rpc("session/resume", { sessionId, cwd: "/", mcpServers: [] });
+  }
+
+  // ── session/load (streams history replay) ────────────────────────────────
+
+  async *sessionLoad(sessionId: string): AsyncGenerator<AcpStreamEvent> {
+    type Notif = { method: string; params: { update: { sessionUpdate: string; content?: { text: string } } } };
+    for await (const item of this.rpcStream<Notif, { sessionId: string }>(
+      "session/load", { sessionId, cwd: "/", mcpServers: [] }
+    )) {
+      if ("notification" in item) {
+        const update = item.notification.params?.update;
+        if (update?.sessionUpdate === "agent_message_chunk" && update.content?.text) {
+          yield { type: "chunk", text: update.content.text };
+        }
+      } else {
+        yield { type: "done", stopReason: "loaded" };
+      }
+    }
+  }
+
+  // ── session/prompt (streams response) ─────────────────────────────────────
+
+  async *sessionPrompt(sessionId: string, text: string): AsyncGenerator<AcpStreamEvent> {
+    type Notif = {
+      method: string;
+      params: {
+        update: {
+          sessionUpdate: string;
+          content?: { text: string };
+          toolCall?: { id: string; name: string; status: string; result?: string };
+          message?: string;
+        };
+      };
+    };
+    for await (const item of this.rpcStream<Notif, { stopReason: string }>(
+      "session/prompt",
+      { sessionId, prompt: [{ type: "text", text }] }
+    )) {
+      if ("notification" in item) {
+        const update = item.notification.params?.update;
+        switch (update?.sessionUpdate) {
+          case "agent_message_chunk":
+            yield { type: "chunk", text: update.content?.text ?? "" };
+            break;
+          case "tool_call":
+            yield {
+              type:       "tool_call",
+              toolCallId: update.toolCall?.id ?? "",
+              name:       update.toolCall?.name ?? "",
+              status:     update.toolCall?.status ?? "",
+              result:     update.toolCall?.result,
+            };
+            break;
+          case "error":
+            yield { type: "error", message: update.message ?? "unknown error" };
+            break;
+        }
+      } else if ("result" in item) {
+        yield { type: "done", stopReason: item.result.stopReason };
+      }
+    }
+  }
+
+  // ── session/cancel ────────────────────────────────────────────────────────
+
+  async sessionCancel(sessionId: string): Promise<void> {
+    await fetch(`${this.baseURL}/acp`, {
+      method:  "POST",
+      headers: this.headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method:  "session/cancel",
+        params:  { sessionId },
+        // No id — notification
+      }),
+    });
+  }
+
+  // ── REST convenience (GET /acp/sessions) ─────────────────────────────────
+
+  async getSession(sessionId: string): Promise<AcpSessionDetail> {
+    const res = await fetch(`${this.baseURL}/acp/sessions/${sessionId}`, { headers: this.headers });
+    if (!res.ok) throw new Error(`Session not found: ${sessionId}`);
+    return res.json() as Promise<AcpSessionDetail>;
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    await fetch(`${this.baseURL}/acp/sessions/${sessionId}`, {
+      method: "DELETE", headers: this.headers,
+    });
+  }
+}
