@@ -1,17 +1,17 @@
 # CloudBase Managed Agent SDK
 
-A TypeScript SDK that mirrors Anthropic's `@anthropic-ai/sdk` beta.agents interface, backed by CloudBase instead of Anthropic.
+A TypeScript SDK inspired by Anthropic's Managed Agents concept, backed by CloudBase instead of Anthropic.
 
 ## Overview
 
 This project provides a **drop-in compatible** API surface with Claude's Managed Agents:
 
 ```typescript
-// Works with Claude:
+// Claude:
 const agent = await anthropic.beta.agents.create({ ... })
 
-// Works with CloudBase:
-const agent = await cloudbase.beta.agents.create({ ... })
+// CloudBase (cleaner, no .beta):
+const agent = await client.agents.create({ ... })
 ```
 
 ## Project Structure
@@ -55,7 +55,7 @@ const client = new CloudbaseAgents({
 });
 
 // Create an agent
-const agent = await client.beta.agents.create({
+const agent = await client.agents.create({
   name: "Coding Assistant",
   model: "hunyuan-2.0-instruct-20251111",
   system: "You are a helpful coding assistant.",
@@ -63,16 +63,16 @@ const agent = await client.beta.agents.create({
 });
 
 // Create a session
-const session = await client.beta.sessions.create({
+const session = await client.sessions.create({
   agent: agent.id,
   title: "my task",
 });
 
 // Stream events
-const stream = client.beta.sessions.events.stream(session.id);
+const stream = client.sessions.events.stream(session.id);
 
 // Send a message
-await client.beta.sessions.events.send(session.id, {
+await client.sessions.events.send(session.id, {
   events: [{
     type: "user.message",
     content: [{ type: "text", text: "Write a hello world in Python" }],
@@ -105,7 +105,7 @@ npx tsx index.ts
 new CloudbaseAgents({ baseURL, envId?, apiKey? })
 ```
 
-### client.beta.agents
+### client.agents
 
 | Method | Description |
 |--------|-------------|
@@ -114,7 +114,7 @@ new CloudbaseAgents({ baseURL, envId?, apiKey? })
 | `list()` | List all agents |
 | `delete(id)` | Delete an agent |
 
-### client.beta.environments
+### client.environments
 
 | Method | Description |
 |--------|-------------|
@@ -123,7 +123,7 @@ new CloudbaseAgents({ baseURL, envId?, apiKey? })
 | `list()` | List all environments |
 | `delete(id)` | Delete an environment |
 
-### client.beta.sessions
+### client.sessions
 
 | Method | Description |
 |--------|-------------|

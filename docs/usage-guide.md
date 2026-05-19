@@ -39,10 +39,10 @@ Events（事件流）
 
 | Claude (`@anthropic-ai/sdk`)       | CloudBase (`@cloudbase/managed-agent`) |
 |------------------------------------|----------------------------------------|
-| `anthropic.beta.agents.create()`   | `client.beta.agents.create()`          |
-| `anthropic.beta.environments.*`    | `client.beta.environments.*`           |
-| `anthropic.beta.sessions.*`        | `client.beta.sessions.*`               |
-| `anthropic.beta.sessions.events.*` | `client.beta.sessions.events.*`        |
+| `anthropic.beta.agents.create()`   | `client.agents.create()`          |
+| `anthropic.beta.environments.*`    | `client.environments.*`           |
+| `anthropic.beta.sessions.*`        | `client.sessions.*`               |
+| `anthropic.beta.sessions.events.*` | `client.sessions.events.*`        |
 | 模型：`claude-opus-4-5`            | 模型：`hunyuan-2.0-instruct-20251111`  |
 
 ---
@@ -272,7 +272,7 @@ const client = new CloudbaseAgents({
 
 ```typescript
 // 创建
-const agent = await client.beta.agents.create({
+const agent = await client.agents.create({
   name:   "Coding Assistant",
   model:  "hunyuan-2.0-instruct-20251111",
   system: "You are a helpful coding assistant.",
@@ -281,28 +281,28 @@ const agent = await client.beta.agents.create({
 console.log(agent.id); // agent_xxx
 
 // 查询
-const agent = await client.beta.agents.retrieve("agent_xxx");
-const { data } = await client.beta.agents.list();
+const agent = await client.agents.retrieve("agent_xxx");
+const { data } = await client.agents.list();
 
 // 删除
-await client.beta.agents.delete("agent_xxx");
+await client.agents.delete("agent_xxx");
 ```
 
 ### Session + 消息流
 
 ```typescript
 // 1. 创建 session
-const session = await client.beta.sessions.create({
+const session = await client.sessions.create({
   agent:          agent.id,
   environment_id: env.id,
   title:          "My Task",
 });
 
 // 2. 先建立流（避免丢失早期事件）
-const stream = client.beta.sessions.events.stream(session.id);
+const stream = client.sessions.events.stream(session.id);
 
 // 3. 发送消息
-await client.beta.sessions.events.send(session.id, {
+await client.sessions.events.send(session.id, {
   events: [{
     type:    "user.message",
     content: [{ type: "text", text: "Write a fibonacci function" }],
@@ -321,7 +321,7 @@ for await (const event of stream) {
     case "agent.custom_tool_use":
       // 处理自定义工具调用
       const result = await myTool(event.tool_name, event.input);
-      await client.beta.sessions.events.send(session.id, {
+      await client.sessions.events.send(session.id, {
         events: [{
           type:        "user.custom_tool_result",
           tool_use_id: event.tool_use_id,
@@ -340,11 +340,11 @@ for await (const event of stream) {
 
 ```typescript
 // 复用同一个 session 保持上下文
-const session = await client.beta.sessions.create({ agent: agent.id });
+const session = await client.sessions.create({ agent: agent.id });
 
 async function chat(message: string) {
-  const stream = client.beta.sessions.events.stream(session.id);
-  await client.beta.sessions.events.send(session.id, {
+  const stream = client.sessions.events.stream(session.id);
+  await client.sessions.events.send(session.id, {
     events: [{ type: "user.message", content: [{ type: "text", text: message }] }],
   });
   let reply = "";
@@ -438,7 +438,7 @@ for await (const event of stream) {
     }
 
     // 把结果返回给 agent
-    await client.beta.sessions.events.send(session.id, {
+    await client.sessions.events.send(session.id, {
       events: [{
         type:        "user.custom_tool_result",
         tool_use_id: event.tool_use_id,

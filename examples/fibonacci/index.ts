@@ -20,7 +20,7 @@ async function main() {
 
   // 1. Create an agent
   console.log("1. Creating agent...");
-  const agent = await client.beta.agents.create({
+  const agent = await client.agents.create({
     name: "Coding Assistant",
     model: "hunyuan-2.0-instruct-20251111",
     system: "You are a helpful coding assistant. Write clean, well-documented code.",
@@ -30,7 +30,7 @@ async function main() {
 
   // 2. Create an environment
   console.log("2. Creating environment...");
-  const environment = await client.beta.environments.create({
+  const environment = await client.environments.create({
     name: "fibonacci-env",
     config: { type: "cloud", networking: { type: "unrestricted" } },
   });
@@ -38,7 +38,7 @@ async function main() {
 
   // 3. Create a session
   console.log("3. Creating session...");
-  const session = await client.beta.sessions.create({
+  const session = await client.sessions.create({
     agent: agent.id,
     environment_id: environment.id,
     title: "Fibonacci Task",
@@ -47,10 +47,10 @@ async function main() {
 
   // 4. Stream events first, then send the task
   console.log("4. Starting event stream...");
-  const stream = client.beta.sessions.events.stream(session.id);
+  const stream = client.sessions.events.stream(session.id);
 
   console.log("5. Sending task to agent...\n");
-  await client.beta.sessions.events.send(session.id, {
+  await client.sessions.events.send(session.id, {
     events: [
       {
         type: "user.message",
@@ -116,9 +116,9 @@ async function main() {
 
   // 7. Cleanup
   console.log("\nCleaning up...");
-  await client.beta.sessions.delete(session.id);
-  await client.beta.environments.delete(environment.id);
-  await client.beta.agents.delete(agent.id);
+  await client.sessions.delete(session.id);
+  await client.environments.delete(environment.id);
+  await client.agents.delete(agent.id);
   console.log("Done! ✨");
 }
 

@@ -10,21 +10,17 @@ export { SessionsResource } from "./sessions.js";
 export { EventsResource, EventStream } from "./events.js";
 
 export class CloudbaseAgents {
-  readonly beta: {
-    agents: AgentsResource;
-    environments: EnvironmentsResource;
-    sessions: SessionsResource;
-  };
+  readonly agents: AgentsResource;
+  readonly environments: EnvironmentsResource;
+  readonly sessions: SessionsResource;
 
   constructor(config: CloudbaseAgentsConfig) {
     if (!config.baseURL) {
       throw new Error("CloudbaseAgents: baseURL is required");
     }
-    this.beta = {
-      agents: new AgentsResource(config),
-      environments: new EnvironmentsResource(config),
-      sessions: new SessionsResource(config),
-    };
+    this.agents = new AgentsResource(config);
+    this.environments = new EnvironmentsResource(config);
+    this.sessions = new SessionsResource(config);
   }
 }
 
