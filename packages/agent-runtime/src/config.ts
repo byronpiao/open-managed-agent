@@ -157,10 +157,15 @@ export function getMcpToolsets(config: AgentConfig): McpToolset[] {
 // Within each level, individual env vars (AGENT_MODEL etc.) can still override scalar fields.
 
 export async function loadAgentConfig(): Promise<AgentConfig> {
-  // Priority 1: AGENT_CONFIG env var (full JSON config from `cbagent agent:update`)
-  if (process.env.AGENT_CONFIG) {
+  // Priority 1: AGENT_CONFIG or AGENT_CONFIG_B64 env var (from `cbagent agent:update`)
+  const rawConfig = process.env.AGENT_CONFIG
+    ?? (process.env.AGENT_CONFIG_B64
+      ? Buffer.from(process.env.AGENT_CONFIG_B64, "base64").toString("utf-8")
+      : null);
+
+  if (rawConfig) {
     try {
-      const config = JSON.parse(process.env.AGENT_CONFIG) as AgentConfig;
+      const config = JSON.parse(rawConfig) as AgentConfig;
       console.log(`[Config] Loaded from AGENT_CONFIG env var`);
       // Individual env vars still override scalar fields
       if (process.env.AGENT_MODEL) config.model = process.env.AGENT_MODEL;
