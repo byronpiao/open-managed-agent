@@ -19,12 +19,14 @@ const agent = await client.agents.create({ ... })
 ```
 cloudbase-managed-agent/
 ├── packages/
-│   ├── sdk/              # TypeScript client SDK (@cloudbase/managed-agent)
-│   ├── server/           # Proxy server - Agent lifecycle + request routing
+│   ├── sdk/              # TypeScript 客户端 SDK (@cloudbase/managed-agent)
 │   └── agent-runtime/    # Agent 云函数代码 (部署到 tcb agent)
-├── examples/fibonacci/   # Quick start example
-├── cbagent.mjs           # CLI tool
-└── docs/usage-guide.md
+├── examples/
+│   ├── fibonacci/        # 基础示例
+│   └── acp-client/       # ACP 协议完整示例
+├── cbagent.mjs           # CLI 工具
+├── docs/usage-guide.md   # 使用文档
+└── README.md
 ```
 
 ## Quick Start
@@ -157,45 +159,32 @@ new CloudbaseAgents({ baseURL, envId?, apiKey? })
 ## Architecture
 
 ```
-Client (SDK / CLI)     Proxy Server              CloudBase Agent (tcb agent)
-     │                      │                           │
-     ├─ POST /agents ──────►│                           │
-     │                      ├─ tcb agent create ───────►│ (upload agent-runtime)
-     │                      │                           │ [Nodejs20, 7200s timeout]
-     │                      │                           │
-     ├─ POST /sessions ────►│                           │
-     │                      ├─ save session to DB ──────►│ (CloudBase NoSQL)
-     │                      │                           │
-     ├─ POST /events ──────►│                           │
-     │                      ├─ forward ────────────────►│ POST /send-message (AG-UI)
-     │                      │                           ├─ HunyuanAgent.run()
-     │                      │                           │   ├─ cbAI.streamText()
-     │                      │                           │   └─ tool execution
-     │◄─ SSE stream ────────│◄─ translate AG-UI→events ─│ AG-UI SSE
+Client (SDK / CLI)                    CloudBase Agent (tcb agent)
+     │                                       │
+     ├─ POST /acp (session/new) ───────────►│ 创建 session 存 DB
+     ├─ POST /acp (session/prompt) ───────►│ HunyuanAgent.run()
+     │                                       ├─ cbAI.streamText() (Hunyuan)
+     │                                       └─ 工具执行 (bash/文件)
+     │◄─ NDJSON stream (session/update) ───│
+     ├─ GET  /acp/sessions ──────────────►│ 列出 sessions
+     └─ GET  /send-message (AG-UI SSE) ──►│ 备用单轮简单场景
 ```
 
-### Agent 生命周期（`tcb agent`）
+### Agent 生命周期（`tcb agent` CLI）
 
 ```bash
-# 创建：上传 agent-runtime 代码到云函数
-tcb agent create --name my-agent --code ./packages/agent-runtime -e $ENV_ID
+# 创建
+tcb agent create \
+  --name my-agent \
+  --code ./packages/agent-runtime \
+  --env "AGENT_MODEL=hunyuan-2.0-instruct-20251111,AGENT_SYSTEM=You are a helpful assistant" \
+  -e $ENV_ID
 
 # 更新模型/配置
 tcb agent update my-agent --env "AGENT_MODEL=deepseek-v3.2" -e $ENV_ID
 
 # 删除
 tcb agent delete my-agent --yes -e $ENV_ID
-```
-
-## Deployment (CloudRun)
-
-```bash
-cd packages/server
-npm run build
-docker build -t cloudbase-managed-agent-server .
-
-# Deploy to CloudRun via CloudBase console or CLI
-# Set env vars: CLOUDBASE_ENV_ID, TENCENTCLOUD_SECRETID, TENCENTCLOUD_SECRETKEY
 ```
 
 ## License
