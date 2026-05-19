@@ -20,10 +20,11 @@ const agent = await client.agents.create({ ... })
 cloudbase-managed-agent/
 ├── packages/
 │   ├── sdk/              # TypeScript client SDK (@cloudbase/managed-agent)
-│   └── server/           # CloudRun backend service
-├── examples/
-│   └── fibonacci/        # Example mirroring the Claude quickstart
-└── README.md
+│   ├── server/           # Proxy server - Agent lifecycle + request routing
+│   └── agent-runtime/    # Agent 云函数代码 (部署到 tcb agent)
+├── examples/fibonacci/   # Quick start example
+├── cbagent.mjs           # CLI tool
+└── docs/usage-guide.md
 ```
 
 ## Quick Start
@@ -170,21 +171,34 @@ new CloudbaseAgents({ baseURL, envId?, apiKey? })
 ## Architecture
 
 ```
-Client (SDK)          Server (CloudRun)           CloudBase
-    │                       │                          │
-    ├─ POST /sessions ──────►│                          │
-    │                       ├─ Write to DB ────────────►│
-    │                       │                          │
-    ├─ GET /events/stream ──►│ (SSE connection)         │
-    │                       │                          │
-    ├─ POST /events ────────►│                          │
-    │                       ├─ runAgentLoop()           │
-    │                       │   └─ ai.generateText() ──►│
-    │                       │   └─ Tool execution       │
-    │                       │   └─ Append events ───────►│
-    │                       │                          │
-    │◄── SSE events ─────────│ (polls DB every 500ms)   │
-    │                       │                          │
+Client (SDK / CLI)     Proxy Server              CloudBase Agent (tcb agent)
+     │                      │                           │
+     ├─ POST /agents ──────►│                           │
+     │                      ├─ tcb agent create ───────►│ (upload agent-runtime)
+     │                      │                           │ [Nodejs20, 7200s timeout]
+     │                      │                           │
+     ├─ POST /sessions ────►│                           │
+     │                      ├─ save session to DB ──────►│ (CloudBase NoSQL)
+     │                      │                           │
+     ├─ POST /events ──────►│                           │
+     │                      ├─ forward ────────────────►│ POST /send-message (AG-UI)
+     │                      │                           ├─ HunyuanAgent.run()
+     │                      │                           │   ├─ cbAI.streamText()
+     │                      │                           │   └─ tool execution
+     │◄─ SSE stream ────────│◄─ translate AG-UI→events ─│ AG-UI SSE
+```
+
+### Agent 生命周期（`tcb agent`）
+
+```bash
+# 创建：上传 agent-runtime 代码到云函数
+tcb agent create --name my-agent --code ./packages/agent-runtime -e $ENV_ID
+
+# 更新模型/配置
+tcb agent update my-agent --env "AGENT_MODEL=deepseek-v3.2" -e $ENV_ID
+
+# 删除
+tcb agent delete my-agent --yes -e $ENV_ID
 ```
 
 ## Deployment (CloudRun)

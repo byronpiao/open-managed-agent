@@ -1,7 +1,7 @@
 {
   "name": "cloudbase-managed-agent",
   "private": true,
-  "workspaces": ["packages/*"],
+  "workspaces": ["packages/sdk", "packages/server", "packages/agent-runtime"],
   "scripts": {
     "build": "npm run build --workspaces",
     "dev:server": "npm run dev --workspace=packages/server",
