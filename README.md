@@ -10,8 +10,9 @@ CloudBase Managed Agent 让你用与 [Claude Managed Agents](https://platform.cl
 import CloudbaseAgents from "@cloudbase/managed-agent";
 
 const client = new CloudbaseAgents({
-  baseURL: `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}`,
-  apiKey: "<your-api-key>",
+  envId: "<env-id>",
+  agentId: "<agent-id>",
+  accessKey: "<your-access-key>",
 });
 
 const session = await client.sessions.create({ title: "Code review" });
@@ -60,7 +61,7 @@ cbagent agent:create \
 # 设置环境变量（后续命令省略重复传参）
 export CLOUDBASE_ENV_ID=<your-env-id>
 export CLOUDBASE_AGENT_ID=<agent-id>
-export CLOUDBASE_API_KEY=<your-jwt-token>
+export CLOUDBASE_ACCESS_KEY=<your-jwt-token>
 
 # 更新 system prompt
 cbagent agent:update --system "You are a helpful coding assistant."
@@ -75,8 +76,9 @@ cbagent agent:update --file ./agent.yaml
 import CloudbaseAgents from "@cloudbase/managed-agent";
 
 const client = new CloudbaseAgents({
-  baseURL: `https://<env-id>.api.tcloudbasegateway.com/v1/aibot/bots/<agent-id>`,
-  apiKey: "<your-api-key>",
+  envId: "<env-id>",
+  agentId: "<agent-id>",
+  accessKey: "<your-access-key>",
 });
 
 // 创建会话 → 发送消息 → 流式获取结果
@@ -251,7 +253,7 @@ AGENT_MODEL + AGENT_SYSTEM 环境变量         ← 向后兼容
 |------|------|
 | `CLOUDBASE_ENV_ID` | CloudBase 环境 ID |
 | `CLOUDBASE_AGENT_ID` | 默认 Agent ID（可免 `--id`） |
-| `CLOUDBASE_API_KEY` | API Key（JWT Token） |
+| `CLOUDBASE_ACCESS_KEY` | API Key（JWT Token） |
 | `CLOUDBASE_SERVER_URL` | 自定义 Server URL |
 
 ### 命令列表

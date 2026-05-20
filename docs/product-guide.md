@@ -44,7 +44,7 @@ cp .env.example .env
 编辑 `.env`：
 ```ini
 CLOUDBASE_ENV_ID=your-env-id
-CLOUDBASE_API_KEY=your-jwt-token
+CLOUDBASE_ACCESS_KEY=your-access-key
 ```
 
 ---
@@ -110,8 +110,9 @@ $ cbagent agent:get --id agent-my-agent-65abf85e
 import CloudbaseAgents from "@cloudbase/managed-agent";
 
 const client = new CloudbaseAgents({
-  baseURL: "https://<env-id>.api.tcloudbasegateway.com/v1/aibot/bots/<agent-id>",
-  apiKey: "<API_KEY>",
+  envId: "<env-id>",
+  agentId: "<agent-id>",
+  accessKey: "<your-access-key>",
 });
 
 // 创建 Session
@@ -388,8 +389,9 @@ npm install @cloudbase/managed-agent
 import CloudbaseAgents from "@cloudbase/managed-agent";
 
 const client = new CloudbaseAgents({
-  baseURL: `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}`,
-  apiKey: "your-jwt-token",
+  envId,
+  agentId,
+  accessKey: "your-access-key",
 });
 ```
 

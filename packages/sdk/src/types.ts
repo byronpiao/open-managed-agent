@@ -178,9 +178,14 @@ export interface SendEventsParams {
 }
 
 export interface CloudbaseAgentsConfig {
-  baseURL: string;
-  apiKey?: string;
-  envId?: string;
+  /** CloudBase 环境 ID */
+  envId: string;
+  /** Agent ID */
+  agentId: string;
+  /** Access Key (JWT Token) */
+  accessKey?: string;
+  /** 自定义 base URL（可选，默认根据 envId + agentId 自动生成） */
+  baseURL?: string;
 }
 
 export interface ListResponse<T> {

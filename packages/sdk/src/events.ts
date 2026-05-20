@@ -17,7 +17,7 @@ export class EventStream implements AsyncIterable<AgentEvent> {
 
   private get headers(): Record<string, string> {
     const h: Record<string, string> = { Accept: "text/event-stream" };
-    if (this.config.apiKey) h["Authorization"] = `Bearer ${this.config.apiKey}`;
+    if (this.config.accessKey) h["Authorization"] = `Bearer ${this.config.accessKey}`;
     if (this.config.envId) h["X-CloudBase-Env-Id"] = this.config.envId;
     return h;
   }
@@ -78,7 +78,7 @@ export class EventsResource {
 
   private get headers(): Record<string, string> {
     const h: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.config.apiKey) h["Authorization"] = `Bearer ${this.config.apiKey}`;
+    if (this.config.accessKey) h["Authorization"] = `Bearer ${this.config.accessKey}`;
     if (this.config.envId) h["X-CloudBase-Env-Id"] = this.config.envId;
     return h;
   }

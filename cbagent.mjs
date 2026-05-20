@@ -350,7 +350,7 @@ const COMMANDS = {
     // Load current config: try fetching from the running agent via ACP initialize
     let currentConfig = {};
     const agentUrl = args.url ?? `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}/acp`;
-    const apiKey = args["api-key"] ?? process.env.CLOUDBASE_API_KEY ?? "";
+    const apiKey = args["api-key"] ?? process.env.CLOUDBASE_ACCESS_KEY ?? "";
 
     try {
       process.stdout.write(dim("Fetching current config... "));
@@ -629,7 +629,7 @@ ${bold("USAGE")}
 ${bold("ENVIRONMENT")}
   CLOUDBASE_ENV_ID       CloudBase environment ID
   CLOUDBASE_AGENT_ID     Default agent ID (used when --id is omitted)
-  CLOUDBASE_API_KEY      API key (JWT token) for agent access
+  CLOUDBASE_ACCESS_KEY      API key (JWT token) for agent access
 
 ${bold("AGENT COMMANDS")}
   agent:create  --name <name> [options]       Create and deploy a new agent
