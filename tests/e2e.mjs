@@ -31,9 +31,9 @@ if (existsSync(envFile)) {
 }
 
 const ENV_ID = process.env.CLOUDBASE_ENV_ID;
-const API_KEY = process.env.CLOUDBASE_API_KEY;
+const API_KEY = process.env.CLOUDBASE_ACCESS_KEY;
 if (!ENV_ID || !API_KEY) {
-  console.error("❌ 请在 .env 中配置 CLOUDBASE_ENV_ID 和 CLOUDBASE_API_KEY");
+  console.error("❌ 请在 .env 中配置 CLOUDBASE_ENV_ID 和 CLOUDBASE_ACCESS_KEY");
   process.exit(1);
 }
 
@@ -76,7 +76,7 @@ function cbagent(cmd) {
   const output = execSync(fullCmd, {
     encoding: "utf-8",
     timeout: 300000,
-    env: { ...process.env, CLOUDBASE_ENV_ID: ENV_ID, CLOUDBASE_API_KEY: API_KEY, CLOUDBASE_AGENT_ID: AGENT_ID },
+    env: { ...process.env, CLOUDBASE_ENV_ID: ENV_ID, CLOUDBASE_ACCESS_KEY: API_KEY, CLOUDBASE_AGENT_ID: AGENT_ID },
   });
   printOutput(output.trim());
   return output;
@@ -158,8 +158,9 @@ ${bold("╚═══════════════════════
   const sdkCode1 = `import CloudbaseAgents from "@cloudbase/managed-agent";
 
 const client = new CloudbaseAgents({
-  baseURL: "https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}",
-  apiKey: "<API_KEY>",
+  envId: "${ENV_ID}",
+  agentId: "${AGENT_ID}",
+  accessKey: "<ACCESS_KEY>",
 });
 
 // 创建 Session
@@ -181,8 +182,9 @@ await client.sessions.delete(session.id);`;
   try {
     const { default: CloudbaseAgents } = await import(resolve(ROOT, "packages/sdk/dist/index.js"));
     const client = new CloudbaseAgents({
-      baseURL: `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}`,
-      apiKey: API_KEY,
+      envId: ENV_ID,
+      agentId: AGENT_ID,
+      accessKey: API_KEY,
     });
 
     // Retry loop: first cold start after deploy may take 10-30s
@@ -319,8 +321,9 @@ for await (const event of client.sessions.prompt(session.id, "列出你所有的
   try {
     const { default: CloudbaseAgents } = await import(resolve(ROOT, "packages/sdk/dist/index.js"));
     const client = new CloudbaseAgents({
-      baseURL: `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}`,
-      apiKey: API_KEY,
+      envId: ENV_ID,
+      agentId: AGENT_ID,
+      accessKey: API_KEY,
     });
 
     const session = await client.sessions.create({ title: "e2e-post-update" });

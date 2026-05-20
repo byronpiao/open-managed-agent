@@ -54,11 +54,11 @@ export class AcpClient {
   capabilities: AcpCapabilities = { loadSession: false, sessionList: false };
 
   constructor(config: CloudbaseAgentsConfig) {
-    this.baseURL = config.baseURL.replace(/\/$/, "");
+    this.baseURL = (config.baseURL ?? `https://${config.envId}.api.tcloudbasegateway.com/v1/aibot/bots/${config.agentId}`).replace(/\/$/, "");
     this.headers = {
       "Content-Type": "application/json",
-      ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
-      ...(config.envId  ? { "X-CloudBase-Env-Id": config.envId }       : {}),
+      ...(config.accessKey ? { Authorization: `Bearer ${config.accessKey}` } : {}),
+      ...(config.envId     ? { "X-CloudBase-Env-Id": config.envId }          : {}),
     };
   }
 

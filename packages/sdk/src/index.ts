@@ -18,13 +18,19 @@ export class CloudbaseAgents {
   readonly sessions: SessionsResource;
 
   constructor(config: CloudbaseAgentsConfig) {
+    if (!config.envId) {
+      throw new Error("CloudbaseAgents: envId is required");
+    }
+    if (!config.agentId) {
+      throw new Error("CloudbaseAgents: agentId is required");
+    }
+    // Auto-generate baseURL if not provided
     if (!config.baseURL) {
-      throw new Error("CloudbaseAgents: baseURL is required");
+      config.baseURL = `https://${config.envId}.api.tcloudbasegateway.com/v1/aibot/bots/${config.agentId}`;
     }
     this.agents = new AgentsResource(config);
     this.environments = new EnvironmentsResource(config);
     this.sessions = new SessionsResource(config);
-    // Note: ACP is used internally by SessionsResource
   }
 }
 

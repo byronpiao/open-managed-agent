@@ -17,9 +17,7 @@ import type { CloudbaseAgentsConfig, Session, ListResponse } from "../packages/s
 
 const ENV_ID = "test-6g2rfs50c69b7fb8";
 const AGENT_ID = "agent-managed-agent-test-60ab640";
-// Use the standard agent path - the gateway passes the full path through to Express
-const BASE_URL = `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}`;
-const API_KEY = "";
+const ACCESS_KEY = "";
 
 // No fetch monkey-patching needed - the standard /v1/aibot/bots/{id}/acp path works directly
 
@@ -62,7 +60,7 @@ function assert(condition: boolean, message: string) {
 
 async function main() {
   console.log("\n\x1b[1m CloudBase Managed Agent SDK - Integration Tests\x1b[0m");
-  console.log(`  Base URL: ${BASE_URL}`);
+  console.log(`  Env: ${ENV_ID}, Agent: ${AGENT_ID}`);
   console.log();
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -76,22 +74,22 @@ async function main() {
   });
 
   await runTest("A2. CloudbaseAgents constructor validates config", async () => {
-    // Should throw without baseURL
+    // Should throw without envId
     let threw = false;
     try {
-      new CloudbaseAgents({ baseURL: "" });
+      new CloudbaseAgents({ envId: "", agentId: "" });
     } catch (err: any) {
       threw = true;
-      assert(err.message.includes("baseURL"), "Error should mention baseURL");
+      assert(err.message.includes("envId"), "Error should mention envId");
     }
-    assert(threw, "Should throw without baseURL");
+    assert(threw, "Should throw without envId");
   });
 
   await runTest("A3. CloudbaseAgents initializes with valid config", async () => {
     const client = new CloudbaseAgents({
-      baseURL: "https://example.com/v1/aibot/bots/test",
-      apiKey: "test-key",
       envId: "test-env",
+      agentId: "test-agent",
+      accessKey: "test-key",
     });
     assert(!!client.sessions, "Should have sessions resource");
     assert(!!client.agents, "Should have agents resource");
@@ -100,9 +98,9 @@ async function main() {
 
   await runTest("A4. AcpClient initializes with correct headers", async () => {
     const acp = new AcpClient({
-      baseURL: "https://example.com/test",
-      apiKey: "my-token",
       envId: "my-env",
+      agentId: "my-agent",
+      accessKey: "my-token",
     });
     assert(!!acp, "AcpClient should be created");
     assert(typeof acp.initialize === "function", "Should have initialize method");
@@ -113,7 +111,7 @@ async function main() {
   });
 
   await runTest("A5. Session resource has all expected methods", async () => {
-    const client = new CloudbaseAgents({ baseURL: "https://example.com/test" });
+    const client = new CloudbaseAgents({ envId: "test-env", agentId: "test-agent" });
     const sessions = client.sessions;
     assert(typeof sessions.create === "function", "Should have create");
     assert(typeof sessions.retrieve === "function", "Should have retrieve");
@@ -128,8 +126,8 @@ async function main() {
 
   await runTest("A6. Type exports are correct", async () => {
     // Verify type exports compile correctly (these are compile-time checks)
-    const config: CloudbaseAgentsConfig = { baseURL: "test" };
-    assert(config.baseURL === "test", "Config type works");
+    const config: CloudbaseAgentsConfig = { envId: "test", agentId: "test" };
+    assert(config.envId === "test", "Config type works");
 
     // Test Session type shape
     const mockSession: Session = {
@@ -160,11 +158,11 @@ async function main() {
 
   await runTest("B1. ACP endpoint reachability check", async () => {
     try {
-      const res = await fetch(`${BASE_URL}/acp`, {
+      const res = await fetch(`https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}/acp`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${API_KEY}`,
+          Authorization: `Bearer ${ACCESS_KEY}`,
         },
         body: JSON.stringify({
           jsonrpc: "2.0",
@@ -211,7 +209,7 @@ async function main() {
     console.log("    /send-message for SCF-type agents. ACP requires a TCBR (CloudRun)");
     console.log("    type deployment with direct HTTP routing.\x1b[0m");
   } else {
-    const client = new CloudbaseAgents({ baseURL: BASE_URL, apiKey: API_KEY, envId: ENV_ID });
+    const client = new CloudbaseAgents({ envId: ENV_ID, agentId: AGENT_ID, accessKey: ACCESS_KEY });
     let sessionId = "";
 
     await runTest("C1. Create session via ACP", async () => {
