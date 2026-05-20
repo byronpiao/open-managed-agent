@@ -31,6 +31,24 @@ const cbApp = cloudbase.init({ env: process.env.CLOUDBASE_ENV_ID ?? "" });
 const db = cbApp.database();
 const SESSIONS_COL = "acp_sessions";
 
+// Ensure collection exists on startup (idempotent)
+let collectionReady = false;
+async function ensureCollection() {
+  if (collectionReady) return;
+  try {
+    await db.createCollection(SESSIONS_COL);
+    console.log(`[ACP] Created collection: ${SESSIONS_COL}`);
+  } catch (err: any) {
+    // "ResourceUnavailable.CollectionAlreadyExists" or similar = OK
+    if (err?.code === "DATABASE_COLLECTION_EXIST" || err?.message?.includes("already exist")) {
+      // Collection already exists, that's fine
+    } else {
+      console.log(`[ACP] Collection check: ${err?.message ?? err}`);
+    }
+  }
+  collectionReady = true;
+}
+
 async function genId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -99,6 +117,7 @@ async function handleInitialize(params: Record<string, unknown>, config: AgentCo
 }
 
 async function handleSessionNew(params: Record<string, unknown>, agentConfig: AgentConfig) {
+  await ensureCollection();
   const sessionId = await genId("sess");
   const now = Math.floor(Date.now() / 1000);
 
@@ -354,6 +373,9 @@ function handleSessionCancel(params: Record<string, unknown>) {
 
 export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   const agent = new HunyuanAgent(agentConfig);
+
+  // Ensure DB collection exists on first request
+  ensureCollection().catch(() => {});
 
   // Ensure JSON body parsing is available for ACP routes
   // Support both direct /acp and gateway-proxied /v1/aibot/bots/:botId/acp paths
