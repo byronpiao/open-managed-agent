@@ -40,24 +40,56 @@ npm install
 npm run build
 ```
 
-### 2. 部署 Agent
+### 2. 部署 Agent Runtime
+
+使用 `tcb agent create` 将 runtime 代码部署为云函数（只需执行一次）：
 
 ```bash
-# 构建部署包
+# 准备部署目录
 cd packages/agent-runtime
-npm install --production
+npm run build
+mkdir -p /tmp/deploy
+cp -r dist package.json scf_bootstrap agent.yaml /tmp/deploy/
+cd /tmp/deploy && npm install --production
 
-# 部署为 SCF Web 函数
+# 部署
 tcb agent create \
   --name my-agent \
   --runtime Nodejs20.19 \
   --code . \
-  --install-dep \
-  --env "CLOUDBASE_ENV_ID=<your-env-id>,AGENT_MODEL=hunyuan-t1-latest" \
+  --timeout 7200 \
+  --memory-size 256 \
+  --env "CLOUDBASE_ENV_ID=<your-env-id>" \
   -e <your-env-id>
+
+# 验证就绪
+tcb agent detail <agent-id> -e <your-env-id>
+# Ready: ✅ 已就绪
 ```
 
-### 3. 使用 SDK 对话
+> **首次部署还需创建 NoSQL 集合**（Session 存储）：
+> ```bash
+> node -e "require('@cloudbase/node-sdk').init({env:'<env-id>',secretId:'<ak>',secretKey:'<sk>'}).database().createCollection('acp_sessions').then(()=>console.log('OK'))"
+> ```
+
+### 3. 配置 Agent
+
+部署完成后，使用 `cbagent agent:update` 配置 Agent 的行为（不需要重新部署代码，约 8 秒生效）：
+
+```bash
+# 设置环境变量（后续命令省略重复传参）
+export CLOUDBASE_ENV_ID=<your-env-id>
+export CLOUDBASE_AGENT_ID=<agent-id>
+export CLOUDBASE_API_KEY=<your-jwt-token>
+
+# 更新 system prompt
+cbagent agent:update --system "You are a helpful coding assistant."
+
+# 或从 YAML 文件加载完整配置
+cbagent agent:update --file ./agent.yaml
+```
+
+### 4. 使用 SDK 对话
 
 ```typescript
 import CloudbaseAgents from "@cloudbase/managed-agent";
@@ -84,7 +116,7 @@ Agent 通过 `agent.yaml` 文件配置，结构兼容 [Anthropic Agent Setup](ht
 ### 完整配置示例
 
 ```yaml
-# packages/agent-runtime/agent.yaml
+# agent.yaml
 name: My Coding Agent
 model: hunyuan-t1-latest
 system: |
@@ -177,29 +209,26 @@ metadata:
 
 ---
 
-## 更新 Agent 配置
+## 更新 Agent 配置（`cbagent agent:update`）
 
-**不需要重新部署代码。** 使用 `cbagent agent:update` 命令，通过环境变量注入配置，约 8 秒生效：
+**不需要重新部署代码。** 约 8 秒生效：
 
 ```bash
 # 更新 system prompt
-cbagent agent:update --id <agent-id> \
-  --system "You are a strict code reviewer."
+cbagent agent:update --system "You are a strict code reviewer."
+
+# 更新模型
+cbagent agent:update --model deepseek-v3.2
 
 # 从 YAML 文件加载完整配置
-cbagent agent:update --id <agent-id> \
-  --file ./new-config.yaml
-
-# 更新 model
-cbagent agent:update --id <agent-id> \
-  --model deepseek-v3.2
+cbagent agent:update --file ./new-config.yaml
 
 # 添加 MCP 服务器
-cbagent agent:update --id <agent-id> \
+cbagent agent:update \
   --mcp-servers '[{"type":"url","name":"linear","url":"https://mcp.linear.app/sse"}]'
 
-# 修改工具权限（bash 需要确认）
-cbagent agent:update --id <agent-id> \
+# 修改工具权限
+cbagent agent:update \
   --tools '[{"type":"agent_toolset","configs":[{"name":"bash","permission_policy":{"type":"always_ask"}}]}]'
 ```
 
@@ -208,55 +237,62 @@ cbagent agent:update --id <agent-id> \
 ```
 cbagent agent:update --system "new prompt"
     │
-    ├─ 1. GET 当前配置（via ACP initialize）
-    ├─ 2. Merge 用户指定的字段
-    ├─ 3. JSON 序列化为 AGENT_CONFIG
-    └─ 4. tcb agent update <id> --env "AGENT_CONFIG=..." (~8s)
+    ├─ 1. 从运行中的 Agent 获取当前配置（via ACP initialize）
+    ├─ 2. Merge 用户指定的字段（只改你传的，其余保留）
+    ├─ 3. 序列化为 AGENT_CONFIG_B64（Base64 编码）
+    └─ 4. 写入环境变量: tcb agent update <id> --env "..." (~8s)
 ```
 
-### 配置加载优先级
+### 配置加载优先级（Runtime 内部）
 
 ```
-AGENT_CONFIG 环境变量 (JSON)     ← cbagent agent:update 写入
+AGENT_CONFIG / AGENT_CONFIG_B64 环境变量    ← cbagent agent:update 写入
         ↓ fallback
-agent.yaml 文件                  ← 随代码部署
+agent.yaml 文件                             ← 随代码部署
         ↓ fallback
-AGENT_MODEL + AGENT_SYSTEM 环境变量  ← 向后兼容
+AGENT_MODEL + AGENT_SYSTEM 环境变量         ← 向后兼容
 ```
 
 ---
 
-## CLI 参考 (`cbagent`)
+## CLI 参考（`cbagent`）
+
+`cbagent` 是本项目提供的 CLI 工具，用于管理 Agent 配置和进行对话。
+
+> **注意区分**：`tcb agent` 是 CloudBase 平台 CLI，用于部署/删除底层云函数；`cbagent` 是本项目 CLI，用于配置和使用 Agent。
 
 ### 环境变量
 
 | 变量 | 说明 |
 |------|------|
 | `CLOUDBASE_ENV_ID` | CloudBase 环境 ID |
-| `CLOUDBASE_AGENT_ID` | 默认 Agent ID（可免 --id） |
+| `CLOUDBASE_AGENT_ID` | 默认 Agent ID（可免 `--id`） |
 | `CLOUDBASE_API_KEY` | API Key（JWT Token） |
 | `CLOUDBASE_SERVER_URL` | 自定义 Server URL |
 
 ### 命令列表
 
 ```bash
-# Agent 管理
-cbagent agent:create  --name <name> [--model <model>] [--system <prompt>]
-cbagent agent:list
-cbagent agent:get     --id <agent-id>
-cbagent agent:delete  --id <agent-id>
-cbagent agent:update  --id <agent-id> [--system|--model|--file|--tools|...]
+# ─── Agent 配置 ───────────────────────────────────────────
+cbagent agent:update  [--id <id>] [options]   # 更新配置（~8s，不重新部署）
+  --system <prompt>       更新 system prompt
+  --model <model>         更新模型
+  --name <name>           更新名称
+  --file <path>           从 YAML/JSON 文件加载配置
+  --tools <json>          替换 tools 数组
+  --mcp-servers <json>    替换 mcp_servers 数组
+  --skills <json>         替换 skills 数组
 
-# Session 管理
-cbagent session:create --agent <agent-id>
+# ─── 对话 ─────────────────────────────────────────────────
+cbagent run   --agent <id> --message "..."    # 一次性对话（自动创建/销毁 session）
+cbagent chat  --session <id> --message "..."  # 向已有 session 发消息
+cbagent repl  --agent <id>                    # 交互式 REPL
+
+# ─── Session 管理 ─────────────────────────────────────────
+cbagent session:create --agent <id>
 cbagent session:list
 cbagent session:get    --id <session-id>
 cbagent session:delete --id <session-id>
-
-# 对话
-cbagent run   --agent <agent-id> --message "Write hello world in Python"
-cbagent chat  --session <session-id> --message "Add unit tests"
-cbagent repl  --agent <agent-id>
 ```
 
 ---
@@ -345,6 +381,28 @@ await client.sessions.delete(session.id);
                                 └──────────────────────────────────────┘
 ```
 
+### 两层命令的关系
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  tcb agent create/update/delete                             │
+│  (CloudBase 平台 CLI)                                       │
+│                                                             │
+│  职责：部署/删除云函数，管理底层基础设施                        │
+│  频率：首次部署 + 代码更新时使用                               │
+│  耗时：~60s（上传代码包）                                     │
+└─────────────────────────────────────────────────────────────┘
+                            ↕
+┌─────────────────────────────────────────────────────────────┐
+│  cbagent agent:update / run / chat / repl                   │
+│  (本项目 CLI)                                                │
+│                                                             │
+│  职责：配置 Agent 行为 + 对话交互                             │
+│  频率：日常使用                                               │
+│  耗时：~8s（只更新环境变量）                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### 协议说明
 
 - **ACP (Agent Client Protocol)**: JSON-RPC 2.0 over HTTP + NDJSON 流式通知。SDK 默认使用此协议。
@@ -353,16 +411,17 @@ await client.sessions.delete(session.id);
 
 ---
 
-## 部署
+## 部署详解
 
-### SCF Web 函数部署（推荐）
+### 首次部署（`tcb agent create`）
+
+只需执行一次，将 runtime 代码部署为 SCF Web 函数：
 
 ```bash
 # 1. 构建
-cd packages/agent-runtime
-npm run build
+cd packages/agent-runtime && npm run build
 
-# 2. 准备部署目录
+# 2. 打包
 mkdir -p /tmp/deploy
 cp -r dist package.json scf_bootstrap agent.yaml /tmp/deploy/
 cd /tmp/deploy && npm install --production
@@ -379,17 +438,22 @@ tcb agent create \
 
 # 4. 验证
 tcb agent detail <agent-id> -e <env-id>
-# Ready: ✅ 已就绪
 ```
 
-### NoSQL 集合
+### 代码更新（`tcb agent update --code`）
 
-首次部署需要创建 `acp_sessions` 集合：
+当 runtime 代码变更时（新功能、bug fix），重新上传代码：
 
-```javascript
-const cloudbase = require("@cloudbase/node-sdk");
-const app = cloudbase.init({ env: "<env-id>", secretId: "<ak>", secretKey: "<sk>" });
-await app.database().createCollection("acp_sessions");
+```bash
+tcb agent update <agent-id> --code /tmp/deploy -e <env-id>
+```
+
+### 配置更新（`cbagent agent:update`）
+
+日常改配置不需要动代码，直接更新：
+
+```bash
+cbagent agent:update --system "New prompt" --model deepseek-v3.2
 ```
 
 ### 环境变量
@@ -397,65 +461,12 @@ await app.database().createCollection("acp_sessions");
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `CLOUDBASE_ENV_ID` | **必需**。CloudBase 环境 ID | - |
-| `AGENT_CONFIG` | 完整 JSON 配置（由 `agent:update` 写入） | - |
+| `AGENT_CONFIG_B64` | 完整 JSON 配置（Base64，由 `cbagent agent:update` 写入） | - |
+| `AGENT_CONFIG` | 完整 JSON 配置（明文，手动设置时可用） | - |
 | `AGENT_MODEL` | 覆盖模型名 | `hunyuan-t1-latest` |
 | `AGENT_SYSTEM` | 覆盖 system prompt | `You are a helpful assistant.` |
 | `AGENT_NAME` | 覆盖 agent 名称 | `cloudbase-managed-agent` |
 | `PORT` | 服务监听端口 | `9000` |
-
----
-
-## 完整示例：从零到对话
-
-```bash
-# === 环境准备 ===
-export ENV_ID=test-6g2rfs50c69b7fb8
-export API_KEY="<your-jwt-token>"
-
-# === 部署 Agent ===
-cd packages/agent-runtime
-npm run build
-
-mkdir -p /tmp/deploy
-cp -r dist package.json scf_bootstrap agent.yaml /tmp/deploy/
-cd /tmp/deploy && npm install --production
-
-tcb agent create --name demo-agent --runtime Nodejs20.19 --code . \
-  --env "CLOUDBASE_ENV_ID=$ENV_ID" -e $ENV_ID
-
-# 等待就绪...
-tcb agent detail <agent-id> -e $ENV_ID
-
-# === 创建 NoSQL 集合 ===
-node -e "
-  const cb = require('@cloudbase/node-sdk');
-  cb.init({env:'$ENV_ID',secretId:'<ak>',secretKey:'<sk>'})
-    .database().createCollection('acp_sessions')
-    .then(() => console.log('OK'))
-"
-
-# === 更新配置 ===
-cbagent agent:update --id <agent-id> --env $ENV_ID \
-  --system "You are a Python expert. Always include type hints."
-
-# === 对话测试 ===
-cbagent run --agent <agent-id> --message "Write a fibonacci function"
-
-# === 或用 SDK ===
-cat > test.ts << 'EOF'
-import CloudbaseAgents from "@cloudbase/managed-agent";
-const client = new CloudbaseAgents({
-  baseURL: `https://${process.env.ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/<agent-id>`,
-  apiKey: process.env.API_KEY,
-});
-const session = await client.sessions.create({});
-for await (const e of client.sessions.prompt(session.id, "Hello!")) {
-  if (e.type === "chunk") process.stdout.write(e.text);
-}
-await client.sessions.delete(session.id);
-EOF
-npx tsx test.ts
-```
 
 ---
 
@@ -482,7 +493,7 @@ cloudbase-managed-agent/
 │   └── agent-runtime/        # 服务端运行时（部署到 SCF）
 │       ├── src/
 │       │   ├── index.ts      # Express 服务入口
-│       │   ├── config.ts     # YAML 配置加载
+│       │   ├── config.ts     # 配置加载（AGENT_CONFIG > YAML > env vars）
 │       │   ├── acp-endpoint.ts # ACP JSON-RPC 处理
 │       │   └── hunyuan-agent.ts # AI Agent 核心逻辑
 │       ├── agent.yaml        # 默认配置模板
