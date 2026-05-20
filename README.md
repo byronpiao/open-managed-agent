@@ -51,11 +51,6 @@ cbagent agent:create \
 ```
 
 > 首次部署前需构建代码：`cd packages/agent-runtime && npm run build`
->
-> 部署后还需创建 NoSQL 集合（Session 存储）：
-> ```bash
-> node -e "require('@cloudbase/node-sdk').init({env:'<env-id>',secretId:'<ak>',secretKey:'<sk>'}).database().createCollection('acp_sessions').then(()=>console.log('OK'))"
-> ```
 
 ### 3. 配置 Agent
 
