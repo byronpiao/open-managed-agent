@@ -176,17 +176,30 @@ for await (const event of client.sessions.prompt(session.id, "你有什么 MCP �
 await client.sessions.delete(session.id);`;
 
   printCode(sdkCode1);
-  console.log(dim("\n  执行中...\n"));
+  console.log(dim("\n  执行中（首次冷启动可能需要 10-30s）...\n"));
 
   try {
-    await sleep(3000); // cold start buffer
     const { default: CloudbaseAgents } = await import(resolve(ROOT, "packages/sdk/dist/index.js"));
     const client = new CloudbaseAgents({
       baseURL: `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}`,
       apiKey: API_KEY,
     });
 
-    const session = await client.sessions.create({ title: "e2e-pre-update" });
+    // Retry loop: first cold start after deploy may take 10-30s
+    let session = null;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      try {
+        await sleep(attempt === 1 ? 10000 : 5000);
+        session = await client.sessions.create({ title: "e2e-pre-update" });
+        break;
+      } catch (err) {
+        lastErr = err;
+        process.stdout.write(dim(`  ... 重试 ${attempt}/6 (cold start)\r`));
+      }
+    }
+    if (!session) throw lastErr || new Error("Failed to create session after retries");
+
     console.log(`  Session ID: ${session.id}`);
     console.log(`  Prompt: "你有什么 MCP 工具和 Skill？简短回答。"\n`);
 
@@ -200,7 +213,7 @@ await client.sessions.delete(session.id);`;
     console.log(green("\n  → Step 4 通过 ✔"));
   } catch (err) {
     console.log(red(`\n  ❌ SDK 调用失败: ${err.message}`));
-    console.log(dim("  (可能是 Agent 首次冷启动，node_modules 未打包)"));
+    console.log(dim("  (Agent 首次冷启动超时，可稍后重试)"));
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -243,23 +256,33 @@ POST https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}/acp
 Body: {"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}`;
   printCode(initCode);
 
-  await sleep(5000);
-  console.log(dim("\n  执行中...\n"));
+  await sleep(8000);
+  console.log(dim("\n  执行中（等待配置生效）...\n"));
 
   try {
-    const res = await fetch(
-      `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}/acp`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
-        body: JSON.stringify({
-          jsonrpc: "2.0", id: 1, method: "initialize",
-          params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "e2e", version: "1.0" } },
-        }),
-      }
-    );
-    const data = await res.json();
-    const cfg = data?.result?.agentConfig;
+    // Retry: config update triggers a cold restart
+    let data = null;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const res = await fetch(
+          `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}/acp`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+            body: JSON.stringify({
+              jsonrpc: "2.0", id: 1, method: "initialize",
+              params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "e2e", version: "1.0" } },
+            }),
+          }
+        );
+        data = await res.json();
+        if (data?.result?.agentConfig) break;
+      } catch {}
+      await sleep(5000);
+      process.stdout.write(dim(`  ... 重试 ${attempt}/4\r`));
+    }
+    if (!data?.result?.agentConfig) throw new Error("initialize 未返回有效配置");
+    const cfg = data.result.agentConfig;
     console.log(`  Agent Name:   ${data?.result?.agentInfo?.name}`);
     console.log(`  Model:        ${cfg?.model}`);
     console.log(`  Tools:        ${cfg?.tools?.length ?? 0} items`);
