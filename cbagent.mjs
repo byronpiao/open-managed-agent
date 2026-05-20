@@ -28,6 +28,7 @@ import { parseArgs } from "util";
 import { createInterface } from "readline";
 import { execSync } from "child_process";
 import { readFileSync, existsSync } from "fs";
+import { resolve } from "path";
 
 // ── Load .env file ──────────────────────────────────────────────────────────
 const envFile = new URL(".env", import.meta.url).pathname;
@@ -246,9 +247,35 @@ const COMMANDS = {
     console.log(dim(`  runtime: ${runtime}`));
     console.log();
 
+    // Prepare deploy directory: build + install deps
+    const deployDir = resolve(code, ".deploy");
+    try {
+      execSync(`rm -rf "${deployDir}" && mkdir -p "${deployDir}"`, { encoding: "utf-8" });
+
+      // Copy dist, package.json, scf_bootstrap, agent.yaml
+      const filesToCopy = ["dist", "package.json", "scf_bootstrap"];
+      if (existsSync(resolve(code, "agent.yaml"))) filesToCopy.push("agent.yaml");
+      if (existsSync(resolve(code, "skills"))) filesToCopy.push("skills");
+      for (const f of filesToCopy) {
+        const src = resolve(code, f);
+        if (existsSync(src)) {
+          execSync(`cp -r "${src}" "${deployDir}/"`, { encoding: "utf-8" });
+        }
+      }
+
+      // Install production deps
+      process.stdout.write(dim("  Installing dependencies... "));
+      execSync("npm install --production --silent 2>/dev/null", { cwd: deployDir, encoding: "utf-8", timeout: 120000 });
+      console.log(green("OK"));
+    } catch (err) {
+      console.log(yellow(`  Warning: deploy prep failed, using code dir directly: ${err.message?.split("\n")[0]}`));
+    }
+
+    const actualCode = existsSync(resolve(deployDir, "node_modules")) ? deployDir : code;
+
     try {
       const alias = toAlias(name);
-      const cmd = `tcb agent create --name "${alias}" --runtime ${runtime} --code "${code}" --timeout 7200 --memory-size 256 --env "${envVars}" -e ${envId} --json`;
+      const cmd = `tcb agent create --name "${alias}" --runtime ${runtime} --code "${actualCode}" --timeout 7200 --memory-size 256 --env "${envVars}" -e ${envId} --json`;
       const result = execSync(cmd, { encoding: "utf-8", timeout: 300000 });
       const data = JSON.parse(result.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
 
@@ -258,13 +285,16 @@ const COMMANDS = {
         console.log(dim(`  runtime: ${runtime}`));
         console.log();
         console.log("Next steps:");
-        console.log(dim(`  1. Wait for ready: tcb agent detail ${data.data.agentId} -e ${envId}`));
+        console.log(dim(`  1. Wait for ready: cbagent agent:get --id ${data.data.agentId}`));
         console.log(dim(`  2. Update config:  cbagent agent:update --id ${data.data.agentId} --file agent.yaml`));
         console.log(dim(`  3. Start chatting: cbagent run --agent ${data.data.agentId} --message "Hello"`));
       } else {
-        console.log(yellow("Agent creation submitted. Check status with: tcb agent list -e " + envId));
+        console.log(yellow("Agent creation submitted. Check status with: cbagent agent:list"));
       }
+      // Cleanup deploy dir
+      try { execSync(`rm -rf "${deployDir}"`, { encoding: "utf-8" }); } catch {}
     } catch (err) {
+      try { execSync(`rm -rf "${deployDir}"`, { encoding: "utf-8" }); } catch {}
       throw new Error(`Failed to create agent: ${err.message}`);
     }
   },

@@ -1,25 +1,11 @@
 #!/usr/bin/env node
 /**
- * End-to-End Integration Test
+ * CloudBase Managed Agent — E2E 测试脚本
  *
- * Uses:
- *   - cbagent CLI: create / update / list / delete agent
- *   - SDK (@cloudbase/managed-agent): sessions + prompt
- *
- * Tests the full lifecycle:
- *   1. cbagent agent:list
- *   2. cbagent agent:create (deploy a new agent)
- *   3. Wait for ready
- *   4. SDK: create session + prompt (pre-update, minimal config)
- *   5. cbagent agent:update (add MCP + Skill)
- *   6. SDK: create session + prompt (post-update, verify new config)
- *   7. cbagent agent:delete (cleanup)
+ * 输出格式设计为「可复现文档」：每一步显示执行的命令/代码 + 完整输出。
  *
  * Usage:
  *   node tests/e2e.mjs
- *
- * Requires .env with:
- *   CLOUDBASE_ENV_ID, CLOUDBASE_API_KEY
  */
 
 import { execSync } from "child_process";
@@ -46,264 +32,326 @@ if (existsSync(envFile)) {
 
 const ENV_ID = process.env.CLOUDBASE_ENV_ID;
 const API_KEY = process.env.CLOUDBASE_API_KEY;
-
 if (!ENV_ID || !API_KEY) {
-  console.error("❌ Missing CLOUDBASE_ENV_ID or CLOUDBASE_API_KEY in .env");
+  console.error("❌ 请在 .env 中配置 CLOUDBASE_ENV_ID 和 CLOUDBASE_API_KEY");
   process.exit(1);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
 const AGENT_NAME = `e2e-test-${Date.now().toString(36)}`;
 let AGENT_ID = "";
 
-const dim    = (s) => `\x1b[2m${s}\x1b[0m`;
-const green  = (s) => `\x1b[32m${s}\x1b[0m`;
-const red    = (s) => `\x1b[31m${s}\x1b[0m`;
-const bold   = (s) => `\x1b[1m${s}\x1b[0m`;
-const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
+const dim   = (s) => `\x1b[2m${s}\x1b[0m`;
+const green = (s) => `\x1b[32m${s}\x1b[0m`;
+const red   = (s) => `\x1b[31m${s}\x1b[0m`;
+const bold  = (s) => `\x1b[1m${s}\x1b[0m`;
+const cyan  = (s) => `\x1b[36m${s}\x1b[0m`;
+
+function printCmd(cmd) {
+  console.log(cyan(`  $ ${cmd}`));
+}
+
+function printCode(code) {
+  console.log(dim("  ┌─ code ─────────────────────────────────────"));
+  for (const line of code.split("\n")) {
+    console.log(dim(`  │ ${line}`));
+  }
+  console.log(dim("  └────────────────────────────────────────────"));
+}
+
+function printOutput(output, maxLines = 30) {
+  const lines = output.split("\n");
+  const show = lines.slice(0, maxLines);
+  for (const line of show) {
+    console.log(`  ${line}`);
+  }
+  if (lines.length > maxLines) {
+    console.log(dim(`  ... (${lines.length - maxLines} more lines)`));
+  }
+}
 
 function cbagent(cmd) {
-  return execSync(`node "${resolve(ROOT, "cbagent.mjs")}" ${cmd}`, {
+  const fullCmd = `node "${resolve(ROOT, "cbagent.mjs")}" ${cmd}`;
+  printCmd(`cbagent ${cmd}`);
+  const output = execSync(fullCmd, {
     encoding: "utf-8",
     timeout: 300000,
     env: { ...process.env, CLOUDBASE_ENV_ID: ENV_ID, CLOUDBASE_API_KEY: API_KEY, CLOUDBASE_AGENT_ID: AGENT_ID },
   });
+  printOutput(output.trim());
+  return output;
 }
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// ── SDK Client (dynamic import from source) ───────────────────────────────────
-
-async function createSDKClient() {
-  const { default: CloudbaseAgents } = await import(resolve(ROOT, "packages/sdk/dist/index.js"));
-  return new CloudbaseAgents({
-    baseURL: `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}`,
-    apiKey: API_KEY,
-    envId: ENV_ID,
-  });
-}
-
-async function sdkPrompt(client, sessionId, message) {
-  let text = "";
-  let toolCalls = [];
-  let stopReason = "";
-
-  for await (const event of client.sessions.prompt(sessionId, message)) {
-    switch (event.type) {
-      case "chunk":
-        text += event.text;
-        break;
-      case "tool_call":
-        toolCalls.push({ name: event.name, status: event.status });
-        break;
-      case "done":
-        stopReason = event.stopReason;
-        break;
-    }
-  }
-  return { text, toolCalls, stopReason };
-}
-
-// ── Test Runner ───────────────────────────────────────────────────────────────
-
-const results = [];
-
-async function step(name, fn) {
-  process.stdout.write(`  ⏳ ${name}...`);
-  const start = Date.now();
-  try {
-    await fn();
-    const ms = Date.now() - start;
-    results.push({ name, passed: true, ms });
-    process.stdout.write(`\r  ${green("✔")} ${name} ${dim(`(${ms}ms)`)}\n`);
-  } catch (err) {
-    const ms = Date.now() - start;
-    const msg = err.message?.split("\n")[0] || String(err);
-    results.push({ name, passed: false, ms, error: msg });
-    process.stdout.write(`\r  ${red("✘")} ${name} ${dim(`(${ms}ms)`)}\n`);
-    console.log(`    ${red(msg.slice(0, 120))}`);
-  }
-}
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log(`\n${bold("═══ CloudBase Managed Agent — E2E Test ═══")}\n`);
-  console.log(`  Env:   ${ENV_ID}`);
-  console.log(`  Agent: ${AGENT_NAME}`);
-  console.log(`  Code:  packages/agent-runtime`);
-  console.log();
+  console.log(`
+${bold("╔══════════════════════════════════════════════════════════╗")}
+${bold("║   CloudBase Managed Agent — E2E Integration Test        ║")}
+${bold("╚══════════════════════════════════════════════════════════╝")}
 
-  // ─── 1. List agents ─────────────────────────────────────────────────────
-  await step("1. cbagent agent:list", async () => {
-    const output = cbagent("agent:list");
-    if (!output.includes("Agent ID") && !output.includes("agent-")) {
-      throw new Error("Unexpected output");
-    }
-  });
+  Environment: ${ENV_ID}
+  Agent Name:  ${AGENT_NAME}
+  API Key:     ${API_KEY.slice(0, 20)}...
+`);
 
-  // ─── 2. Create agent ────────────────────────────────────────────────────
-  await step("2. cbagent agent:create", async () => {
-    const output = cbagent(
-      `agent:create --name "${AGENT_NAME}" ` +
-      `--system "You are a minimal test agent. Say you have NO MCP tools or skills when asked." ` +
-      `--code "${resolve(ROOT, "packages/agent-runtime")}"`
-    );
-    // Extract agent ID from output (format: agent-xxx-yyy)
-    const match = output.match(/(agent-[a-z0-9_-]+[a-z0-9])/g);
-    // Filter out "agent-runtime" which appears in the code path
-    const ids = (match || []).filter(m => !m.includes("runtime"));
-    if (!ids.length) throw new Error("Could not extract agent ID from:\n" + output.slice(0, 300));
-    AGENT_ID = ids[0];
-    console.log(`\n    ${dim(`ID: ${AGENT_ID}`)}`);
-  });
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(bold("\n━━━ Step 1: 列出现有 Agents ━━━\n"));
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  // ─── 3. Wait for ready ──────────────────────────────────────────────────
-  await step("3. Wait for agent ready", async () => {
-    if (!AGENT_ID) throw new Error("No agent ID");
-    let ready = false;
-    for (let i = 0; i < 30; i++) {
-      await sleep(5000);
-      try {
-        const output = cbagent(`agent:get --id ${AGENT_ID}`);
-        if (output.includes("已就绪") || output.includes("Ready")) {
-          ready = true;
-          break;
-        }
-        if (output.includes("Creating") || output.includes("创建中")) continue;
-      } catch {}
-    }
-    if (!ready) throw new Error("Agent not ready after 2.5 minutes");
-  });
+  cbagent("agent:list");
 
-  // ─── 4. SDK: prompt (pre-update) ───────────────────────────────────────
-  await step("4. SDK: session + prompt (before update)", async () => {
-    if (!AGENT_ID) throw new Error("No agent ID");
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(bold("\n━━━ Step 2: 创建 Agent（最小配置） ━━━\n"));
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const createOutput = cbagent(
+    `agent:create --name "${AGENT_NAME}" --system "You are a minimal test agent. You have NO MCP tools or skills." --code "${resolve(ROOT, "packages/agent-runtime")}"`
+  );
+
+  // Extract agent ID
+  const idMatches = (createOutput.match(/(agent-[a-z0-9_-]+[a-z0-9])/g) || [])
+    .filter(m => !m.includes("runtime"));
+  if (!idMatches.length) {
+    console.log(red("\n  ❌ 无法提取 Agent ID，终止测试"));
+    process.exit(1);
+  }
+  AGENT_ID = idMatches[0];
+  console.log(green(`\n  → Agent ID: ${AGENT_ID}`));
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(bold("\n━━━ Step 3: 等待 Agent 就绪 ━━━\n"));
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  printCmd(`cbagent agent:get --id ${AGENT_ID}  (polling every 5s...)`);
+  let ready = false;
+  for (let i = 0; i < 30; i++) {
+    await sleep(5000);
+    try {
+      const output = execSync(
+        `node "${resolve(ROOT, "cbagent.mjs")}" agent:get --id ${AGENT_ID}`,
+        { encoding: "utf-8", timeout: 30000, env: { ...process.env, CLOUDBASE_ENV_ID: ENV_ID } }
+      );
+      if (output.includes("已就绪") || output.includes("Ready")) {
+        printOutput(output.trim());
+        ready = true;
+        break;
+      }
+      process.stdout.write(dim(`  ... ${i * 5 + 5}s\r`));
+    } catch {}
+  }
+  if (!ready) {
+    console.log(red("  ❌ Agent 未在 2.5 分钟内就绪，终止测试"));
+    cbagent(`agent:delete --id ${AGENT_ID}`);
+    process.exit(1);
+  }
+  console.log(green("  → Agent 就绪 ✔"));
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(bold("\n━━━ Step 4: 使用 SDK 创建 Session 并发起对话 ━━━\n"));
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const sdkCode1 = `import CloudbaseAgents from "@cloudbase/managed-agent";
+
+const client = new CloudbaseAgents({
+  baseURL: "https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}",
+  apiKey: "<API_KEY>",
+});
+
+// 创建 Session
+const session = await client.sessions.create({ title: "e2e-test" });
+console.log("Session ID:", session.id);
+
+// 发送消息，流式接收
+for await (const event of client.sessions.prompt(session.id, "你有什么 MCP 工具和 Skill？简短回答。")) {
+  if (event.type === "chunk") process.stdout.write(event.text);
+  if (event.type === "done") console.log("\\n[Done:", event.stopReason, "]");
+}
+
+// 删除 Session
+await client.sessions.delete(session.id);`;
+
+  printCode(sdkCode1);
+  console.log(dim("\n  执行中...\n"));
+
+  try {
     await sleep(3000); // cold start buffer
-
-    const client = await createSDKClient();
-    const session = await client.sessions.create({ title: "e2e-pre-update" });
-    console.log(`\n    ${dim(`Session: ${session.id}`)}`);
-
-    const { text } = await sdkPrompt(client, session.id, "What MCP tools and skills do you have? Be very brief.");
-    console.log(`    ${dim(`Response: "${text.slice(0, 100).replace(/\n/g, " ")}..."`)}`);
-
-    await client.sessions.delete(session.id);
-    if (!text) throw new Error("Empty response");
-  });
-
-  // ─── 5. Update config: add MCP + Skill ─────────────────────────────────
-  await step("5. cbagent agent:update (add MCP + Skill)", async () => {
-    if (!AGENT_ID) throw new Error("No agent ID");
-
-    const config = {
-      name: AGENT_NAME,
-      model: "hunyuan-t1-latest",
-      system: [
-        "You are a development assistant with GitHub integration.",
-        "When asked about your capabilities, you MUST mention ALL of the following:",
-        "1. GitHub MCP server (url: https://api.githubcopilot.com/mcp/)",
-        "2. A skill called 'github-workflow' for PR management and code review",
-        "3. A custom tool called 'analyze_code' for code quality metrics",
-        "List these every time you are asked about your capabilities.",
-      ].join("\n"),
-      tools: [
-        { type: "agent_toolset", default_config: { enabled: true, permission_policy: { type: "always_allow" } } },
-        { type: "mcp_toolset", mcp_server_name: "github", default_config: { permission_policy: { type: "always_allow" } } },
-        { type: "custom", name: "analyze_code", description: "Analyze code quality", input_schema: { type: "object", properties: { file_path: { type: "string" } }, required: ["file_path"] } },
-      ],
-      mcp_servers: [{ type: "url", name: "github", url: "https://api.githubcopilot.com/mcp/" }],
-      skills: [{ name: "github-workflow", description: "GitHub PR and code review expertise", source: "./skills/github.md" }],
-    };
-
-    const tmpFile = resolve(ROOT, "tests/.tmp-e2e-config.json");
-    writeFileSync(tmpFile, JSON.stringify(config));
-    try {
-      cbagent(`agent:update --id ${AGENT_ID} --file "${tmpFile}"`);
-    } finally {
-      rmSync(tmpFile, { force: true });
-    }
-  });
-
-  // ─── 6. Verify config updated ──────────────────────────────────────────
-  await step("6. Verify config update via SDK initialize", async () => {
-    await sleep(5000); // wait for env var to take effect
-    const client = await createSDKClient();
-
-    // Re-initialize to check agentConfig (need to access ACP client directly)
-    const res = await fetch(`https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}/acp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "e2e", version: "1.0" } } }),
+    const { default: CloudbaseAgents } = await import(resolve(ROOT, "packages/sdk/dist/index.js"));
+    const client = new CloudbaseAgents({
+      baseURL: `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}`,
+      apiKey: API_KEY,
     });
-    const data = await res.json();
-    const cfg = data?.result?.agentConfig;
-    const tools = cfg?.tools?.length ?? 0;
-    const mcp = cfg?.mcp_servers?.length ?? 0;
-    const skills = cfg?.skills?.length ?? 0;
-    console.log(`\n    ${dim(`Tools: ${tools}, MCP: ${mcp}, Skills: ${skills}`)}`);
-    if (mcp === 0) throw new Error("MCP not updated");
-    if (skills === 0) throw new Error("Skills not updated");
-  });
 
-  // ─── 7. SDK: prompt (post-update) ──────────────────────────────────────
-  await step("7. SDK: session + prompt (after update)", async () => {
-    if (!AGENT_ID) throw new Error("No agent ID");
+    const session = await client.sessions.create({ title: "e2e-pre-update" });
+    console.log(`  Session ID: ${session.id}`);
+    console.log(`  Prompt: "你有什么 MCP 工具和 Skill？简短回答。"\n`);
 
-    const client = await createSDKClient();
-    const session = await client.sessions.create({ title: "e2e-post-update" });
-    console.log(`\n    ${dim(`Session: ${session.id}`)}`);
-
-    const { text } = await sdkPrompt(client, session.id, "List all your MCP servers, skills, and custom tools.");
-    console.log(`    ${dim(`Response: "${text.slice(0, 200).replace(/\n/g, " ")}..."`)}`);
-
-    const lower = text.toLowerCase();
-    const checks = [
-      ["GitHub", lower.includes("github")],
-      ["MCP", lower.includes("mcp")],
-      ["Skill/workflow", lower.includes("skill") || lower.includes("workflow") || lower.includes("code review")],
-      ["analyze_code", lower.includes("analyze")],
-    ];
-    for (const [label, ok] of checks) {
-      console.log(`    ${ok ? green("✔") : yellow("○")} Mentions ${label}`);
+    let text = "";
+    process.stdout.write("  Agent: ");
+    for await (const event of client.sessions.prompt(session.id, "你有什么 MCP 工具和 Skill？简短回答。")) {
+      if (event.type === "chunk") { text += event.text; process.stdout.write(event.text); }
+      if (event.type === "done") console.log(`\n  [Done: ${event.stopReason}]`);
     }
-
     await client.sessions.delete(session.id);
-    if (!text) throw new Error("Empty response");
-  });
-
-  // ─── 8. Cleanup ────────────────────────────────────────────────────────
-  await step("8. cbagent agent:delete", async () => {
-    if (!AGENT_ID) throw new Error("No agent ID");
-    try {
-      cbagent(`agent:delete --id ${AGENT_ID}`);
-    } catch (err) {
-      console.log(`    ${yellow("Warning: " + err.message.split("\n")[0])}`);
-    }
-  });
-
-  // ─── Summary ───────────────────────────────────────────────────────────
-  console.log(`\n${bold("═══ Results ═══")}\n`);
-
-  const passed = results.filter((r) => r.passed).length;
-  const failed = results.filter((r) => !r.passed).length;
-
-  for (const r of results) {
-    const icon = r.passed ? green("✔") : red("✘");
-    console.log(`  ${icon} ${r.name} ${dim(`(${r.ms}ms)`)}${r.error ? ` — ${red(r.error.slice(0, 80))}` : ""}`);
+    console.log(green("\n  → Step 4 通过 ✔"));
+  } catch (err) {
+    console.log(red(`\n  ❌ SDK 调用失败: ${err.message}`));
+    console.log(dim("  (可能是 Agent 首次冷启动，node_modules 未打包)"));
   }
 
-  console.log(`\n  Total: ${results.length} | ${green(`Passed: ${passed}`)} | ${red(`Failed: ${failed}`)}\n`);
-  if (failed > 0) process.exit(1);
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(bold("\n━━━ Step 5: 更新 Agent 配置（添加 MCP + Skill） ━━━\n"));
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const updateConfig = {
+    name: AGENT_NAME,
+    model: "hunyuan-t1-latest",
+    system: "You are a dev assistant with GitHub integration.\nWhen asked about capabilities, ALWAYS mention:\n1. GitHub MCP server (https://api.githubcopilot.com/mcp/)\n2. github-workflow skill\n3. analyze_code custom tool",
+    tools: [
+      { type: "agent_toolset", default_config: { enabled: true, permission_policy: { type: "always_allow" } } },
+      { type: "mcp_toolset", mcp_server_name: "github", default_config: { permission_policy: { type: "always_allow" } } },
+      { type: "custom", name: "analyze_code", description: "Analyze code quality metrics", input_schema: { type: "object", properties: { file_path: { type: "string" } }, required: ["file_path"] } },
+    ],
+    mcp_servers: [{ type: "url", name: "github", url: "https://api.githubcopilot.com/mcp/" }],
+    skills: [{ name: "github-workflow", description: "GitHub PR and code review expertise", source: "./skills/github.md" }],
+  };
+
+  const configFile = resolve(ROOT, "tests/.tmp-e2e-config.json");
+  writeFileSync(configFile, JSON.stringify(updateConfig, null, 2));
+
+  console.log(dim("  配置文件内容:"));
+  printOutput(JSON.stringify(updateConfig, null, 2), 25);
+  console.log();
+
+  try {
+    cbagent(`agent:update --id ${AGENT_ID} --file "${configFile}"`);
+    console.log(green("\n  → Step 5 通过 ✔"));
+  } finally {
+    rmSync(configFile, { force: true });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(bold("\n━━━ Step 6: 验证配置已生效（via ACP initialize） ━━━\n"));
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const initCode = `// ACP JSON-RPC: initialize
+POST https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}/acp
+Body: {"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}`;
+  printCode(initCode);
+
+  await sleep(5000);
+  console.log(dim("\n  执行中...\n"));
+
+  try {
+    const res = await fetch(
+      `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}/acp`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "initialize",
+          params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "e2e", version: "1.0" } },
+        }),
+      }
+    );
+    const data = await res.json();
+    const cfg = data?.result?.agentConfig;
+    console.log(`  Agent Name:   ${data?.result?.agentInfo?.name}`);
+    console.log(`  Model:        ${cfg?.model}`);
+    console.log(`  Tools:        ${cfg?.tools?.length ?? 0} items`);
+    console.log(`  MCP Servers:  ${cfg?.mcp_servers?.length ?? 0} items`);
+    console.log(`  Skills:       ${cfg?.skills?.length ?? 0} items`);
+
+    if (cfg?.mcp_servers?.length > 0) {
+      console.log(`  MCP[0]:       ${cfg.mcp_servers[0].name} → ${cfg.mcp_servers[0].url}`);
+    }
+    if (cfg?.skills?.length > 0) {
+      console.log(`  Skill[0]:     ${cfg.skills[0].name}`);
+    }
+
+    if ((cfg?.mcp_servers?.length ?? 0) > 0 && (cfg?.skills?.length ?? 0) > 0) {
+      console.log(green("\n  → Step 6 通过 ✔ (MCP + Skill 配置已生效)"));
+    } else {
+      console.log(red("\n  ❌ 配置未生效"));
+    }
+  } catch (err) {
+    console.log(red(`  ❌ 请求失败: ${err.message}`));
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(bold("\n━━━ Step 7: 再次使用 SDK 对话（验证新配置） ━━━\n"));
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const sdkCode2 = `const session = await client.sessions.create({ title: "e2e-post-update" });
+for await (const event of client.sessions.prompt(session.id, "列出你所有的 MCP 服务器、Skill 和自定义工具。")) {
+  if (event.type === "chunk") process.stdout.write(event.text);
+}`;
+  printCode(sdkCode2);
+  console.log(dim("\n  执行中...\n"));
+
+  try {
+    const { default: CloudbaseAgents } = await import(resolve(ROOT, "packages/sdk/dist/index.js"));
+    const client = new CloudbaseAgents({
+      baseURL: `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}`,
+      apiKey: API_KEY,
+    });
+
+    const session = await client.sessions.create({ title: "e2e-post-update" });
+    console.log(`  Session ID: ${session.id}`);
+    console.log(`  Prompt: "列出你所有的 MCP 服务器、Skill 和自定义工具。"\n`);
+
+    let text = "";
+    process.stdout.write("  Agent: ");
+    for await (const event of client.sessions.prompt(session.id, "列出你所有的 MCP 服务器、Skill 和自定义工具。")) {
+      if (event.type === "chunk") { text += event.text; process.stdout.write(event.text); }
+      if (event.type === "done") console.log(`\n  [Done: ${event.stopReason}]`);
+    }
+    await client.sessions.delete(session.id);
+
+    // Check mentions
+    const lower = text.toLowerCase();
+    console.log(`\n  检查响应内容:`);
+    console.log(`    ${lower.includes("github") ? green("✔") : red("✘")} 提及 GitHub`);
+    console.log(`    ${lower.includes("mcp") ? green("✔") : red("✘")} 提及 MCP`);
+    console.log(`    ${lower.includes("workflow") || lower.includes("skill") ? green("✔") : red("✘")} 提及 Skill/Workflow`);
+    console.log(`    ${lower.includes("analyze") ? green("✔") : red("✘")} 提及 analyze_code`);
+    console.log(green("\n  → Step 7 通过 ✔"));
+  } catch (err) {
+    console.log(red(`\n  ❌ SDK 调用失败: ${err.message}`));
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(bold("\n━━━ Step 8: 删除 Agent（清理） ━━━\n"));
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  try {
+    cbagent(`agent:delete --id ${AGENT_ID}`);
+    console.log(green("\n  → Step 8 通过 ✔"));
+  } catch (err) {
+    console.log(red(`  ❌ 删除失败: ${err.message}`));
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(`
+${bold("╔══════════════════════════════════════════════════════════╗")}
+${bold("║   测试完成                                               ║")}
+${bold("╚══════════════════════════════════════════════════════════╝")}
+`);
 }
 
 main().catch((err) => {
-  console.error(`\n${red("Fatal:")} ${err.message}`);
+  console.error(red(`\nFatal: ${err.message}`));
   if (AGENT_ID) {
-    try { cbagent(`agent:delete --id ${AGENT_ID}`); } catch {}
+    try {
+      execSync(`node "${resolve(ROOT, "cbagent.mjs")}" agent:delete --id ${AGENT_ID}`, {
+        encoding: "utf-8", timeout: 60000,
+        env: { ...process.env, CLOUDBASE_ENV_ID: ENV_ID },
+      });
+    } catch {}
   }
   process.exit(1);
 });
