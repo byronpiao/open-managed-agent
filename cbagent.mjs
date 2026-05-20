@@ -96,6 +96,28 @@ async function* streamEvents(sessionId) {
   }
 }
 
+// ── Alias generation ──────────────────────────────────────────────────────────
+// tcb requires alias to be ASCII (used as "agent-<alias>"), so we convert
+// Chinese/Unicode names to a stable lowercase-alphanumeric slug with a short
+// hash suffix to avoid collisions.
+function toAlias(name) {
+  // Keep ASCII alphanumeric and hyphens; strip everything else
+  const ascii = name
+    .toLowerCase()
+    .replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, "") // strip CJK
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  // Simple djb2 hash for stable suffix when original had non-ASCII chars
+  const hasCJK = /[\u4e00-\u9fff\u3400-\u4dbf]/.test(name);
+  let hash = 5381;
+  for (let i = 0; i < name.length; i++) hash = ((hash << 5) + hash) ^ name.charCodeAt(i);
+  const suffix = (hash >>> 0).toString(36).slice(0, 6);
+
+  const base = ascii || "agent";
+  return hasCJK ? `${base ? base + "-" : ""}${suffix}` : base;
+}
+
 // ── Pretty printers ───────────────────────────────────────────────────────────
 
 const dim    = (s) => `\x1b[2m${s}\x1b[0m`;
@@ -225,7 +247,8 @@ const COMMANDS = {
     console.log();
 
     try {
-      const cmd = `tcb agent create --name "${name}" --runtime ${runtime} --code "${code}" --timeout 7200 --memory-size 256 --env "${envVars}" -e ${envId} --json`;
+      const alias = toAlias(name);
+      const cmd = `tcb agent create --name "${alias}" --runtime ${runtime} --code "${code}" --timeout 7200 --memory-size 256 --env "${envVars}" -e ${envId} --json`;
       const result = execSync(cmd, { encoding: "utf-8", timeout: 300000 });
       const data = JSON.parse(result.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
 
