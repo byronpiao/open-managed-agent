@@ -166,32 +166,110 @@ const COMMANDS = {
   "agent:create": async (args) => {
     const { name, model, system } = args;
     if (!name) throw new Error("--name is required");
-    const agent = await post("/agents", {
+    const envId = args.env ?? ENV_ID;
+    if (!envId) throw new Error("--env is required (or set CLOUDBASE_ENV_ID)");
+    const code = args.code ?? "./packages/agent-runtime";
+    const runtime = args.runtime ?? "Nodejs20.19";
+
+    // Build initial config
+    const config = {
       name,
-      model:  model  ?? "hunyuan-2.0-instruct-20251111",
-      system: system ?? "",
-    });
-    console.log(green("✅ Agent created:"));
-    printAgent(agent);
+      model: model ?? "hunyuan-t1-latest",
+      system: system ?? "You are a helpful assistant.",
+    };
+
+    // If --file provided, load full config from YAML/JSON
+    if (args.file) {
+      try {
+        const content = readFileSync(args.file, "utf-8");
+        let fileConfig;
+        if (content.trim().startsWith("{")) {
+          fileConfig = JSON.parse(content);
+        } else {
+          const { parse } = await import("yaml");
+          fileConfig = parse(content);
+        }
+        Object.assign(config, fileConfig);
+      } catch (err) {
+        throw new Error(`Failed to load config file: ${err.message}`);
+      }
+    }
+
+    // Override with explicit args
+    if (model) config.model = model;
+    if (system) config.system = system;
+    if (name) config.name = name;
+
+    const configB64 = Buffer.from(JSON.stringify(config)).toString("base64");
+    const envVars = `CLOUDBASE_ENV_ID=${envId},AGENT_CONFIG_B64=${configB64}`;
+
+    console.log(bold("Creating agent..."));
+    console.log(dim(`  name: ${config.name}`));
+    console.log(dim(`  model: ${config.model}`));
+    console.log(dim(`  code: ${code}`));
+    console.log(dim(`  runtime: ${runtime}`));
+    console.log();
+
+    try {
+      const cmd = `tcb agent create --name "${name}" --runtime ${runtime} --code "${code}" --timeout 7200 --memory-size 256 --env "${envVars}" -e ${envId} --json`;
+      const result = execSync(cmd, { encoding: "utf-8", timeout: 300000 });
+      const data = JSON.parse(result.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
+
+      if (data.data?.agentId) {
+        console.log(green(`✅ Agent created: ${data.data.agentId}`));
+        console.log(dim(`  name: ${name}`));
+        console.log(dim(`  runtime: ${runtime}`));
+        console.log();
+        console.log("Next steps:");
+        console.log(dim(`  1. Wait for ready: tcb agent detail ${data.data.agentId} -e ${envId}`));
+        console.log(dim(`  2. Update config:  cbagent agent:update --id ${data.data.agentId} --file agent.yaml`));
+        console.log(dim(`  3. Start chatting: cbagent run --agent ${data.data.agentId} --message "Hello"`));
+      } else {
+        console.log(yellow("Agent creation submitted. Check status with: tcb agent list -e " + envId));
+      }
+    } catch (err) {
+      throw new Error(`Failed to create agent: ${err.message}`);
+    }
   },
 
-  "agent:list": async () => {
-    const { data } = await get("/agents");
-    if (!data.length) return console.log(dim("No agents found."));
-    console.log(bold(`Agents (${data.length}):`));
-    data.forEach(printAgent);
+  "agent:list": async (args) => {
+    const envId = args.env ?? ENV_ID;
+    if (!envId) throw new Error("--env is required (or set CLOUDBASE_ENV_ID)");
+
+    try {
+      const result = execSync(`tcb agent list -e ${envId}`, { encoding: "utf-8", timeout: 30000 });
+      console.log(result);
+    } catch (err) {
+      throw new Error(`Failed to list agents: ${err.message}`);
+    }
   },
 
   "agent:get": async (args) => {
-    if (!args.id) throw new Error("--id is required");
-    const agent = await get(`/agents/${args.id}`);
-    printAgent(agent);
+    const agentId = args.id ?? AGENT_ID;
+    if (!agentId) throw new Error("--id is required (or set CLOUDBASE_AGENT_ID)");
+    const envId = args.env ?? ENV_ID;
+    if (!envId) throw new Error("--env is required (or set CLOUDBASE_ENV_ID)");
+
+    try {
+      const result = execSync(`tcb agent detail ${agentId} -e ${envId}`, { encoding: "utf-8", timeout: 30000 });
+      console.log(result);
+    } catch (err) {
+      throw new Error(`Failed to get agent: ${err.message}`);
+    }
   },
 
   "agent:delete": async (args) => {
-    if (!args.id) throw new Error("--id is required");
-    await del(`/agents/${args.id}`);
-    console.log(green(`✅ Agent ${args.id} deleted.`));
+    const agentId = args.id ?? AGENT_ID;
+    if (!agentId) throw new Error("--id is required (or set CLOUDBASE_AGENT_ID)");
+    const envId = args.env ?? ENV_ID;
+    if (!envId) throw new Error("--env is required (or set CLOUDBASE_ENV_ID)");
+
+    try {
+      const result = execSync(`echo Y | tcb agent delete ${agentId} -e ${envId}`, { encoding: "utf-8", timeout: 60000 });
+      console.log(green(`✅ Agent ${agentId} deleted.`));
+    } catch (err) {
+      throw new Error(`Failed to delete agent: ${err.message}`);
+    }
   },
 
   // ─── Agent Update (config via env var) ───────────────────────────────────
@@ -482,60 +560,59 @@ ${bold("USAGE")}
   cbagent <command> [options]
 
 ${bold("ENVIRONMENT")}
-  CLOUDBASE_SERVER_URL   Server URL (default: http://localhost:3000)
   CLOUDBASE_ENV_ID       CloudBase environment ID
-  CLOUDBASE_AGENT_ID     Default agent ID for agent:update
-  CLOUDBASE_API_KEY      API key for agent ACP access
+  CLOUDBASE_AGENT_ID     Default agent ID (used when --id is omitted)
+  CLOUDBASE_API_KEY      API key (JWT token) for agent access
 
 ${bold("AGENT COMMANDS")}
-  agent:create  --name <name> [--model <model>] [--system <prompt>]
-  agent:list
-  agent:get     --id <agent-id>
-  agent:delete  --id <agent-id>
-  agent:update  --id <agent-id> [options]
-                Update agent configuration (tools, MCP, skills, system prompt)
-                without redeploying code. Uses AGENT_CONFIG env var.
+  agent:create  --name <name> [options]       Create and deploy a new agent
+    --name <name>           Agent name (required)
+    --model <model>         Model (default: hunyuan-t1-latest)
+    --system <prompt>       System prompt
+    --file <path>           Load config from YAML/JSON file
+    --code <path>           Code directory (default: ./packages/agent-runtime)
+    --runtime <runtime>     Runtime (default: Nodejs20.19)
+    --env <envId>           CloudBase environment ID
 
-    Options:
-      --system <prompt>       Update system prompt
-      --model <model>         Update model
-      --name <name>           Update agent name
-      --tools <json>          Replace tools array (JSON)
-      --mcp-servers <json>    Replace mcp_servers array (JSON)
-      --skills <json>         Replace skills array (JSON)
-      --file <path>           Load full config from YAML/JSON file
-      --env <envId>           CloudBase environment ID
-      --api-key <key>         API key for fetching current config
+  agent:update  [--id <id>] [options]         Update agent config (~8s, no redeploy)
+    --system <prompt>       Update system prompt
+    --model <model>         Update model
+    --name <name>           Update agent name
+    --tools <json>          Replace tools array (JSON)
+    --mcp-servers <json>    Replace mcp_servers array (JSON)
+    --skills <json>         Replace skills array (JSON)
+    --file <path>           Load full config from YAML/JSON file
+    --env <envId>           CloudBase environment ID
 
-${bold("ENVIRONMENT COMMANDS")}
-  env:create    --name <name>
-  env:list
-  env:delete    --id <env-id>
+  agent:list    [--env <envId>]               List all agents
+  agent:get     [--id <id>]                   Get agent details
+  agent:delete  [--id <id>]                   Delete an agent
 
 ${bold("SESSION COMMANDS")}
-  session:create  --agent <agent-id> [--env <env-id>] [--title <title>]
+  session:create  --agent <agent-id> [--title <title>]
   session:list
   session:get     --id <session-id>
   session:delete  --id <session-id>
 
 ${bold("MESSAGING COMMANDS")}
-  chat   --session <session-id> --message <text>     Send message, stream response
-  run    --agent <agent-id> --message <text>         One-shot (auto session)
-         [--keep-session]                            Keep session after run
-  repl   --agent <agent-id>                          Interactive REPL
+  run    --agent <id> --message <text>        One-shot (auto session)
+  chat   --session <id> --message <text>      Send message to session
+  repl   --agent <id>                         Interactive REPL
 
 ${bold("EXAMPLES")}
-  # Create an agent
+  # Create and deploy a new agent
   cbagent agent:create --name "Coder" --system "You are a coding assistant"
+
+  # Update config without redeploying
+  cbagent agent:update --system "You are a strict code reviewer"
+  cbagent agent:update --file ./agent.yaml
+  cbagent agent:update --model deepseek-v3.2
 
   # One-shot task
   cbagent run --agent agent_xxx --message "Write a bubble sort in Python"
 
-  # Start a REPL conversation
+  # Interactive REPL
   cbagent repl --agent agent_xxx
-
-  # Send to existing session
-  cbagent chat --session sess_xxx --message "Now add unit tests"
 `);
 }
 

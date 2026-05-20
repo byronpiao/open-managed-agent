@@ -40,34 +40,19 @@ npm install
 npm run build
 ```
 
-### 2. 部署 Agent Runtime
-
-使用 `tcb agent create` 将 runtime 代码部署为云函数（只需执行一次）：
+### 2. 部署 Agent
 
 ```bash
-# 准备部署目录
-cd packages/agent-runtime
-npm run build
-mkdir -p /tmp/deploy
-cp -r dist package.json scf_bootstrap agent.yaml /tmp/deploy/
-cd /tmp/deploy && npm install --production
-
-# 部署
-tcb agent create \
+# 创建并部署（内部自动调用 tcb agent create）
+cbagent agent:create \
   --name my-agent \
-  --runtime Nodejs20.19 \
-  --code . \
-  --timeout 7200 \
-  --memory-size 256 \
-  --env "CLOUDBASE_ENV_ID=<your-env-id>" \
-  -e <your-env-id>
-
-# 验证就绪
-tcb agent detail <agent-id> -e <your-env-id>
-# Ready: ✅ 已就绪
+  --system "You are a helpful coding assistant." \
+  --env <your-env-id>
 ```
 
-> **首次部署还需创建 NoSQL 集合**（Session 存储）：
+> 首次部署前需构建代码：`cd packages/agent-runtime && npm run build`
+>
+> 部署后还需创建 NoSQL 集合（Session 存储）：
 > ```bash
 > node -e "require('@cloudbase/node-sdk').init({env:'<env-id>',secretId:'<ak>',secretKey:'<sk>'}).database().createCollection('acp_sessions').then(()=>console.log('OK'))"
 > ```
@@ -259,7 +244,7 @@ AGENT_MODEL + AGENT_SYSTEM 环境变量         ← 向后兼容
 
 `cbagent` 是本项目提供的 CLI 工具，用于管理 Agent 配置和进行对话。
 
-> **注意区分**：`tcb agent` 是 CloudBase 平台 CLI，用于部署/删除底层云函数；`cbagent` 是本项目 CLI，用于配置和使用 Agent。
+`cbagent` 是本项目的 CLI 工具，统一管理 Agent 的创建、配置和对话。
 
 ### 环境变量
 
@@ -381,27 +366,17 @@ await client.sessions.delete(session.id);
                                 └──────────────────────────────────────┘
 ```
 
-### 两层命令的关系
+### 两层操作说明
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  tcb agent create/update/delete                             │
-│  (CloudBase 平台 CLI)                                       │
-│                                                             │
-│  职责：部署/删除云函数，管理底层基础设施                        │
-│  频率：首次部署 + 代码更新时使用                               │
-│  耗时：~60s（上传代码包）                                     │
-└─────────────────────────────────────────────────────────────┘
-                            ↕
-┌─────────────────────────────────────────────────────────────┐
-│  cbagent agent:update / run / chat / repl                   │
-│  (本项目 CLI)                                                │
-│                                                             │
-│  职责：配置 Agent 行为 + 对话交互                             │
-│  频率：日常使用                                               │
-│  耗时：~8s（只更新环境变量）                                   │
-└─────────────────────────────────────────────────────────────┘
-```
+`cbagent` 是唯一对外的 CLI。内部实现上：
+
+| 命令 | 内部调用 | 耗时 | 频率 |
+|------|----------|------|------|
+| `cbagent agent:create` | `tcb agent create`（上传代码包） | ~60s | 首次部署 |
+| `cbagent agent:update` | `tcb agent update --env`（只更新环境变量） | ~8s | 日常配置 |
+| `cbagent agent:delete` | `tcb agent delete`（删除云函数） | ~5s | 清理 |
+
+> 你不需要直接使用 `tcb` CLI（除非调试底层问题）。
 
 ### 协议说明
 
@@ -413,47 +388,49 @@ await client.sessions.delete(session.id);
 
 ## 部署详解
 
-### 首次部署（`tcb agent create`）
-
-只需执行一次，将 runtime 代码部署为 SCF Web 函数：
+### 首次部署（`cbagent agent:create`）
 
 ```bash
-# 1. 构建
-cd packages/agent-runtime && npm run build
+# 1. 构建 runtime 代码
+cd packages/agent-runtime && npm run build && cd ../..
 
-# 2. 打包
-mkdir -p /tmp/deploy
-cp -r dist package.json scf_bootstrap agent.yaml /tmp/deploy/
-cd /tmp/deploy && npm install --production
+# 2. 部署
+cbagent agent:create --name my-agent --env <env-id>
 
-# 3. 部署
-tcb agent create \
-  --name my-agent \
-  --runtime Nodejs20.19 \
-  --code /tmp/deploy \
-  --timeout 7200 \
-  --memory-size 256 \
-  --env "CLOUDBASE_ENV_ID=<env-id>" \
-  -e <env-id>
-
-# 4. 验证
-tcb agent detail <agent-id> -e <env-id>
+# 3. 等待就绪
+cbagent agent:get --id <agent-id>
 ```
 
-### 代码更新（`tcb agent update --code`）
+`agent:create` 会自动打包 `packages/agent-runtime` 代码并部署为云函数。
 
-当 runtime 代码变更时（新功能、bug fix），重新上传代码：
+可通过 `--code` 指定自定义代码路径，`--file` 指定初始配置文件：
 
 ```bash
-tcb agent update <agent-id> --code /tmp/deploy -e <env-id>
+cbagent agent:create \
+  --name my-agent \
+  --file ./my-agent.yaml \
+  --code ./packages/agent-runtime \
+  --env <env-id>
 ```
 
 ### 配置更新（`cbagent agent:update`）
 
-日常改配置不需要动代码，直接更新：
+日常改配置不需要重新部署代码：
 
 ```bash
 cbagent agent:update --system "New prompt" --model deepseek-v3.2
+cbagent agent:update --file ./new-config.yaml
+```
+
+### 代码更新
+
+当 runtime 源码变更时（新功能、bug fix），需要重新部署：
+
+```bash
+cd packages/agent-runtime && npm run build && cd ../..
+cbagent agent:create --name my-agent --env <env-id>
+# 或直接用 tcb:
+# tcb agent update <agent-id> --code /path/to/deploy -e <env-id>
 ```
 
 ### 环境变量
