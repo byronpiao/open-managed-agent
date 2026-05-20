@@ -74,6 +74,8 @@ export interface AgentConfig {
   mcp_servers?: McpServer[];
   skills?: Skill[];
   metadata?: Record<string, string>;
+  // Storage
+  sessions_collection?: string; // NoSQL collection name for sessions, default: "acp_sessions"
 }
 
 // ── Built-in tool names ───────────────────────────────────────────────────────

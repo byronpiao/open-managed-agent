@@ -29,11 +29,12 @@ import type { AgentConfig } from "./config.js";
 
 const cbApp = cloudbase.init({ env: process.env.CLOUDBASE_ENV_ID ?? "" });
 const db = cbApp.database();
-const SESSIONS_COL = "acp_sessions";
+let SESSIONS_COL = "acp_sessions";
 
-// Ensure collection exists on startup (idempotent)
+// Ensure collection exists on startup (idempotent, cached)
 let collectionReady = false;
-async function ensureCollection() {
+export async function ensureCollection(collectionName?: string) {
+  if (collectionName) SESSIONS_COL = collectionName;
   if (collectionReady) return;
   try {
     await db.createCollection(SESSIONS_COL);
@@ -117,7 +118,6 @@ async function handleInitialize(params: Record<string, unknown>, config: AgentCo
 }
 
 async function handleSessionNew(params: Record<string, unknown>, agentConfig: AgentConfig) {
-  await ensureCollection();
   const sessionId = await genId("sess");
   const now = Math.floor(Date.now() / 1000);
 
@@ -373,9 +373,6 @@ function handleSessionCancel(params: Record<string, unknown>) {
 
 export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   const agent = new HunyuanAgent(agentConfig);
-
-  // Ensure DB collection exists on first request
-  ensureCollection().catch(() => {});
 
   // Ensure JSON body parsing is available for ACP routes
   // Support both direct /acp and gateway-proxied /v1/aibot/bots/:botId/acp paths
