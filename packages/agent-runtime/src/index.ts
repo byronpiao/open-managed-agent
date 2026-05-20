@@ -21,7 +21,7 @@
 
 import { createExpressServer } from "@cloudbase/agent-server";
 import { HunyuanAgent } from "./hunyuan-agent.js";
-import { mountAcpEndpoint } from "./acp-endpoint.js";
+import { mountAcpEndpoint, ensureCollection } from "./acp-endpoint.js";
 import { loadAgentConfig } from "./config.js";
 import type { AgentConfig } from "./config.js";
 
@@ -29,6 +29,9 @@ const port = Number(process.env.PORT ?? 9000);
 
 async function main() {
   const config = await loadAgentConfig();
+
+  // Ensure DB collection exists (once at startup)
+  await ensureCollection(config.sessions_collection);
 
   console.log(`[Agent] Name: ${config.name}`);
   console.log(`[Agent] Model: ${config.model}`);

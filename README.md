@@ -157,6 +157,9 @@ skills:
 metadata:
   team: backend
   version: "1.0"
+
+# 存储配置（可选）
+sessions_collection: acp_sessions   # Session 存储的集合名，启动时自动创建
 ```
 
 ### 配置字段说明
@@ -170,6 +173,7 @@ metadata:
 | `tools` | array | 工具配置（见下方详细说明） |
 | `mcp_servers` | array | MCP 服务器声明 |
 | `skills` | array | 领域知识文件 |
+| `sessions_collection` | string | Session 存储的 NoSQL 集合名（默认 `acp_sessions`，启动时自动创建） |
 | `metadata` | object | 自定义键值对 |
 
 ### 工具类型
