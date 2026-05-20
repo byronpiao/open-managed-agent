@@ -27,7 +27,21 @@
 import { parseArgs } from "util";
 import { createInterface } from "readline";
 import { execSync } from "child_process";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
+
+// ── Load .env file ──────────────────────────────────────────────────────────
+const envFile = new URL(".env", import.meta.url).pathname;
+if (existsSync(envFile)) {
+  for (const line of readFileSync(envFile, "utf-8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq);
+    const val = trimmed.slice(eq + 1);
+    if (!process.env[key]) process.env[key] = val; // don't override existing
+  }
+}
 
 const BASE_URL = process.env.CLOUDBASE_SERVER_URL ?? "http://localhost:3000";
 const ENV_ID   = process.env.CLOUDBASE_ENV_ID ?? "";
