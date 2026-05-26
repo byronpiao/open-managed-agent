@@ -1,6 +1,6 @@
 {
   "name": "open-managed-agent-sdk",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "OpenManagedAgent SDK - ACP-compatible agent client (mirrors Anthropic Managed Agents API)",
   "type": "module",
   "main": "./dist/index.js",
