@@ -1,11 +1,17 @@
 {
   "name": "open-managed-agent",
   "version": "0.1.0",
-  "private": true,
-  "workspaces": ["packages/sdk", "packages/agent-runtime"],
+  "description": "magent CLI — manage CloudBase AI agents from the command line",
   "bin": {
     "magent": "./magent.mjs"
   },
+  "files": [
+    "magent.mjs",
+    "README.md"
+  ],
+  "keywords": ["magent", "cloudbase", "agent", "cli", "ai", "open-managed-agent"],
+  "license": "MIT",
+  "workspaces": ["packages/sdk", "packages/agent-runtime"],
   "dependencies": {
     "@cloudbase/cli": "latest",
     "yaml": "^2.7.0"

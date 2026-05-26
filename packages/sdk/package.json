@@ -1,5 +1,5 @@
 {
-  "name": "open-managed-agent",
+  "name": "open-managed-agent-sdk",
   "version": "0.1.0",
   "description": "OpenManagedAgent SDK - ACP-compatible agent client (mirrors Anthropic Managed Agents API)",
   "type": "module",
@@ -16,9 +16,10 @@
     "dev": "tsc --watch"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
-  "keywords": ["agent", "managed-agent", "acp", "ai", "open-managed-agent"],
+  "keywords": ["agent", "managed-agent", "acp", "ai", "cloudbase", "open-managed-agent"],
   "license": "MIT",
   "devDependencies": {
     "typescript": "^5.4.0"

@@ -259,7 +259,7 @@ Cleaning up...
 ### 初始化
 
 ```typescript
-import ManagedAgents from "open-managed-agent";
+import ManagedAgents from "open-managed-agent-sdk";
 
 const client = new ManagedAgents({
   baseURL: process.env.CLOUDBASE_SERVER_URL ?? "http://localhost:3000",
