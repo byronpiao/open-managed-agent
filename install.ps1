@@ -1,7 +1,7 @@
 # install.ps1 — install the magent CLI binary on Windows (no Node.js / npm required)
 #
 # Usage (PowerShell):
-#   irm https://raw.githubusercontent.com/royhyang/cloudbase-managed-agent/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/yhsunshining/open-managed-agent/main/install.ps1 | iex
 #
 # Environment overrides (set before running):
 #   $env:MAGENT_INSTALL_DIR  — where to place magent.exe  (default: %LOCALAPPDATA%\magent\bin)
@@ -9,7 +9,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$Repo       = "royhyang/cloudbase-managed-agent"
+$Repo       = "yhsunshining/open-managed-agent"
 $Binary     = "magent.exe"
 $AssetName  = "magent-windows-x64.exe"
 $InstallDir = if ($env:MAGENT_INSTALL_DIR) { $env:MAGENT_INSTALL_DIR } else { "$env:LOCALAPPDATA\magent\bin" }
@@ -73,5 +73,5 @@ Write-Host "  For agent:create / agent:list / login commands, @cloudbase/cli is 
 Write-Host "    npm install -g @cloudbase/cli    (requires Node.js from https://nodejs.org)" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "────────────────────────────────────────"
-Write-Host "Docs: https://github.com/$Repo#readme"
+Write-Host "Docs: https://github.com/yhsunshining/open-managed-agent#readme"
 Write-Host ""

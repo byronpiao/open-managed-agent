@@ -2,7 +2,7 @@
 # install.sh — clone, build, and link magent from source
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/royhyang/cloudbase-managed-agent/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/yhsunshining/open-managed-agent/main/install.sh | bash
 #
 # What it does:
 #   1. Checks node/npm are available
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-REPO="https://github.com/royhyang/cloudbase-managed-agent.git"
+REPO="https://github.com/yhsunshining/open-managed-agent.git"
 INSTALL_DIR="${MAGENT_DIR:-$HOME/.magent}"
 REF="${MAGENT_REF:-main}"
 
@@ -114,5 +114,5 @@ fi
 
 echo "────────────────────────────────────────"
 echo "${BOLD}Source:${RESET} $INSTALL_DIR"
-echo "${BOLD}Docs:${RESET}   https://github.com/royhyang/cloudbase-managed-agent#readme"
+echo "${BOLD}Docs:${RESET}   https://github.com/yhsunshining/open-managed-agent#readme"
 echo
