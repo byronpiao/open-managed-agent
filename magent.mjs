@@ -32,6 +32,9 @@ import { createInterface } from "readline";
 import { execSync, spawnSync } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
+import { createRequire } from "module";
+
+const _require = createRequire(import.meta.url);
 
 // ── Load .env file ──────────────────────────────────────────────────────────
 const envFile = new URL(".env", import.meta.url).pathname;
@@ -49,35 +52,45 @@ if (existsSync(envFile)) {
 
 const BASE_URL = process.env.CLOUDBASE_SERVER_URL ?? "http://localhost:3000";
 
-// ── tcb bin resolver ─────────────────────────────────────────────────────────
-// Uses spawnSync (inherits parent PATH, nvm-safe) to locate tcb.
-// Falls back to bundled node_modules/.bin/tcb, then bare "tcb".
+// ── tcb script resolver ──────────────────────────────────────────────────────
+// Resolves the @cloudbase/cli entry script using Node.js module resolution —
+// completely PATH-independent. We then spawn it as:
+//   spawnSync(process.execPath, [tcbScript, ...args])
+// using the absolute node binary path (process.execPath).
+//
+// Resolution order:
+//   1. Local node_modules (present after `npm install`) — preferred
+//   2. Global nvm install beside process.execPath — always available when
+//      magent itself was installed via the same nvm node
 
-let _tcbBin = null;
-function getTcbBin() {
-  if (_tcbBin) return _tcbBin;
-  // 1. Sibling of node binary — most reliable for nvm installations.
-  //    Both `magent` and `tcb` are installed via the same npm, so they sit
-  //    in the same bin dir (e.g. /root/.nvm/versions/node/v22.x.x/bin/).
-  const sibling = resolve(process.execPath, "..", "tcb");
-  if (existsSync(sibling)) return (_tcbBin = sibling);
-  // 2. Bundled via @cloudbase/cli dependency (present after npm install)
-  const bundled = new URL("./node_modules/.bin/tcb", import.meta.url).pathname;
-  if (existsSync(bundled)) return (_tcbBin = bundled);
-  // 3. Fall back to PATH lookup (works in some environments)
-  const probe = spawnSync("tcb", ["--version"], { encoding: "utf-8", stdio: "ignore" });
-  if (!probe.error) return (_tcbBin = "tcb");
+const TCB_SCRIPT_REL = ["@cloudbase", "cli", "dist", "standalone", "cli.js"].join("/");
+
+let _tcbScript = null;
+function getTcbScript() {
+  if (_tcbScript) return _tcbScript;
+  // 1. Local install — require.resolve uses Node module resolution (no PATH)
+  try {
+    return (_tcbScript = _require.resolve(TCB_SCRIPT_REL));
+  } catch {}
+  // 2. Global nvm install: <execPath>/../../lib/node_modules/@cloudbase/cli/...
+  const globalScript = resolve(
+    process.execPath, "..", "..",
+    "lib", "node_modules", "@cloudbase", "cli", "dist", "standalone", "cli.js"
+  );
+  if (existsSync(globalScript)) return (_tcbScript = globalScript);
   throw new Error(
-    "tcb CLI not found. Install it with: npm install -g @cloudbase/cli"
+    "@cloudbase/cli not found. Run `npm install` in the magent project, " +
+    "or install globally: npm install -g @cloudbase/cli"
   );
 }
 
-// ── runTcb — spawnSync wrapper (no shell, captures output) ──────────────────
-// Replaces execSync(`"${tcb}" ...`) so nvm PATH is always honoured.
+// ── runTcb — invoke @cloudbase/cli programmatically ─────────────────────────
+// Spawns:  node <tcbScript> <args>
+// using absolute paths for both node and the CLI script — no PATH needed.
 
 function runTcb(args, opts = {}) {
   const { input, allowFail, ...rest } = opts;
-  const result = spawnSync(getTcbBin(), args, {
+  const result = spawnSync(process.execPath, [getTcbScript(), ...args], {
     encoding: "utf-8",
     env:      process.env,
     stdio:    input !== undefined ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
@@ -133,7 +146,7 @@ function requireEnvId(args) {
   if (!envId) {
     console.error(red("Error: -e <envId> is required (or set CLOUDBASE_ENV_ID)"));
     console.error(dim("\nAvailable CloudBase environments:"));
-    spawnSync(getTcbBin(), ["env:list"], { stdio: "inherit" });
+    spawnSync(process.execPath, [getTcbScript(), "env:list"], { stdio: "inherit" });
     process.exit(1);
   }
   return envId;
@@ -299,7 +312,7 @@ const COMMANDS = {
   // ─── Login (proxy to tcb) ─────────────────────────────────────────────────
 
   "login": async (args, rest) => {
-    spawnSync(getTcbBin(), ["login", ...rest], { stdio: "inherit" });
+    spawnSync(process.execPath, [getTcbScript(), "login", ...rest], { stdio: "inherit" });
   },
 
   // ─── Agent ────────────────────────────────────────────────────────────────
@@ -537,7 +550,7 @@ const COMMANDS = {
   // env:list proxies to `tcb env:list` (CloudBase environments, not SDK concept)
 
   "env:list": async (args, rest) => {
-    spawnSync(getTcbBin(), ["env:list", ...rest], { stdio: "inherit" });
+    spawnSync(process.execPath, [getTcbScript(), "env:list", ...rest], { stdio: "inherit" });
   },
 
   "env:create": async (args) => {
@@ -815,7 +828,7 @@ async function main() {
   const handler = COMMANDS[cmd];
   if (!handler) {
     // Transparently proxy all unrecognized commands to the tcb CLI
-    const result = spawnSync(getTcbBin(), [cmd, ...rest], { stdio: "inherit" });
+    const result = spawnSync(process.execPath, [getTcbScript(), cmd, ...rest], { stdio: "inherit" });
     process.exit(result.status ?? 0);
     return;
   }
