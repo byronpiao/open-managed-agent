@@ -1,0 +1,177 @@
+name: Release
+
+# Triggers on version tags: v0.1.0, v1.2.3, etc.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # needed to create GitHub Releases
+
+jobs:
+  # ── Build standalone Bun binaries ──────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.out }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux — build all Linux targets on ubuntu-latest (Bun cross-compiles)
+          - runner: ubuntu-latest
+            target: bun-linux-x64
+            out:    magent-linux-x64
+          - runner: ubuntu-latest
+            target: bun-linux-arm64
+            out:    magent-linux-arm64
+          # macOS — build all macOS targets on macos-latest (Bun cross-compiles)
+          - runner: macos-latest
+            target: bun-darwin-x64
+            out:    magent-darwin-x64
+          - runner: macos-latest
+            target: bun-darwin-arm64
+            out:    magent-darwin-arm64
+          # Windows
+          - runner: windows-latest
+            target: bun-windows-x64-baseline
+            out:    magent-windows-x64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Bundle magent.mjs + all npm deps into a single self-contained binary.
+      # The --external flag keeps @cloudbase/cli as a runtime dependency
+      # (it's a large package that invokes its own subprocess tree).
+      - name: Build binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          bun build --compile \
+            --target=${{ matrix.target }} \
+            --external=yaml \
+            magent.mjs \
+            --outfile dist/${{ matrix.out }}
+
+      - name: Smoke-test (non-Windows)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x dist/${{ matrix.out }}
+          dist/${{ matrix.out }} --help | head -5
+
+      - name: Smoke-test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: dist\${{ matrix.out }} --help | Select-Object -First 5
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.out }}
+          path: dist/${{ matrix.out }}
+          retention-days: 1
+
+  # ── Publish to npm ─────────────────────────────────────────────────────────
+  npm-publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    environment: npm   # optional: protect with a GitHub Environment
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build SDK
+        run: npm run build:sdk
+
+      - name: Publish CLI (open-managed-agent)
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish SDK (open-managed-agent-sdk)
+        run: npm publish --access public --workspace=packages/sdk
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ── Create GitHub Release with all binaries ────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: [build, npm-publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      # Strip 'v' prefix for the npm install command in the release body
+      - name: Extract version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*
+          body: |
+            ## Install
+
+            ### Linux / macOS — via npm (recommended)
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+            ```
+            Or directly:
+            ```bash
+            npm install -g open-managed-agent@${{ steps.ver.outputs.version }}
+            ```
+
+            ### Windows — via PowerShell
+            **Option A — npm (requires Node.js):**
+            ```powershell
+            npm install -g open-managed-agent@${{ steps.ver.outputs.version }}
+            ```
+            **Option B — standalone binary (no Node.js needed):**
+            ```powershell
+            irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
+            ```
+            > The Windows binary still requires `@cloudbase/cli` for agent commands:
+            > `npm install -g @cloudbase/cli`
+
+            ---
+
+            ## Standalone binaries
+
+            | Platform          | File                   | Notes              |
+            |-------------------|------------------------|--------------------|
+            | Linux x64         | `magent-linux-x64`     |                    |
+            | Linux ARM64       | `magent-linux-arm64`   | Raspberry Pi, etc. |
+            | macOS x64         | `magent-darwin-x64`    | Intel Mac          |
+            | macOS ARM64       | `magent-darwin-arm64`  | Apple Silicon      |
+            | Windows x64       | `magent-windows-x64.exe` |                  |
+
+            ### Quick-start after download
+            ```bash
+            # Linux / macOS
+            chmod +x magent-linux-x64
+            ./magent-linux-x64 --help
+
+            # Windows
+            .\magent-windows-x64.exe --help
+            ```

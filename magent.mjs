@@ -65,6 +65,46 @@ const BASE_URL = process.env.CLOUDBASE_SERVER_URL ?? "http://localhost:3000";
 
 const TCB_SCRIPT_REL = ["@cloudbase", "cli", "dist", "standalone", "cli.js"].join("/");
 
+// ── Runtime detection ────────────────────────────────────────────────────────
+// Bun compiled binaries: process.versions.bun is set, process.versions.v8 is not.
+// process.execPath points to the compiled binary itself — NOT a node/bun interpreter.
+// We must find a node or bun interpreter separately to run @cloudbase/cli scripts.
+
+const IS_BUN_COMPILED =
+  typeof Bun !== "undefined" && !!process.versions?.bun && !process.versions?.v8;
+
+let _nodeExec = null;
+
+/** Return the Node.js / Bun executable to use when spawning @cloudbase/cli.
+ *
+ *  - Normal Node.js script:  process.execPath  (absolute, no PATH needed)
+ *  - Bun script (not compiled): process.execPath  (absolute bun binary)
+ *  - Compiled Bun binary: process.execPath IS the compiled app — search PATH
+ *    for `node` or `bun` instead.
+ */
+function getNodeExecutable() {
+  if (_nodeExec) return _nodeExec;
+  if (!IS_BUN_COMPILED) return (_nodeExec = process.execPath);
+
+  // Compiled Bun binary: find node or bun in PATH
+  const sep     = process.platform === "win32" ? ";" : ":";
+  const exts    = process.platform === "win32" ? [".exe", ""] : [""];
+  const dirs    = (process.env.PATH ?? "").split(sep).filter(Boolean);
+
+  for (const candidate of ["node", "bun"]) {
+    for (const dir of dirs) {
+      for (const ext of exts) {
+        const full = resolve(dir, candidate + ext);
+        if (existsSync(full)) return (_nodeExec = full);
+      }
+    }
+  }
+  throw new Error(
+    "node or bun not found in PATH.\n" +
+    "Install Node.js (https://nodejs.org) and run: npm install -g @cloudbase/cli"
+  );
+}
+
 let _tcbScript = null;
 function getTcbScript() {
   if (_tcbScript) return _tcbScript;
@@ -72,12 +112,23 @@ function getTcbScript() {
   try {
     return (_tcbScript = _require.resolve(TCB_SCRIPT_REL));
   } catch {}
-  // 2. Global nvm install: <execPath>/../../lib/node_modules/@cloudbase/cli/...
-  const globalScript = resolve(
+  // 2. Global install relative to process.execPath (nvm: <execPath>/../../lib/node_modules/...)
+  const execRelScript = resolve(
     process.execPath, "..", "..",
     "lib", "node_modules", "@cloudbase", "cli", "dist", "standalone", "cli.js"
   );
-  if (existsSync(globalScript)) return (_tcbScript = globalScript);
+  if (existsSync(execRelScript)) return (_tcbScript = execRelScript);
+  // 3. Compiled Bun binary: try relative to the node/bun interpreter found in PATH
+  if (IS_BUN_COMPILED) {
+    try {
+      const nodeExec = getNodeExecutable();
+      const nodeRelScript = resolve(
+        nodeExec, "..", "..",
+        "lib", "node_modules", "@cloudbase", "cli", "dist", "standalone", "cli.js"
+      );
+      if (existsSync(nodeRelScript)) return (_tcbScript = nodeRelScript);
+    } catch {}
+  }
   throw new Error(
     "@cloudbase/cli not found. Run `npm install` in the magent project, " +
     "or install globally: npm install -g @cloudbase/cli"
@@ -85,12 +136,12 @@ function getTcbScript() {
 }
 
 // ── runTcb — invoke @cloudbase/cli programmatically ─────────────────────────
-// Spawns:  node <tcbScript> <args>
-// using absolute paths for both node and the CLI script — no PATH needed.
+// Spawns:  <node> <tcbScript> <args>
+// Both paths are absolute — no PATH dependency at runtime.
 
 function runTcb(args, opts = {}) {
   const { input, allowFail, ...rest } = opts;
-  const result = spawnSync(process.execPath, [getTcbScript(), ...args], {
+  const result = spawnSync(getNodeExecutable(), [getTcbScript(), ...args], {
     encoding: "utf-8",
     env:      process.env,
     stdio:    input !== undefined ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
@@ -146,7 +197,7 @@ function requireEnvId(args) {
   if (!envId) {
     console.error(red("Error: -e <envId> is required (or set CLOUDBASE_ENV_ID)"));
     console.error(dim("\nAvailable CloudBase environments:"));
-    spawnSync(process.execPath, [getTcbScript(), "env:list"], { stdio: "inherit" });
+    spawnSync(getNodeExecutable(), [getTcbScript(), "env:list"], { stdio: "inherit" });
     process.exit(1);
   }
   return envId;
@@ -312,7 +363,7 @@ const COMMANDS = {
   // ─── Login (proxy to tcb) ─────────────────────────────────────────────────
 
   "login": async (args, rest) => {
-    spawnSync(process.execPath, [getTcbScript(), "login", ...rest], { stdio: "inherit" });
+    spawnSync(getNodeExecutable(), [getTcbScript(), "login", ...rest], { stdio: "inherit" });
   },
 
   // ─── Agent ────────────────────────────────────────────────────────────────
@@ -550,7 +601,7 @@ const COMMANDS = {
   // env:list proxies to `tcb env:list` (CloudBase environments, not SDK concept)
 
   "env:list": async (args, rest) => {
-    spawnSync(process.execPath, [getTcbScript(), "env:list", ...rest], { stdio: "inherit" });
+    spawnSync(getNodeExecutable(), [getTcbScript(), "env:list", ...rest], { stdio: "inherit" });
   },
 
   "env:create": async (args) => {
@@ -828,7 +879,7 @@ async function main() {
   const handler = COMMANDS[cmd];
   if (!handler) {
     // Transparently proxy all unrecognized commands to the tcb CLI
-    const result = spawnSync(process.execPath, [getTcbScript(), cmd, ...rest], { stdio: "inherit" });
+    const result = spawnSync(getNodeExecutable(), [getTcbScript(), cmd, ...rest], { stdio: "inherit" });
     process.exit(result.status ?? 0);
     return;
   }
