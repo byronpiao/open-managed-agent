@@ -1,8 +1,8 @@
-# CloudBase Managed Agent 产品文档
+# OpenManagedAgent 产品文档
 
 ## 概述
 
-CloudBase Managed Agent 是一个兼容 [Anthropic Managed Agents](https://platform.claude.com/docs/en/managed-agents) API 的 AI Agent 框架，基于腾讯云 CloudBase 构建。通过简单的 CLI 命令和 SDK 调用，你可以创建、配置、部署并与 AI Agent 对话。
+OpenManagedAgent 是一个兼容 [Anthropic Managed Agents](https://platform.claude.com/docs/en/managed-agents) API 的 AI Agent 框架，基于腾讯云 CloudBase 构建。通过简单的 CLI 命令和 SDK 调用，你可以创建、配置、部署并与 AI Agent 对话。
 
 **核心能力：**
 - 一键创建 Agent（自动部署为云函数）
@@ -56,7 +56,7 @@ CLOUDBASE_ACCESS_KEY=your-access-key
 ### Step 1: 列出现有 Agents
 
 ```bash
-$ cbagent agent:list
+$ magent agent:list
 ```
 
 输出：
@@ -71,7 +71,7 @@ $ cbagent agent:list
 ### Step 2: 创建 Agent
 
 ```bash
-$ cbagent agent:create \
+$ magent agent:create \
     --name "my-agent" \
     --system "You are a helpful coding assistant." \
     --code "./packages/agent-runtime"
@@ -91,15 +91,15 @@ Creating agent...
   runtime: Nodejs20.19
 
 Next steps:
-  1. Wait for ready: cbagent agent:get --id agent-my-agent-65abf85e
-  2. Update config:  cbagent agent:update --id agent-my-agent-65abf85e --file agent.yaml
-  3. Start chatting: cbagent run --agent agent-my-agent-65abf85e --message "Hello"
+  1. Wait for ready: magent agent:get --id agent-my-agent-65abf85e
+  2. Update config:  magent agent:update --id agent-my-agent-65abf85e --file agent.yaml
+  3. Start chatting: magent run --agent agent-my-agent-65abf85e --message "Hello"
 ```
 
 ### Step 3: 等待就绪
 
 ```bash
-$ cbagent agent:get --id agent-my-agent-65abf85e
+$ magent agent:get --id agent-my-agent-65abf85e
 ```
 
 等待输出显示 `Ready: ✅ 已就绪，可以调用`（通常需要 60-90s）。
@@ -107,9 +107,9 @@ $ cbagent agent:get --id agent-my-agent-65abf85e
 ### Step 4: 使用 SDK 对话
 
 ```typescript
-import CloudbaseAgents from "@cloudbase/managed-agent";
+import ManagedAgents from "open-managed-agent";
 
-const client = new CloudbaseAgents({
+const client = new ManagedAgents({
   envId: "<env-id>",
   agentId: "<agent-id>",
   accessKey: "<your-access-key>",
@@ -182,7 +182,7 @@ skills:
 执行更新（~8s，无需重新部署代码）：
 
 ```bash
-$ cbagent agent:update --file ./agent.yaml
+$ magent agent:update --file ./agent.yaml
 ```
 
 输出：
@@ -226,7 +226,7 @@ Agent: 我支持以下能力：
 ### Step 7: 删除 Agent
 
 ```bash
-$ cbagent agent:delete --id agent-my-agent-65abf85e
+$ magent agent:delete --id agent-my-agent-65abf85e
 
 ✅ Agent agent-my-agent-65abf85e deleted.
 ```
@@ -339,38 +339,38 @@ CLOUDBASE_API_KEY=xxx       # JWT Token
 
 ```bash
 # 创建（部署云函数，约 60-90s）
-cbagent agent:create --name <name> [--system <prompt>] [--model <model>] [--file <yaml>] [--code <path>]
+magent agent:create --name <name> [--system <prompt>] [--model <model>] [--file <yaml>] [--code <path>]
 
 # 更新配置（不重新部署，约 8s）
-cbagent agent:update [--id <id>] [--system <prompt>] [--model <model>] [--file <yaml>]
-cbagent agent:update --tools '[...]' --mcp-servers '[...]' --skills '[...]'
+magent agent:update [--id <id>] [--system <prompt>] [--model <model>] [--file <yaml>]
+magent agent:update --tools '[...]' --mcp-servers '[...]' --skills '[...]'
 
 # 查看 / 列出 / 删除
-cbagent agent:get [--id <id>]
-cbagent agent:list
-cbagent agent:delete [--id <id>]
+magent agent:get [--id <id>]
+magent agent:list
+magent agent:delete [--id <id>]
 ```
 
 ### 对话
 
 ```bash
 # 一次性对话（自动创建/销毁 session）
-cbagent run --agent <id> --message "Write hello world in Python"
+magent run --agent <id> --message "Write hello world in Python"
 
 # 交互式 REPL
-cbagent repl --agent <id>
+magent repl --agent <id>
 
 # 向已有 session 发消息
-cbagent chat --session <id> --message "Add unit tests"
+magent chat --session <id> --message "Add unit tests"
 ```
 
 ### Session 管理
 
 ```bash
-cbagent session:create --agent <id>
-cbagent session:list
-cbagent session:get --id <id>
-cbagent session:delete --id <id>
+magent session:create --agent <id>
+magent session:list
+magent session:get --id <id>
+magent session:delete --id <id>
 ```
 
 ---
@@ -380,15 +380,15 @@ cbagent session:delete --id <id>
 ### 安装
 
 ```bash
-npm install @cloudbase/managed-agent
+npm install open-managed-agent
 ```
 
 ### 初始化
 
 ```typescript
-import CloudbaseAgents from "@cloudbase/managed-agent";
+import ManagedAgents from "open-managed-agent";
 
-const client = new CloudbaseAgents({
+const client = new ManagedAgents({
   envId,
   agentId,
   accessKey: "your-access-key",
@@ -441,7 +441,7 @@ await client.sessions.delete(session.id);
 ┌─────────────────────┐         ┌───────────────────────────────────────┐
 │   Client            │         │   CloudBase SCF Web Function          │
 │                     │         │                                       │
-│  cbagent CLI        │         │   Express Server                      │
+│  magent CLI         │         │   Express Server                      │
 │  SDK (TypeScript)   │  HTTPS  │     POST /v1/aibot/bots/:id/acp      │
 │                     ├────────►│     POST /send-message (AG-UI)        │
 │  ← NDJSON Stream    │◄────────┤     GET  /healthz                     │
@@ -458,7 +458,7 @@ await client.sessions.delete(session.id);
 
 **配置加载优先级：**
 ```
-AGENT_CONFIG_B64 环境变量    ← cbagent agent:update 写入
+AGENT_CONFIG_B64 环境变量    ← magent agent:update 写入
        ↓ fallback
 agent.yaml 文件              ← 随代码部署
        ↓ fallback

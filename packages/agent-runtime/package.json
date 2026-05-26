@@ -1,7 +1,7 @@
 {
-  "name": "@cloudbase/managed-agent-runtime",
+  "name": "open-managed-agent-runtime",
   "version": "0.1.0",
-  "description": "CloudBase Managed Agent Runtime - deployed via tcb agent create",
+  "description": "OpenManagedAgent Runtime - deployed as cloud function",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {

@@ -1,7 +1,15 @@
 {
-  "name": "cloudbase-managed-agent",
+  "name": "open-managed-agent",
+  "version": "0.1.0",
   "private": true,
   "workspaces": ["packages/sdk", "packages/agent-runtime"],
+  "bin": {
+    "magent": "./magent.mjs"
+  },
+  "dependencies": {
+    "@cloudbase/cli": "latest",
+    "yaml": "^2.7.0"
+  },
   "scripts": {
     "build": "npm run build --workspaces",
     "build:sdk": "npm run build --workspace=packages/sdk",

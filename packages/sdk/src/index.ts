@@ -2,7 +2,7 @@ import { AgentsResource } from "./agents.js";
 import { EnvironmentsResource } from "./environments.js";
 import { SessionsResource } from "./sessions.js";
 import { AcpClient } from "./acp-client.js";
-import type { CloudbaseAgentsConfig } from "./types.js";
+import type { ManagedAgentsConfig } from "./types.js";
 
 export * from "./types.js";
 export { AgentsResource } from "./agents.js";
@@ -12,17 +12,17 @@ export { EventsResource, EventStream } from "./events.js";
 export { AcpClient } from "./acp-client.js";
 export type { AcpSessionInfo, AcpSessionDetail, AcpStreamEvent, AcpCapabilities } from "./acp-client.js";
 
-export class CloudbaseAgents {
+export class ManagedAgents {
   readonly agents: AgentsResource;
   readonly environments: EnvironmentsResource;
   readonly sessions: SessionsResource;
 
-  constructor(config: CloudbaseAgentsConfig) {
+  constructor(config: ManagedAgentsConfig) {
     if (!config.envId) {
-      throw new Error("CloudbaseAgents: envId is required");
+      throw new Error("ManagedAgents: envId is required");
     }
     if (!config.agentId) {
-      throw new Error("CloudbaseAgents: agentId is required");
+      throw new Error("ManagedAgents: agentId is required");
     }
     // Auto-generate baseURL if not provided
     if (!config.baseURL) {
@@ -34,4 +34,7 @@ export class CloudbaseAgents {
   }
 }
 
-export default CloudbaseAgents;
+/** @deprecated Use ManagedAgents */
+export const CloudbaseAgents = ManagedAgents;
+
+export default ManagedAgents;

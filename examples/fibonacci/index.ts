@@ -1,5 +1,5 @@
 /**
- * CloudBase Managed Agent - Fibonacci Example
+ * OpenManagedAgent - Fibonacci Example
  *
  * 客户端直连 Agent 云函数（无需 proxy server），
  * 通过 sessions.prompt() 流式获取结果。
@@ -9,16 +9,16 @@
  *   tsx examples/fibonacci/index.ts
  */
 
-import CloudbaseAgents from "@cloudbase/managed-agent";
+import ManagedAgents from "open-managed-agent";
 
 // 直连 Agent 云函数，无需经过 proxy server
-const client = new CloudbaseAgents({
+const client = new ManagedAgents({
   baseURL: process.env.AGENT_URL
     ?? `https://${process.env.CLOUDBASE_ENV_ID}.service.tcloudbase.com/v1/aibot/bots/${process.env.AGENT_ID ?? "my-agent"}`,
 });
 
 async function main() {
-  console.log("🚀 CloudBase Managed Agent - Fibonacci Example\n");
+  console.log("🚀 OpenManagedAgent - Fibonacci Example\n");
 
   // 1. 创建 session
   console.log("1. Creating session...");

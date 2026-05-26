@@ -1,11 +1,11 @@
-# CloudBase Managed Agent Configuration
+# OpenManagedAgent Configuration
 # Schema mirrors Anthropic Managed Agents API:
 # https://platform.claude.com/docs/en/managed-agents/agent-setup
 #
 # Environment variables AGENT_MODEL, AGENT_SYSTEM, AGENT_NAME
 # can override the corresponding fields below.
 
-name: CloudBase Coding Agent
+name: OpenManagedAgent Coding Assistant
 model: hunyuan-t1-latest
 system: You are a helpful coding assistant. You can read, write, and execute code.
 description: A coding agent with file system and shell access.
@@ -59,5 +59,5 @@ skills: []
 
 # Arbitrary metadata for tracking
 metadata:
-  runtime: cloudbase-managed-agent
+  runtime: open-managed-agent
   version: "0.1.0"

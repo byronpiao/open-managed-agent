@@ -1,4 +1,4 @@
-# Task: CloudBase Managed Agent SDK
+# Task: OpenManagedAgent SDK
 
 Build a TypeScript SDK that mirrors the Claude Managed Agents API interface, but backed by CloudBase instead of Anthropic.
 
@@ -8,7 +8,7 @@ Build a TypeScript SDK that mirrors the Claude Managed Agents API interface, but
 // Agent lifecycle
 const agent = await client.beta.agents.create({
   name: "Coding Assistant",
-  model: "hunyuan-2.0-instruct-20251111", // CloudBase model
+  model: "hunyuan-2.0-instruct-20251111",
   system: "You are a helpful coding assistant.",
   tools: [{ type: "agent_toolset_20260401" }],
 });
@@ -66,7 +66,7 @@ cloudbase-managed-agent/
 ├── packages/
 │   ├── sdk/              # TypeScript client SDK (mirrors Claude's API)
 │   │   ├── src/
-│   │   │   ├── index.ts         # Main CloudbaseAgents client class
+│   │   │   ├── index.ts         # Main ManagedAgents client class
 │   │   │   ├── types.ts         # All type definitions (mirrors Claude types)
 │   │   │   ├── agents.ts        # client.beta.agents.*
 │   │   │   ├── environments.ts  # client.beta.environments.*
@@ -74,35 +74,36 @@ cloudbase-managed-agent/
 │   │   │   └── events.ts        # event streaming (SSE client)
 │   │   ├── package.json
 │   │   └── tsconfig.json
-│   └── server/           # CloudRun backend service
+│   └── agent-runtime/    # CloudBase SCF backend (deployed as cloud function)
 │       ├── src/
 │       │   ├── index.ts         # Express server entry
-│       │   ├── routes/
-│       │   │   ├── agents.ts    # CRUD for agents
-│       │   │   ├── environments.ts
-│       │   │   └── sessions.ts  # + SSE streaming endpoint
-│       │   ├── agent-loop.ts    # The core agent loop (calls CloudBase AI)
-│       │   └── db.ts            # CloudBase DB helpers
+│       │   ├── config.ts        # Config loading (AGENT_CONFIG > YAML > env vars)
+│       │   ├── acp-endpoint.ts  # ACP JSON-RPC handler
+│       │   └── hunyuan-agent.ts # AI agent core logic
+│       ├── agent.yaml           # Default config template
 │       ├── package.json
-│       ├── tsconfig.json
-│       └── Dockerfile
+│       └── scf_bootstrap
 ├── examples/
 │   └── fibonacci/        # Example mirroring the Claude quickstart
 │       └── index.ts
+├── tests/
+│   ├── e2e.mjs           # E2E test (create → chat → update → verify → delete)
+│   └── integration.ts    # SDK integration tests (ACP full flow)
+├── magent.mjs            # CLI tool
 └── README.md
 ```
 
 ## Key Design Decisions
 
 1. **SDK API surface** must be 1:1 compatible with `@anthropic-ai/sdk` beta.agents interface (drop-in replacement feel)
-2. **Models**: default to `hunyuan-2.0-instruct-20251111` (CloudBase built-in)
+2. **Models**: default to `hunyuan-t1-latest` (CloudBase built-in); also supports `deepseek-v3.2`
 3. **Agent loop**: server-side, implement tool calling loop that handles:
-   - bash (via child_process exec in CloudRun container)
-   - read/write/edit/glob/grep file ops
+   - bash (via child_process exec in SCF)
+   - read/write/list file ops
    - custom tools (via agent.custom_tool_use events)
-4. **Storage**: CloudBase NoSQL (document DB) for agents/environments/sessions
-5. **Streaming**: SSE (Server-Sent Events) for real-time event delivery
-6. **Auth**: CLOUDBASE_ENV_ID + TENCENTCLOUD_SECRETID/KEY env vars
+4. **Storage**: CloudBase NoSQL (document DB) for sessions
+5. **Streaming**: NDJSON (via ACP protocol) for real-time event delivery
+6. **Auth**: CLOUDBASE_ENV_ID + CLOUDBASE_ACCESS_KEY env vars
 
 ## Event Types to Implement
 
@@ -127,6 +128,6 @@ User input events:
 2. Add proper type declarations
 3. Include a working fibonacci example
 4. Write README with setup/usage guide
-5. Make the SDK publishable as `@cloudbase/managed-agent`
+5. Make the SDK publishable as `open-managed-agent`
 
 Start now. Build the complete working implementation.

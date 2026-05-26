@@ -2,11 +2,11 @@ import type {
   Environment,
   CreateEnvironmentParams,
   ListResponse,
-  CloudbaseAgentsConfig,
+  ManagedAgentsConfig,
 } from "./types.js";
 
 export class EnvironmentsResource {
-  constructor(private config: CloudbaseAgentsConfig) {}
+  constructor(private config: ManagedAgentsConfig) {}
 
   private get headers(): Record<string, string> {
     const h: Record<string, string> = { "Content-Type": "application/json" };

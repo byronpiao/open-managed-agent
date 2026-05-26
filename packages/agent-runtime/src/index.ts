@@ -1,5 +1,5 @@
 /**
- * CloudBase Managed Agent - Runtime Entry
+ * OpenManagedAgent - Runtime Entry
  *
  * 部署方式：
  *   tcb agent create --name my-agent --code ./packages/agent-runtime -e $ENV_ID
@@ -53,7 +53,7 @@ async function main() {
   mountAcpEndpoint(app, config);
 
   app.listen(port, () => {
-    console.log(`CloudBase Managed Agent Runtime listening on :${port}`);
+    console.log(`OpenManagedAgent Runtime listening on :${port}`);
     console.log(`  AG-UI : POST /send-message`);
     console.log(`  ACP   : POST /acp, POST /v1/aibot/bots/:botId/acp`);
     console.log(`  Health: GET  /healthz`);

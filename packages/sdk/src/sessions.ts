@@ -2,7 +2,7 @@
  * SessionsResource - 对外接口不变，内部走 ACP JSON-RPC 2.0
  *
  * 用法：
- *   const client = new CloudbaseAgents({
+ *   const client = new ManagedAgents({
  *     baseURL: "https://<env>.service.tcloudbase.com/v1/aibot/bots/<agentId>",
  *   });
  *
@@ -16,7 +16,7 @@ import type {
   Session,
   CreateSessionParams,
   ListResponse,
-  CloudbaseAgentsConfig,
+  ManagedAgentsConfig,
 } from "./types.js";
 import type { AcpStreamEvent } from "./acp-client.js";
 import { AcpClient } from "./acp-client.js";
@@ -25,7 +25,7 @@ export class SessionsResource {
   private acp: AcpClient;
   private initialized = false;
 
-  constructor(private config: CloudbaseAgentsConfig) {
+  constructor(private config: ManagedAgentsConfig) {
     this.acp = new AcpClient(config);
   }
 
@@ -148,7 +148,7 @@ export class SessionsResource {
   readonly events = {
     stream: (sessionId: string) => {
       console.warn(
-        "[CloudbaseAgents] sessions.events.stream() is deprecated. Use sessions.prompt() instead."
+        "[ManagedAgents] sessions.events.stream() is deprecated. Use sessions.prompt() instead."
       );
       // Return a no-op async iterable — send() will do the actual streaming
       return {
@@ -158,7 +158,7 @@ export class SessionsResource {
     },
     send: (sessionId: string, params: { events: Array<{ type: string; content?: Array<{ type: string; text?: string }> }> }) => {
       console.warn(
-        "[CloudbaseAgents] sessions.events.send() is deprecated. Use sessions.prompt() instead."
+        "[ManagedAgents] sessions.events.send() is deprecated. Use sessions.prompt() instead."
       );
       // Extract text and delegate to prompt — but can't stream here, just fire-and-forget
       const text = params.events

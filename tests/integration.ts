@@ -1,5 +1,5 @@
 /**
- * SDK Integration Tests for CloudBase Managed Agent
+ * SDK Integration Tests for OpenManagedAgent
  *
  * Tests in two modes:
  * 1. SDK type/build verification (no network)
@@ -10,8 +10,8 @@
  *   tsx tests/integration.ts
  */
 
-import CloudbaseAgents, { AcpClient } from "../packages/sdk/src/index.js";
-import type { CloudbaseAgentsConfig, Session, ListResponse } from "../packages/sdk/src/index.js";
+import ManagedAgents, { AcpClient } from "../packages/sdk/src/index.js";
+import type { ManagedAgentsConfig, Session, ListResponse } from "../packages/sdk/src/index.js";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -59,7 +59,7 @@ function assert(condition: boolean, message: string) {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log("\n\x1b[1m CloudBase Managed Agent SDK - Integration Tests\x1b[0m");
+  console.log("\n\x1b[1m OpenManagedAgent SDK - Integration Tests\x1b[0m");
   console.log(`  Env: ${ENV_ID}, Agent: ${AGENT_ID}`);
   console.log();
 
@@ -69,15 +69,15 @@ async function main() {
   console.log("  \x1b[1m[Part A] SDK Build & Type Verification\x1b[0m\n");
 
   await runTest("A1. SDK module imports correctly", async () => {
-    assert(typeof CloudbaseAgents === "function", "CloudbaseAgents should be a class/function");
+    assert(typeof ManagedAgents === "function", "ManagedAgents should be a class/function");
     assert(typeof AcpClient === "function", "AcpClient should be a class/function");
   });
 
-  await runTest("A2. CloudbaseAgents constructor validates config", async () => {
+  await runTest("A2. ManagedAgents constructor validates config", async () => {
     // Should throw without envId
     let threw = false;
     try {
-      new CloudbaseAgents({ envId: "", agentId: "" });
+      new ManagedAgents({ envId: "", agentId: "" });
     } catch (err: any) {
       threw = true;
       assert(err.message.includes("envId"), "Error should mention envId");
@@ -85,8 +85,8 @@ async function main() {
     assert(threw, "Should throw without envId");
   });
 
-  await runTest("A3. CloudbaseAgents initializes with valid config", async () => {
-    const client = new CloudbaseAgents({
+  await runTest("A3. ManagedAgents initializes with valid config", async () => {
+    const client = new ManagedAgents({
       envId: "test-env",
       agentId: "test-agent",
       accessKey: "test-key",
@@ -111,7 +111,7 @@ async function main() {
   });
 
   await runTest("A5. Session resource has all expected methods", async () => {
-    const client = new CloudbaseAgents({ envId: "test-env", agentId: "test-agent" });
+    const client = new ManagedAgents({ envId: "test-env", agentId: "test-agent" });
     const sessions = client.sessions;
     assert(typeof sessions.create === "function", "Should have create");
     assert(typeof sessions.retrieve === "function", "Should have retrieve");
@@ -126,7 +126,7 @@ async function main() {
 
   await runTest("A6. Type exports are correct", async () => {
     // Verify type exports compile correctly (these are compile-time checks)
-    const config: CloudbaseAgentsConfig = { envId: "test", agentId: "test" };
+    const config: ManagedAgentsConfig = { envId: "test", agentId: "test" };
     assert(config.envId === "test", "Config type works");
 
     // Test Session type shape
@@ -209,7 +209,7 @@ async function main() {
     console.log("    /send-message for SCF-type agents. ACP requires a TCBR (CloudRun)");
     console.log("    type deployment with direct HTTP routing.\x1b[0m");
   } else {
-    const client = new CloudbaseAgents({ envId: ENV_ID, agentId: AGENT_ID, accessKey: ACCESS_KEY });
+    const client = new ManagedAgents({ envId: ENV_ID, agentId: AGENT_ID, accessKey: ACCESS_KEY });
     let sessionId = "";
 
     await runTest("C1. Create session via ACP", async () => {
