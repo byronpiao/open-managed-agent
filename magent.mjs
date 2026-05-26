@@ -50,18 +50,38 @@ if (existsSync(envFile)) {
 const BASE_URL = process.env.CLOUDBASE_SERVER_URL ?? "http://localhost:3000";
 
 // ── tcb bin resolver ─────────────────────────────────────────────────────────
-// Prefers tcb from PATH; falls back to bundled node_modules/.bin/tcb.
+// Uses spawnSync (inherits parent PATH, nvm-safe) to locate tcb.
+// Falls back to bundled node_modules/.bin/tcb, then bare "tcb".
 
 let _tcbBin = null;
 function getTcbBin() {
   if (_tcbBin) return _tcbBin;
-  try {
-    execSync("tcb --version", { stdio: "ignore", timeout: 5000 });
-    return (_tcbBin = "tcb");
-  } catch { /* not in PATH */ }
+  // spawnSync inherits process.env.PATH directly — works with nvm
+  const probe = spawnSync("tcb", ["--version"], { encoding: "utf-8", stdio: "ignore" });
+  if (!probe.error) return (_tcbBin = "tcb");
   const bundled = new URL("./node_modules/.bin/tcb", import.meta.url).pathname;
   if (existsSync(bundled)) return (_tcbBin = bundled);
   return (_tcbBin = "tcb"); // will error naturally if missing
+}
+
+// ── runTcb — spawnSync wrapper (no shell, captures output) ──────────────────
+// Replaces execSync(`"${tcb}" ...`) so nvm PATH is always honoured.
+
+function runTcb(args, opts = {}) {
+  const { input, allowFail, ...rest } = opts;
+  const result = spawnSync(getTcbBin(), args, {
+    encoding: "utf-8",
+    env:      process.env,
+    stdio:    input !== undefined ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
+    input,
+    ...rest,
+  });
+  if (result.error) throw result.error;
+  const out = (result.stdout ?? "") + (result.stderr ?? "");
+  if (!allowFail && result.status !== 0) {
+    throw new Error(out.trim() || `tcb ${args[0]} exited with code ${result.status}`);
+  }
+  return result.stdout ?? "";
 }
 
 // ── Short-flag map ────────────────────────────────────────────────────────────
@@ -345,13 +365,21 @@ const COMMANDS = {
     }
 
     const actualCode = existsSync(resolve(deployDir, "node_modules")) ? deployDir : code;
-    const tcb        = getTcbBin();
 
     try {
       const alias  = toAlias(name);
-      const cmd    = `"${tcb}" agent create --name "${alias}" --runtime ${runtime} --code "${actualCode}" --timeout 7200 --memory-size 256 --env "${envVars}" -e ${envId} --json`;
-      const result = execSync(cmd, { encoding: "utf-8", timeout: 300000 });
-      const data   = JSON.parse(result.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
+      const raw    = runTcb([
+        "agent", "create",
+        "--name",        alias,
+        "--runtime",     runtime,
+        "--code",        actualCode,
+        "--timeout",     "7200",
+        "--memory-size", "256",
+        "--env",         envVars,
+        "-e",            envId,
+        "--json",
+      ], { timeout: 300000 });
+      const data   = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
 
       if (data.data?.agentId) {
         console.log(green(`✅ Agent created: ${data.data.agentId}`));
@@ -374,9 +402,7 @@ const COMMANDS = {
 
   "agent:list": async (args) => {
     const envId = requireEnvId(args);
-    const result = execSync(`"${getTcbBin()}" agent list -e ${envId}`, {
-      encoding: "utf-8", timeout: 30000,
-    });
+    const result = runTcb(["agent", "list", "-e", envId], { timeout: 30000 });
     console.log(result);
   },
 
@@ -384,9 +410,7 @@ const COMMANDS = {
     const agentId = args.id ?? process.env.CLOUDBASE_AGENT_ID ?? "";
     if (!agentId) throw new Error("-i / --id is required (or set CLOUDBASE_AGENT_ID)");
     const envId  = requireEnvId(args);
-    const result = execSync(`"${getTcbBin()}" agent detail ${agentId} -e ${envId}`, {
-      encoding: "utf-8", timeout: 30000,
-    });
+    const result = runTcb(["agent", "detail", agentId, "-e", envId], { timeout: 30000 });
     console.log(result);
   },
 
@@ -394,9 +418,7 @@ const COMMANDS = {
     const agentId = args.id ?? process.env.CLOUDBASE_AGENT_ID ?? "";
     if (!agentId) throw new Error("-i / --id is required (or set CLOUDBASE_AGENT_ID)");
     const envId = requireEnvId(args);
-    execSync(`echo Y | "${getTcbBin()}" agent delete ${agentId} -e ${envId}`, {
-      encoding: "utf-8", timeout: 60000,
-    });
+    runTcb(["agent", "delete", agentId, "-e", envId], { input: "Y\n", timeout: 60000 });
     console.log(green(`✅ Agent ${agentId} deleted.`));
   },
 
@@ -488,9 +510,11 @@ const COMMANDS = {
     try {
       const configBase64 = Buffer.from(configJson).toString("base64");
       const envStr       = `CLOUDBASE_ENV_ID=${envId},AGENT_CONFIG_B64=${configBase64}`;
-      const cmd          = `"${getTcbBin()}" agent update ${agentId} --env "${envStr}" -e ${envId} --json`;
-      const result       = execSync(cmd, { encoding: "utf-8", timeout: 120000 });
-      const data         = JSON.parse(result.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
+      const raw          = runTcb(
+        ["agent", "update", agentId, "--env", envStr, "-e", envId, "--json"],
+        { timeout: 120000 },
+      );
+      const data = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
       console.log(green("OK"));
       if (data.data?.elapsedTime) {
         console.log(dim(`  Elapsed: ${Math.round(data.data.elapsedTime / 1000)}s`));
