@@ -7,7 +7,7 @@
 OpenManagedAgent 让你用与 [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents) 兼容的 API 构建 AI Agent，底层使用 CloudBase 云函数 + 混元大模型。
 
 ```typescript
-import ManagedAgents from "open-managed-agent";
+import ManagedAgents from "open-managed-agent-sdk";
 
 const client = new ManagedAgents({
   envId: "<env-id>",
@@ -103,7 +103,7 @@ magent agent:update --file ./agent.yaml
 ### 6. 使用 SDK 对话
 
 ```typescript
-import ManagedAgents from "open-managed-agent";
+import ManagedAgents from "open-managed-agent-sdk";
 
 const client = new ManagedAgents({
   envId: "<env-id>",
@@ -377,7 +377,7 @@ npm install open-managed-agent
 ### 初始化
 
 ```typescript
-import ManagedAgents from "open-managed-agent";
+import ManagedAgents from "open-managed-agent-sdk";
 
 const client = new ManagedAgents({
   envId: "your-env-id",

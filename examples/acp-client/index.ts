@@ -8,7 +8,7 @@
  *   CLOUDBASE_SERVER_URL=http://localhost:3000 tsx examples/acp-client/index.ts
  */
 
-import ManagedAgents from "open-managed-agent";
+import ManagedAgents from "open-managed-agent-sdk";
 
 const AGENT_ID  = process.env.AGENT_ID ?? "my-agent";
 const BASE_URL  = process.env.CLOUDBASE_SERVER_URL ?? "http://localhost:3000";

@@ -107,7 +107,7 @@ $ magent agent:get --id agent-my-agent-65abf85e
 ### Step 4: 使用 SDK 对话
 
 ```typescript
-import ManagedAgents from "open-managed-agent";
+import ManagedAgents from "open-managed-agent-sdk";
 
 const client = new ManagedAgents({
   envId: "<env-id>",
@@ -386,7 +386,7 @@ npm install open-managed-agent
 ### 初始化
 
 ```typescript
-import ManagedAgents from "open-managed-agent";
+import ManagedAgents from "open-managed-agent-sdk";
 
 const client = new ManagedAgents({
   envId,

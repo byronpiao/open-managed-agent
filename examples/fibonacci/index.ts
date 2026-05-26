@@ -9,7 +9,7 @@
  *   tsx examples/fibonacci/index.ts
  */
 
-import ManagedAgents from "open-managed-agent";
+import ManagedAgents from "open-managed-agent-sdk";
 
 // 直连 Agent 云函数，无需经过 proxy server
 const client = new ManagedAgents({

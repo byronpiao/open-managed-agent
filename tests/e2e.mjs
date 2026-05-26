@@ -155,7 +155,7 @@ ${bold("╚═══════════════════════
   console.log(bold("\n━━━ Step 4: 使用 SDK 创建 Session 并发起对话 ━━━\n"));
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const sdkCode1 = `import ManagedAgents from "open-managed-agent";
+  const sdkCode1 = `import ManagedAgents from "open-managed-agent-sdk";
 
 const client = new ManagedAgents({
   envId: "${ENV_ID}",
