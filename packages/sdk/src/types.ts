@@ -1,5 +1,5 @@
 // ============================================================
-// CloudBase Managed Agent SDK - Type Definitions
+// OpenManagedAgent SDK - Type Definitions
 // Mirrors @anthropic-ai/sdk beta.agents interface
 // ============================================================
 
@@ -177,7 +177,7 @@ export interface SendEventsParams {
   events: Omit<AgentEvent, "session_id">[];
 }
 
-export interface CloudbaseAgentsConfig {
+export interface ManagedAgentsConfig {
   /** CloudBase 环境 ID */
   envId: string;
   /** Agent ID */
@@ -187,6 +187,9 @@ export interface CloudbaseAgentsConfig {
   /** 自定义 base URL（可选，默认根据 envId + agentId 自动生成） */
   baseURL?: string;
 }
+
+/** @deprecated Use ManagedAgentsConfig */
+export type CloudbaseAgentsConfig = ManagedAgentsConfig;
 
 export interface ListResponse<T> {
   object: "list";

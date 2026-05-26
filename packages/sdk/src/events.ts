@@ -1,15 +1,15 @@
 import type {
   AgentEvent,
   SendEventsParams,
-  CloudbaseAgentsConfig,
+  ManagedAgentsConfig,
 } from "./types.js";
 
 export class EventStream implements AsyncIterable<AgentEvent> {
   private sessionId: string;
-  private config: CloudbaseAgentsConfig;
+  private config: ManagedAgentsConfig;
   private controller: AbortController;
 
-  constructor(sessionId: string, config: CloudbaseAgentsConfig) {
+  constructor(sessionId: string, config: ManagedAgentsConfig) {
     this.sessionId = sessionId;
     this.config = config;
     this.controller = new AbortController();
@@ -74,7 +74,7 @@ export class EventStream implements AsyncIterable<AgentEvent> {
 }
 
 export class EventsResource {
-  constructor(private config: CloudbaseAgentsConfig) {}
+  constructor(private config: ManagedAgentsConfig) {}
 
   private get headers(): Record<string, string> {
     const h: Record<string, string> = { "Content-Type": "application/json" };

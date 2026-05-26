@@ -1,5 +1,5 @@
 /**
- * ACP (Agent Client Protocol) endpoint for CloudBase Managed Agent Runtime
+ * ACP (Agent Client Protocol) endpoint for OpenManagedAgent Runtime
  *
  * Implements JSON-RPC 2.0 over HTTP (NDJSON streaming for notifications).
  * Spec: https://agentclientprotocol.org
@@ -103,8 +103,8 @@ async function handleInitialize(params: Record<string, unknown>, config: AgentCo
       promptCapabilities: { image: false, audio: false, embeddedContext: true },
     },
     agentInfo: {
-      name: config.name ?? process.env.AGENT_NAME ?? "cloudbase-managed-agent",
-      title: config.description ?? process.env.AGENT_TITLE ?? "CloudBase Managed Agent",
+      name: config.name ?? process.env.AGENT_NAME ?? "open-managed-agent",
+      title: config.description ?? process.env.AGENT_TITLE ?? "OpenManagedAgent",
       version: "0.1.0",
     },
     agentConfig: {

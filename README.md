@@ -1,15 +1,15 @@
-# CloudBase Managed Agent
+# OpenManagedAgent
 
 一个兼容 Anthropic Managed Agents API 的 TypeScript SDK + Runtime，基于腾讯云 CloudBase 构建。
 
 ## 它是什么
 
-CloudBase Managed Agent 让你用与 [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents) 兼容的 API 构建 AI Agent，底层使用 CloudBase 云函数 + 混元大模型。
+OpenManagedAgent 让你用与 [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents) 兼容的 API 构建 AI Agent，底层使用 CloudBase 云函数 + 混元大模型。
 
 ```typescript
-import CloudbaseAgents from "@cloudbase/managed-agent";
+import ManagedAgents from "open-managed-agent";
 
-const client = new CloudbaseAgents({
+const client = new ManagedAgents({
   envId: "<env-id>",
   agentId: "<agent-id>",
   accessKey: "<your-access-key>",
@@ -30,32 +30,62 @@ for await (const event of client.sessions.prompt(session.id, "Review this PR")) 
 
 - Node.js ≥ 20
 - 腾讯云 CloudBase 环境（[创建环境](https://tcb.cloud.tencent.com)）
-- `tcb` CLI 已登录：`tcb login --apiKeyId <AK> --apiKey <SK>`
 
-### 1. 构建
+### 1. 安装 `magent` CLI
+
+**方式一：从源码安装（开发中）**
 
 ```bash
 git clone <this-repo>
 cd cloudbase-managed-agent
-npm install
-npm run build
+npm install          # 同时安装内置的 @cloudbase/cli（无需单独安装 tcb）
+npm run build        # 构建 SDK 和 Runtime
+npm link             # 全局注册 magent 命令
 ```
 
-### 2. 部署 Agent
+**方式二：从 npm 安装（发布后可用）**
+
+```bash
+npm install -g open-managed-agent
+```
+
+> `@cloudbase/cli`（tcb）作为内置依赖随 `open-managed-agent` 一起安装，**不需要手动安装 tcb**。
+
+### 2. 登录 CloudBase
+
+```bash
+# 交互式登录（浏览器授权）
+magent login
+
+# 或使用 API Key 登录
+magent login --apiKeyId <SecretId> --apiKey <SecretKey>
+```
+
+等效于 `tcb login`，但无需单独安装 tcb。
+
+### 3. 查看可用环境
+
+```bash
+magent env:list
+```
+
+### 4. 部署 Agent
 
 ```bash
 # 创建并部署（内部自动调用 tcb agent create）
-cbagent agent:create \
+magent agent:create \
   --name my-agent \
   --system "You are a helpful coding assistant." \
-  --env <your-env-id>
+  -e <your-env-id>      # 也可用 --env <your-env-id>
 ```
+
+如果不带 `-e` 参数且未设置 `CLOUDBASE_ENV_ID`，`magent` 会自动列出可用环境并报错提示。
 
 > 首次部署前需构建代码：`cd packages/agent-runtime && npm run build`
 
-### 3. 配置 Agent
+### 5. 配置 Agent
 
-部署完成后，使用 `cbagent agent:update` 配置 Agent 的行为（不需要重新部署代码，约 8 秒生效）：
+部署完成后，使用 `magent agent:update` 配置 Agent 的行为（不需要重新部署代码，约 8 秒生效）：
 
 ```bash
 # 设置环境变量（后续命令省略重复传参）
@@ -64,18 +94,18 @@ export CLOUDBASE_AGENT_ID=<agent-id>
 export CLOUDBASE_ACCESS_KEY=<your-jwt-token>
 
 # 更新 system prompt
-cbagent agent:update --system "You are a helpful coding assistant."
+magent agent:update --system "You are a helpful coding assistant."
 
 # 或从 YAML 文件加载完整配置
-cbagent agent:update --file ./agent.yaml
+magent agent:update --file ./agent.yaml
 ```
 
-### 4. 使用 SDK 对话
+### 6. 使用 SDK 对话
 
 ```typescript
-import CloudbaseAgents from "@cloudbase/managed-agent";
+import ManagedAgents from "open-managed-agent";
 
-const client = new CloudbaseAgents({
+const client = new ManagedAgents({
   envId: "<env-id>",
   agentId: "<agent-id>",
   accessKey: "<your-access-key>",
@@ -195,33 +225,33 @@ sessions_collection: acp_sessions   # Session 存储的集合名，启动时自�
 
 ---
 
-## 更新 Agent 配置（`cbagent agent:update`）
+## 更新 Agent 配置（`magent agent:update`）
 
 **不需要重新部署代码。** 约 8 秒生效：
 
 ```bash
 # 更新 system prompt
-cbagent agent:update --system "You are a strict code reviewer."
+magent agent:update --system "You are a strict code reviewer."
 
 # 更新模型
-cbagent agent:update --model deepseek-v3.2
+magent agent:update --model deepseek-v3.2
 
 # 从 YAML 文件加载完整配置
-cbagent agent:update --file ./new-config.yaml
+magent agent:update --file ./new-config.yaml
 
 # 添加 MCP 服务器
-cbagent agent:update \
+magent agent:update \
   --mcp-servers '[{"type":"url","name":"linear","url":"https://mcp.linear.app/sse"}]'
 
 # 修改工具权限
-cbagent agent:update \
+magent agent:update \
   --tools '[{"type":"agent_toolset","configs":[{"name":"bash","permission_policy":{"type":"always_ask"}}]}]'
 ```
 
 ### 工作原理
 
 ```
-cbagent agent:update --system "new prompt"
+magent agent:update --system "new prompt"
     │
     ├─ 1. 从运行中的 Agent 获取当前配置（via ACP initialize）
     ├─ 2. Merge 用户指定的字段（只改你传的，其余保留）
@@ -232,7 +262,7 @@ cbagent agent:update --system "new prompt"
 ### 配置加载优先级（Runtime 内部）
 
 ```
-AGENT_CONFIG / AGENT_CONFIG_B64 环境变量    ← cbagent agent:update 写入
+AGENT_CONFIG / AGENT_CONFIG_B64 环境变量    ← magent agent:update 写入
         ↓ fallback
 agent.yaml 文件                             ← 随代码部署
         ↓ fallback
@@ -241,17 +271,39 @@ AGENT_MODEL + AGENT_SYSTEM 环境变量         ← 向后兼容
 
 ---
 
-## CLI 参考（`cbagent`）
+## CLI 参考（`magent`）
 
-`cbagent` 是本项目提供的 CLI 工具，用于管理 Agent 配置和进行对话。
+`magent` 是本项目提供的 CLI 工具，用于管理 Agent 配置和进行对话。所有未知命令会**透明代理**到内置的 `tcb` CLI（无需单独安装 tcb）。
 
-`cbagent` 是本项目的 CLI 工具，统一管理 Agent 的创建、配置和对话。
+### 安装方式
+
+```bash
+# 从源码
+npm install && npm link
+
+# 从 npm（发布后）
+npm install -g open-managed-agent
+```
+
+### 短标志（Short Flags）
+
+所有命令均支持短标志缩写：
+
+| 短标志 | 长标志 | 说明 |
+|--------|--------|------|
+| `-e <envId>` | `--env <envId>` | CloudBase 环境 ID |
+| `-a <agentId>` | `--agent <agentId>` | Agent ID |
+| `-i <id>` | `--id <id>` | 资源 ID |
+| `-m <msg>` | `--message <msg>` | 消息文本 |
+| `-s <id>` | `--session <id>` | Session ID |
+| `-f <path>` | `--file <path>` | 文件路径 |
+| `-n <name>` | `--name <name>` | 名称 |
 
 ### 环境变量
 
 | 变量 | 说明 |
 |------|------|
-| `CLOUDBASE_ENV_ID` | CloudBase 环境 ID |
+| `CLOUDBASE_ENV_ID` | CloudBase 环境 ID（可用 `-e` 覆盖） |
 | `CLOUDBASE_AGENT_ID` | 默认 Agent ID（可免 `--id`） |
 | `CLOUDBASE_ACCESS_KEY` | API Key（JWT Token） |
 | `CLOUDBASE_SERVER_URL` | 自定义 Server URL |
@@ -259,8 +311,19 @@ AGENT_MODEL + AGENT_SYSTEM 环境变量         ← 向后兼容
 ### 命令列表
 
 ```bash
+# ─── 登录 / 环境 ──────────────────────────────────────────
+magent login                              # 登录（代理 tcb login）
+magent login --apiKeyId <AK> --apiKey <SK>  # API Key 登录
+magent env:list                           # 列出 CloudBase 环境
+
+# ─── Agent 管理 ───────────────────────────────────────────
+magent agent:create  --name <name> [options]  # 创建并部署 Agent
+magent agent:list   [-e <envId>]              # 列出所有 Agents
+magent agent:get    --id <id>   [-e <envId>]  # 查看 Agent 详情
+magent agent:delete --id <id>   [-e <envId>]  # 删除 Agent
+
 # ─── Agent 配置 ───────────────────────────────────────────
-cbagent agent:update  [--id <id>] [options]   # 更新配置（~8s，不重新部署）
+magent agent:update  [--id <id>] [options]   # 更新配置（~8s，不重新部署）
   --system <prompt>       更新 system prompt
   --model <model>         更新模型
   --name <name>           更新名称
@@ -270,15 +333,35 @@ cbagent agent:update  [--id <id>] [options]   # 更新配置（~8s，不重新�
   --skills <json>         替换 skills 数组
 
 # ─── 对话 ─────────────────────────────────────────────────
-cbagent run   --agent <id> --message "..."    # 一次性对话（自动创建/销毁 session）
-cbagent chat  --session <id> --message "..."  # 向已有 session 发消息
-cbagent repl  --agent <id>                    # 交互式 REPL
+magent run   -a <id> -m "..."    # 一次性对话（自动创建/销毁 session）
+magent chat  -s <id> -m "..."    # 向已有 session 发消息
+magent repl  -a <id>             # 交互式 REPL
 
 # ─── Session 管理 ─────────────────────────────────────────
-cbagent session:create --agent <id>
-cbagent session:list
-cbagent session:get    --id <session-id>
-cbagent session:delete --id <session-id>
+magent session:create --agent <id>
+magent session:list
+magent session:get    --id <session-id>
+magent session:delete --id <session-id>
+
+# ─── 透明代理（任意 tcb 命令）────────────────────────────
+magent functions:list -e <envId>    # 等效 tcb functions:list
+magent storage:list                 # 等效 tcb storage:list
+# 所有未识别命令均透明转发给内置 tcb CLI
+```
+
+### 缺少 envId 时的行为
+
+若命令需要 `-e <envId>` 但未提供且未设置 `CLOUDBASE_ENV_ID`，`magent` 会自动列出可用环境并给出提示：
+
+```
+Error: -e <envId> is required (or set CLOUDBASE_ENV_ID)
+
+Available CloudBase environments:
+┌─────────────────────────────────────────────────────────────────────────────────────────────────
+│ EnvId                          │ EnvName              │ Status    │ PackageName │ CreateTime          │
+├─────────────────────────────────────────────────────────────────────────────────────────────────
+│ prod-abc123                    │ 生产环境              │ NORMAL    │ postpay     │ 2024-01-01 ...      │
+└─────────────────────────────────────────────────────────────────────────────────────────────────
 ```
 
 ---
@@ -288,18 +371,18 @@ cbagent session:delete --id <session-id>
 ### 安装
 
 ```bash
-npm install @cloudbase/managed-agent
+npm install open-managed-agent
 ```
 
 ### 初始化
 
 ```typescript
-import CloudbaseAgents from "@cloudbase/managed-agent";
+import ManagedAgents from "open-managed-agent";
 
-const client = new CloudbaseAgents({
-  baseURL: `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}`,
-  apiKey: "your-jwt-token",   // 可选
-  envId: "your-env-id",       // 可选
+const client = new ManagedAgents({
+  envId: "your-env-id",
+  agentId: "your-agent-id",
+  accessKey: "your-jwt-token",  // 可选
 });
 ```
 
@@ -353,7 +436,7 @@ await client.sessions.delete(session.id);
 │   Client            │         │   CloudBase SCF Web Function         │
 │   (SDK / CLI)       │         │   (packages/agent-runtime)           │
 │                     │         │                                      │
-│  CloudbaseAgents    │  HTTPS  │  Express Server                      │
+│  ManagedAgents      │  HTTPS  │  Express Server                      │
 │    .sessions        ├────────►│    ├─ /v1/aibot/bots/:id/acp (ACP)  │
 │    .prompt()        │         │    ├─ /send-message (AG-UI SSE)      │
 │                     │◄────────┤    └─ /healthz                       │
@@ -369,13 +452,13 @@ await client.sessions.delete(session.id);
 
 ### 两层操作说明
 
-`cbagent` 是唯一对外的 CLI。内部实现上：
+`magent` 是唯一对外的 CLI。内部实现上：
 
 | 命令 | 内部调用 | 耗时 | 频率 |
 |------|----------|------|------|
-| `cbagent agent:create` | `tcb agent create`（上传代码包） | ~60s | 首次部署 |
-| `cbagent agent:update` | `tcb agent update --env`（只更新环境变量） | ~8s | 日常配置 |
-| `cbagent agent:delete` | `tcb agent delete`（删除云函数） | ~5s | 清理 |
+| `magent agent:create` | `tcb agent create`（上传代码包） | ~60s | 首次部署 |
+| `magent agent:update` | `tcb agent update --env`（只更新环境变量） | ~8s | 日常配置 |
+| `magent agent:delete` | `tcb agent delete`（删除云函数） | ~5s | 清理 |
 
 > 你不需要直接使用 `tcb` CLI（除非调试底层问题）。
 
@@ -389,17 +472,17 @@ await client.sessions.delete(session.id);
 
 ## 部署详解
 
-### 首次部署（`cbagent agent:create`）
+### 首次部署（`magent agent:create`）
 
 ```bash
 # 1. 构建 runtime 代码
 cd packages/agent-runtime && npm run build && cd ../..
 
 # 2. 部署
-cbagent agent:create --name my-agent --env <env-id>
+magent agent:create --name my-agent --env <env-id>
 
 # 3. 等待就绪
-cbagent agent:get --id <agent-id>
+magent agent:get --id <agent-id>
 ```
 
 `agent:create` 会自动打包 `packages/agent-runtime` 代码并部署为云函数。
@@ -407,20 +490,20 @@ cbagent agent:get --id <agent-id>
 可通过 `--code` 指定自定义代码路径，`--file` 指定初始配置文件：
 
 ```bash
-cbagent agent:create \
+magent agent:create \
   --name my-agent \
   --file ./my-agent.yaml \
   --code ./packages/agent-runtime \
   --env <env-id>
 ```
 
-### 配置更新（`cbagent agent:update`）
+### 配置更新（`magent agent:update`）
 
 日常改配置不需要重新部署代码：
 
 ```bash
-cbagent agent:update --system "New prompt" --model deepseek-v3.2
-cbagent agent:update --file ./new-config.yaml
+magent agent:update --system "New prompt" --model deepseek-v3.2
+magent agent:update --file ./new-config.yaml
 ```
 
 ### 代码更新
@@ -429,7 +512,7 @@ cbagent agent:update --file ./new-config.yaml
 
 ```bash
 cd packages/agent-runtime && npm run build && cd ../..
-cbagent agent:create --name my-agent --env <env-id>
+magent agent:create --name my-agent --env <env-id>
 # 或直接用 tcb:
 # tcb agent update <agent-id> --code /path/to/deploy -e <env-id>
 ```
@@ -439,11 +522,11 @@ cbagent agent:create --name my-agent --env <env-id>
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `CLOUDBASE_ENV_ID` | **必需**。CloudBase 环境 ID | - |
-| `AGENT_CONFIG_B64` | 完整 JSON 配置（Base64，由 `cbagent agent:update` 写入） | - |
+| `AGENT_CONFIG_B64` | 完整 JSON 配置（Base64，由 `magent agent:update` 写入） | - |
 | `AGENT_CONFIG` | 完整 JSON 配置（明文，手动设置时可用） | - |
 | `AGENT_MODEL` | 覆盖模型名 | `hunyuan-t1-latest` |
 | `AGENT_SYSTEM` | 覆盖 system prompt | `You are a helpful assistant.` |
-| `AGENT_NAME` | 覆盖 agent 名称 | `cloudbase-managed-agent` |
+| `AGENT_NAME` | 覆盖 agent 名称 | `open-managed-agent` |
 | `PORT` | 服务监听端口 | `9000` |
 
 ---
@@ -462,9 +545,9 @@ cbagent agent:create --name my-agent --env <env-id>
 ```
 cloudbase-managed-agent/
 ├── packages/
-│   ├── sdk/                  # 客户端 SDK (@cloudbase/managed-agent)
+│   ├── sdk/                  # 客户端 SDK (open-managed-agent)
 │   │   └── src/
-│   │       ├── index.ts      # CloudbaseAgents 入口
+│   │       ├── index.ts      # ManagedAgents 入口
 │   │       ├── sessions.ts   # Sessions API (create/prompt/list/delete)
 │   │       ├── acp-client.ts # ACP JSON-RPC 客户端
 │   │       └── types.ts      # 类型定义
@@ -479,7 +562,7 @@ cloudbase-managed-agent/
 ├── tests/
 │   ├── integration.ts        # SDK 集成测试（ACP 全流程）
 │   └── agui-integration.ts   # AG-UI 协议测试
-├── cbagent.mjs               # CLI 工具
+├── magent.mjs                # CLI 工具
 └── README.md
 ```
 

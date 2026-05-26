@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CloudBase Managed Agent — E2E 测试脚本
+ * OpenManagedAgent — E2E 测试脚本
  *
  * 输出格式设计为「可复现文档」：每一步显示执行的命令/代码 + 完整输出。
  *
@@ -70,9 +70,9 @@ function printOutput(output, maxLines = 30) {
   }
 }
 
-function cbagent(cmd) {
-  const fullCmd = `node "${resolve(ROOT, "cbagent.mjs")}" ${cmd}`;
-  printCmd(`cbagent ${cmd}`);
+function magent(cmd) {
+  const fullCmd = `node "${resolve(ROOT, "magent.mjs")}" ${cmd}`;
+  printCmd(`magent ${cmd}`);
   const output = execSync(fullCmd, {
     encoding: "utf-8",
     timeout: 300000,
@@ -91,7 +91,7 @@ function sleep(ms) {
 async function main() {
   console.log(`
 ${bold("╔══════════════════════════════════════════════════════════╗")}
-${bold("║   CloudBase Managed Agent — E2E Integration Test        ║")}
+${bold("║   OpenManagedAgent — E2E Integration Test               ║")}
 ${bold("╚══════════════════════════════════════════════════════════╝")}
 
   Environment: ${ENV_ID}
@@ -103,13 +103,13 @@ ${bold("╚═══════════════════════
   console.log(bold("\n━━━ Step 1: 列出现有 Agents ━━━\n"));
   // ═══════════════════════════════════════════════════════════════════════════
 
-  cbagent("agent:list");
+  magent("agent:list");
 
   // ═══════════════════════════════════════════════════════════════════════════
   console.log(bold("\n━━━ Step 2: 创建 Agent（最小配置） ━━━\n"));
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const createOutput = cbagent(
+  const createOutput = magent(
     `agent:create --name "${AGENT_NAME}" --system "You are a minimal test agent. You have NO MCP tools or skills." --code "${resolve(ROOT, "packages/agent-runtime")}"`
   );
 
@@ -127,13 +127,13 @@ ${bold("╚═══════════════════════
   console.log(bold("\n━━━ Step 3: 等待 Agent 就绪 ━━━\n"));
   // ═══════════════════════════════════════════════════════════════════════════
 
-  printCmd(`cbagent agent:get --id ${AGENT_ID}  (polling every 5s...)`);
+  printCmd(`magent agent:get --id ${AGENT_ID}  (polling every 5s...)`);
   let ready = false;
   for (let i = 0; i < 30; i++) {
     await sleep(5000);
     try {
       const output = execSync(
-        `node "${resolve(ROOT, "cbagent.mjs")}" agent:get --id ${AGENT_ID}`,
+        `node "${resolve(ROOT, "magent.mjs")}" agent:get --id ${AGENT_ID}`,
         { encoding: "utf-8", timeout: 30000, env: { ...process.env, CLOUDBASE_ENV_ID: ENV_ID } }
       );
       if (output.includes("已就绪") || output.includes("Ready")) {
@@ -146,7 +146,7 @@ ${bold("╚═══════════════════════
   }
   if (!ready) {
     console.log(red("  ❌ Agent 未在 2.5 分钟内就绪，终止测试"));
-    cbagent(`agent:delete --id ${AGENT_ID}`);
+    magent(`agent:delete --id ${AGENT_ID}`);
     process.exit(1);
   }
   console.log(green("  → Agent 就绪 ✔"));
@@ -155,9 +155,9 @@ ${bold("╚═══════════════════════
   console.log(bold("\n━━━ Step 4: 使用 SDK 创建 Session 并发起对话 ━━━\n"));
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const sdkCode1 = `import CloudbaseAgents from "@cloudbase/managed-agent";
+  const sdkCode1 = `import ManagedAgents from "open-managed-agent";
 
-const client = new CloudbaseAgents({
+const client = new ManagedAgents({
   envId: "${ENV_ID}",
   agentId: "${AGENT_ID}",
   accessKey: "<ACCESS_KEY>",
@@ -180,8 +180,8 @@ await client.sessions.delete(session.id);`;
   console.log(dim("\n  执行中（首次冷启动可能需要 10-30s）...\n"));
 
   try {
-    const { default: CloudbaseAgents } = await import(resolve(ROOT, "packages/sdk/dist/index.js"));
-    const client = new CloudbaseAgents({
+    const { default: ManagedAgents } = await import(resolve(ROOT, "packages/sdk/dist/index.js"));
+    const client = new ManagedAgents({
       envId: ENV_ID,
       agentId: AGENT_ID,
       accessKey: API_KEY,
@@ -243,7 +243,7 @@ await client.sessions.delete(session.id);`;
   console.log();
 
   try {
-    cbagent(`agent:update --id ${AGENT_ID} --file "${configFile}"`);
+    magent(`agent:update --id ${AGENT_ID} --file "${configFile}"`);
     console.log(green("\n  → Step 5 通过 ✔"));
   } finally {
     rmSync(configFile, { force: true });
@@ -319,8 +319,8 @@ for await (const event of client.sessions.prompt(session.id, "列出你所有的
   console.log(dim("\n  执行中...\n"));
 
   try {
-    const { default: CloudbaseAgents } = await import(resolve(ROOT, "packages/sdk/dist/index.js"));
-    const client = new CloudbaseAgents({
+    const { default: ManagedAgents } = await import(resolve(ROOT, "packages/sdk/dist/index.js"));
+    const client = new ManagedAgents({
       envId: ENV_ID,
       agentId: AGENT_ID,
       accessKey: API_KEY,
@@ -355,7 +355,7 @@ for await (const event of client.sessions.prompt(session.id, "列出你所有的
   // ═══════════════════════════════════════════════════════════════════════════
 
   try {
-    cbagent(`agent:delete --id ${AGENT_ID}`);
+    magent(`agent:delete --id ${AGENT_ID}`);
     console.log(green("\n  → Step 8 通过 ✔"));
   } catch (err) {
     console.log(red(`  ❌ 删除失败: ${err.message}`));
@@ -373,7 +373,7 @@ main().catch((err) => {
   console.error(red(`\nFatal: ${err.message}`));
   if (AGENT_ID) {
     try {
-      execSync(`node "${resolve(ROOT, "cbagent.mjs")}" agent:delete --id ${AGENT_ID}`, {
+      execSync(`node "${resolve(ROOT, "magent.mjs")}" agent:delete --id ${AGENT_ID}`, {
         encoding: "utf-8", timeout: 60000,
         env: { ...process.env, CLOUDBASE_ENV_ID: ENV_ID },
       });

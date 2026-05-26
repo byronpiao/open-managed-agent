@@ -8,7 +8,7 @@
  *   CLOUDBASE_SERVER_URL=http://localhost:3000 tsx examples/acp-client/index.ts
  */
 
-import CloudbaseAgents from "@cloudbase/managed-agent";
+import ManagedAgents from "open-managed-agent";
 
 const AGENT_ID  = process.env.AGENT_ID ?? "my-agent";
 const BASE_URL  = process.env.CLOUDBASE_SERVER_URL ?? "http://localhost:3000";
@@ -17,7 +17,7 @@ const AGENT_URL = process.env.AGENT_URL
   ?? `https://${process.env.CLOUDBASE_ENV_ID}.service.tcloudbase.com/v1/aibot/bots/${AGENT_ID}`;
 
 // 直连 Agent 云函数（baseURL 指向 tcb agent 端点）
-const client = new CloudbaseAgents({
+const client = new ManagedAgents({
   baseURL: process.env.AGENT_URL
     ?? `https://${process.env.CLOUDBASE_ENV_ID}.service.tcloudbase.com/v1/aibot/bots/${AGENT_ID}`,
 });

@@ -152,14 +152,14 @@ export function getMcpToolsets(config: AgentConfig): McpToolset[] {
 // ── Loader ────────────────────────────────────────────────────────────────────
 //
 // Loading priority:
-//   1. AGENT_CONFIG env var (full JSON) — highest priority, set by `cbagent agent:update`
+//   1. AGENT_CONFIG env var (full JSON) — highest priority, set by `magent agent:update`
 //   2. agent.yaml / agent.yml file — bundled with code at deploy time
 //   3. Individual env vars (AGENT_MODEL, AGENT_SYSTEM, AGENT_NAME) — backward compat fallback
 //
 // Within each level, individual env vars (AGENT_MODEL etc.) can still override scalar fields.
 
 export async function loadAgentConfig(): Promise<AgentConfig> {
-  // Priority 1: AGENT_CONFIG or AGENT_CONFIG_B64 env var (from `cbagent agent:update`)
+  // Priority 1: AGENT_CONFIG or AGENT_CONFIG_B64 env var (from `magent agent:update`)
   const rawConfig = process.env.AGENT_CONFIG
     ?? (process.env.AGENT_CONFIG_B64
       ? Buffer.from(process.env.AGENT_CONFIG_B64, "base64").toString("utf-8")
@@ -207,7 +207,7 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
   // Priority 3: pure env vars (backward compatible)
   console.log("[Config] No agent.yaml found, using environment variables");
   return {
-    name: process.env.AGENT_NAME ?? "cloudbase-managed-agent",
+    name: process.env.AGENT_NAME ?? "open-managed-agent",
     model: process.env.AGENT_MODEL ?? "hunyuan-t1-latest",
     system: process.env.AGENT_SYSTEM
       ? decodeURIComponent(process.env.AGENT_SYSTEM)

@@ -12,7 +12,7 @@
  *   }
  */
 
-import type { CloudbaseAgentsConfig } from "./types.js";
+import type { ManagedAgentsConfig } from "./types.js";
 
 let _rpcId = 0;
 const nextId = () => ++_rpcId;
@@ -53,7 +53,7 @@ export class AcpClient {
   private headers: Record<string, string>;
   capabilities: AcpCapabilities = { loadSession: false, sessionList: false };
 
-  constructor(config: CloudbaseAgentsConfig) {
+  constructor(config: ManagedAgentsConfig) {
     this.baseURL = (config.baseURL ?? `https://${config.envId}.api.tcloudbasegateway.com/v1/aibot/bots/${config.agentId}`).replace(/\/$/, "");
     this.headers = {
       "Content-Type": "application/json",
@@ -123,7 +123,7 @@ export class AcpClient {
     }>("initialize", {
       protocolVersion: 1,
       clientCapabilities: {},
-      clientInfo: { name: "@cloudbase/managed-agent-sdk", version: "0.1.0" },
+      clientInfo: { name: "open-managed-agent", version: "0.1.0" },
     });
     this.capabilities = result.agentCapabilities;
     return result;

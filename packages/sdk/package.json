@@ -1,7 +1,7 @@
 {
-  "name": "@cloudbase/managed-agent",
+  "name": "open-managed-agent",
   "version": "0.1.0",
-  "description": "CloudBase Managed Agent SDK - mirrors Claude's @anthropic-ai/sdk beta.agents interface",
+  "description": "OpenManagedAgent SDK - ACP-compatible agent client (mirrors Anthropic Managed Agents API)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,7 +18,7 @@
   "files": [
     "dist"
   ],
-  "keywords": ["cloudbase", "ai", "agent", "managed-agent"],
+  "keywords": ["agent", "managed-agent", "acp", "ai", "open-managed-agent"],
   "license": "MIT",
   "devDependencies": {
     "typescript": "^5.4.0"

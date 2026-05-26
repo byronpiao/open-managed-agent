@@ -1,4 +1,4 @@
-# CloudBase Managed Agent 使用手册
+# OpenManagedAgent 使用手册
 
 > 类 Anthropic Managed Agent 体验，由 CloudBase 提供底层支撑
 
@@ -37,13 +37,13 @@ Events（事件流）
 
 ### 与 Claude Managed Agent 的对应关系
 
-| Claude (`@anthropic-ai/sdk`)       | CloudBase (`@cloudbase/managed-agent`) |
-|------------------------------------|----------------------------------------|
-| `anthropic.beta.agents.create()`   | `client.agents.create()`          |
-| `anthropic.beta.environments.*`    | `client.environments.*`           |
-| `anthropic.beta.sessions.*`        | `client.sessions.*`               |
-| `anthropic.beta.sessions.events.*` | `client.sessions.events.*`        |
-| 模型：`claude-opus-4-5`            | 模型：`hunyuan-2.0-instruct-20251111`  |
+| Claude (`@anthropic-ai/sdk`)       | OpenManagedAgent (`open-managed-agent`)    |
+|------------------------------------|---------------------------------------------|
+| `anthropic.beta.agents.create()`   | `client.agents.create()`                   |
+| `anthropic.beta.environments.*`    | `client.environments.*`                    |
+| `anthropic.beta.sessions.*`        | `client.sessions.*`                        |
+| `anthropic.beta.sessions.events.*` | `client.sessions.events.*`                 |
+| 模型：`claude-opus-4-5`            | 模型：`hunyuan-2.0-instruct-20251111`      |
 
 ---
 
@@ -62,7 +62,7 @@ export TENCENTCLOUD_SECRETKEY=your-secret-key
 export PORT=3000
 
 npm start
-# ✅ CloudBase Managed Agent Server running on port 3000
+# ✅ OpenManagedAgent Runtime listening on port 3000
 ```
 
 ### 2.2 配置 CLI 环境变量
@@ -76,10 +76,10 @@ export CLOUDBASE_ENV_ID=your-env-id
 
 ```bash
 # 创建一个 Agent
-cbagent agent:create --name "助手" --system "你是一个乐于助人的 AI 助手"
+magent agent:create --name "助手" --system "你是一个乐于助人的 AI 助手"
 
 # 复制输出的 agent-id，执行一次性任务
-cbagent run --agent agent_xxx --message "用 Python 写一个冒泡排序"
+magent run --agent agent_xxx --message "用 Python 写一个冒泡排序"
 ```
 
 ---
@@ -90,10 +90,10 @@ cbagent run --agent agent_xxx --message "用 Python 写一个冒泡排序"
 
 ```bash
 # 直接调用（推荐加入 PATH）
-node /path/to/cbagent.mjs
+node /path/to/magent.mjs
 
 # 或软链接
-ln -s /path/to/cbagent.mjs /usr/local/bin/cbagent
+ln -s /path/to/magent.mjs /usr/local/bin/magent
 ```
 
 ---
@@ -103,7 +103,7 @@ ln -s /path/to/cbagent.mjs /usr/local/bin/cbagent
 #### 创建 Agent
 
 ```bash
-cbagent agent:create \
+magent agent:create \
   --name "代码助手" \
   --model "hunyuan-2.0-instruct-20251111" \
   --system "你是一名专业的 Python 工程师，代码简洁、有注释"
@@ -130,19 +130,19 @@ cbagent agent:create \
 #### 列出所有 Agent
 
 ```bash
-cbagent agent:list
+magent agent:list
 ```
 
 #### 查看 Agent 详情
 
 ```bash
-cbagent agent:get --id agent_xxx
+magent agent:get --id agent_xxx
 ```
 
 #### 删除 Agent
 
 ```bash
-cbagent agent:delete --id agent_xxx
+magent agent:delete --id agent_xxx
 ```
 
 ---
@@ -152,14 +152,14 @@ cbagent agent:delete --id agent_xxx
 #### 创建环境
 
 ```bash
-cbagent env:create --name "生产环境"
+magent env:create --name "生产环境"
 ```
 
 #### 列出 / 删除
 
 ```bash
-cbagent env:list
-cbagent env:delete --id env_xxx
+magent env:list
+magent env:delete --id env_xxx
 ```
 
 ---
@@ -169,7 +169,7 @@ cbagent env:delete --id env_xxx
 #### 创建 Session
 
 ```bash
-cbagent session:create \
+magent session:create \
   --agent agent_xxx \
   --title "代码审查任务" \
   --env env_xxx          # 可选
@@ -186,9 +186,9 @@ cbagent session:create \
 #### 列出 / 查看 / 删除
 
 ```bash
-cbagent session:list
-cbagent session:get    --id sess_xxx
-cbagent session:delete --id sess_xxx
+magent session:list
+magent session:get    --id sess_xxx
+magent session:delete --id sess_xxx
 ```
 
 ---
@@ -200,7 +200,7 @@ cbagent session:delete --id sess_xxx
 自动创建 Session、发送消息、流式输出结果、清理 Session。
 
 ```bash
-cbagent run \
+magent run \
   --agent agent_xxx \
   --message "帮我写一个斐波那契数列函数，并测试 fib(10)"
 ```
@@ -208,7 +208,7 @@ cbagent run \
 加 `--keep-session` 保留 Session ID（方便后续继续对话）：
 
 ```bash
-cbagent run \
+magent run \
   --agent agent_xxx \
   --message "分析这段代码的复杂度" \
   --keep-session
@@ -219,25 +219,25 @@ cbagent run \
 
 ```bash
 # 先创建 session
-cbagent session:create --agent agent_xxx --title "持续对话"
+magent session:create --agent agent_xxx --title "持续对话"
 # → sess_abc123
 
 # 发送第一条消息
-cbagent chat --session sess_abc123 --message "你好，介绍一下你自己"
+magent chat --session sess_abc123 --message "你好，介绍一下你自己"
 
 # 继续对话（保留上下文）
-cbagent chat --session sess_abc123 --message "现在帮我写个排序算法"
-cbagent chat --session sess_abc123 --message "改成降序排列"
+magent chat --session sess_abc123 --message "现在帮我写个排序算法"
+magent chat --session sess_abc123 --message "改成降序排列"
 ```
 
 #### `repl` — 交互式对话
 
 ```bash
-cbagent repl --agent agent_xxx
+magent repl --agent agent_xxx
 ```
 
 ```
-🤖 CloudBase Agent REPL
+🤖 OpenManagedAgent REPL
 Type your message, press Enter. Ctrl+C to exit.
 
 Creating session... sess_xyz789
@@ -259,9 +259,9 @@ Cleaning up...
 ### 初始化
 
 ```typescript
-import CloudbaseAgents from "@cloudbase/managed-agent";
+import ManagedAgents from "open-managed-agent";
 
-const client = new CloudbaseAgents({
+const client = new ManagedAgents({
   baseURL: process.env.CLOUDBASE_SERVER_URL ?? "http://localhost:3000",
   envId:   process.env.CLOUDBASE_ENV_ID,
   apiKey:  process.env.CLOUDBASE_API_KEY, // 可选，用于鉴权
@@ -368,34 +368,34 @@ console.log(await chat("现在改成用 TypeScript"));
 
 ```bash
 # Step 1: 创建专门的代码助手 Agent
-cbagent agent:create \
+magent agent:create \
   --name "CodeBot" \
   --system "你是资深工程师。写代码时必须附带测试用例，代码风格遵循 PEP8。"
 
 # 输出: agent_code123
 
 # Step 2: 创建持久 Session（方便多轮对话）
-cbagent session:create \
+magent session:create \
   --agent agent_code123 \
   --title "斐波那契项目"
 
 # 输出: sess_task456
 
 # Step 3: 发送第一个任务
-cbagent chat \
+magent chat \
   --session sess_task456 \
   --message "写一个斐波那契函数，要求：支持迭代和递归两种实现，包含完整测试"
 
 # Step 4: 继续优化（同一 session，保留上下文）
-cbagent chat \
+magent chat \
   --session sess_task456 \
   --message "迭代版本改为支持大数（超过64位），使用 Python 的 int"
 
 # Step 5: 查看会话状态
-cbagent session:get --id sess_task456
+magent session:get --id sess_task456
 
 # Step 6: 清理
-cbagent session:delete --id sess_task456
+magent session:delete --id sess_task456
 ```
 
 ### 场景：批量处理（多 Agent 并行）
@@ -411,7 +411,7 @@ tasks=(
 )
 
 for task in "${tasks[@]}"; do
-  cbagent run --agent "$AGENT_ID" --message "$task" &
+  magent run --agent "$AGENT_ID" --message "$task" &
 done
 
 wait
@@ -493,7 +493,7 @@ for await (const event of stream) {
 cd packages/server
 npm install
 npm run build
-docker build -t cloudbase-managed-agent:latest .
+docker build -t open-managed-agent:latest .
 ```
 
 ### 通过 CloudBase 控制台部署
@@ -515,7 +515,7 @@ docker build -t cloudbase-managed-agent:latest .
 
 ```bash
 export CLOUDBASE_SERVER_URL=https://your-service.ap-shanghai.run.tcloudbase.com
-cbagent agent:list   # 验证连通性
+magent agent:list   # 验证连通性
 ```
 
 ---
@@ -528,19 +528,19 @@ export CLOUDBASE_SERVER_URL=http://localhost:3000
 export CLOUDBASE_ENV_ID=your-env-id
 
 # ── Agent ─────────────────────────────────────────────────
-cbagent agent:create  --name "Bot" --system "You are helpful"
-cbagent agent:list
-cbagent agent:delete  --id agent_xxx
+magent agent:create  --name "Bot" --system "You are helpful"
+magent agent:list
+magent agent:delete  --id agent_xxx
 
 # ── 一次性任务 ────────────────────────────────────────────
-cbagent run --agent agent_xxx --message "做某件事"
+magent run --agent agent_xxx --message "做某件事"
 
 # ── 多轮对话 ──────────────────────────────────────────────
-cbagent session:create --agent agent_xxx --title "My task"
-cbagent chat --session sess_xxx --message "第一条消息"
-cbagent chat --session sess_xxx --message "继续..."
-cbagent session:delete --id sess_xxx
+magent session:create --agent agent_xxx --title "My task"
+magent chat --session sess_xxx --message "第一条消息"
+magent chat --session sess_xxx --message "继续..."
+magent session:delete --id sess_xxx
 
 # ── 交互式 REPL ───────────────────────────────────────────
-cbagent repl --agent agent_xxx
+magent repl --agent agent_xxx
 ```
