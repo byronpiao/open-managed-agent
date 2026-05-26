@@ -1,6 +1,6 @@
 {
   "name": "open-managed-agent",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "magent CLI — manage CloudBase AI agents from the command line",
   "bin": {
     "magent": "./magent.mjs"
