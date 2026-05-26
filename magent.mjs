@@ -56,12 +56,20 @@ const BASE_URL = process.env.CLOUDBASE_SERVER_URL ?? "http://localhost:3000";
 let _tcbBin = null;
 function getTcbBin() {
   if (_tcbBin) return _tcbBin;
-  // spawnSync inherits process.env.PATH directly — works with nvm
-  const probe = spawnSync("tcb", ["--version"], { encoding: "utf-8", stdio: "ignore" });
-  if (!probe.error) return (_tcbBin = "tcb");
+  // 1. Sibling of node binary — most reliable for nvm installations.
+  //    Both `magent` and `tcb` are installed via the same npm, so they sit
+  //    in the same bin dir (e.g. /root/.nvm/versions/node/v22.x.x/bin/).
+  const sibling = resolve(process.execPath, "..", "tcb");
+  if (existsSync(sibling)) return (_tcbBin = sibling);
+  // 2. Bundled via @cloudbase/cli dependency (present after npm install)
   const bundled = new URL("./node_modules/.bin/tcb", import.meta.url).pathname;
   if (existsSync(bundled)) return (_tcbBin = bundled);
-  return (_tcbBin = "tcb"); // will error naturally if missing
+  // 3. Fall back to PATH lookup (works in some environments)
+  const probe = spawnSync("tcb", ["--version"], { encoding: "utf-8", stdio: "ignore" });
+  if (!probe.error) return (_tcbBin = "tcb");
+  throw new Error(
+    "tcb CLI not found. Install it with: npm install -g @cloudbase/cli"
+  );
 }
 
 // ── runTcb — spawnSync wrapper (no shell, captures output) ──────────────────
