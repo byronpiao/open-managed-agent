@@ -10,10 +10,7 @@
  *
  * Endpoints:
  *   POST /acp                              ACP JSON-RPC 入口（直连）
- *   POST /v1/aibot/bots/:botId/acp         同上（网关代理路径）
- *   GET  /acp/sessions                     便捷 REST：列出 session
- *   GET  /acp/sessions/:sessionId          便捷 REST：会话详情
- *   DELETE /acp/sessions/:sessionId        便捷 REST：删除会话
+ *   POST /v1/aibot/bots/:botId/acp         网关代理路径（部署适配，非协议规定）
  *
  * Supported JSON-RPC methods:
  *   initialize       capability 协商
@@ -22,6 +19,7 @@
  *   session/load     不带 replay → RPC；带 replay=true → SSE 推 history_page
  *   session/prompt   SSE 推 agent_message_chunk / tool_call / tool_call_update
  *   session/cancel   notification，中断进行中的轮次
+ *   session/delete   幂等删除会话（ACP spec 扩展）
  */
 
 import type { Express, Request, Response } from "express";
@@ -531,6 +529,34 @@ function handleSessionCancel(params: Record<string, unknown>) {
   }
 }
 
+/**
+ * session/delete — 删除会话（ACP spec 扩展，幂等）。
+ *
+ * 不存在或已被删的 sessionId 也返回 200 + deleted: false，避免 client 上手动 retry 时报错。
+ * 对应进行中的 prompt 也会被一并取消。
+ */
+async function handleSessionDelete(params: Record<string, unknown>) {
+  const sessionId = String(params.sessionId ?? "");
+  if (!sessionId) {
+    throw new Error("sessionId is required");
+  }
+
+  // 中断进行中的 prompt（如果有）
+  const ctrl = abortControllers.get(sessionId);
+  if (ctrl) {
+    ctrl.abort();
+    abortControllers.delete(sessionId);
+  }
+
+  const existing = await db.collection(SESSIONS_COL).where({ sessionId }).get();
+  if (!existing.data.length) {
+    return { sessionId, deleted: false };
+  }
+
+  await db.collection(SESSIONS_COL).where({ sessionId }).remove();
+  return { sessionId, deleted: true };
+}
+
 // ── Mount function ────────────────────────────────────────────────────────────
 
 export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
@@ -598,6 +624,9 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
           if (isNotification) return res.status(204).end();
           return res.json(rpcResult(id, { ok: true }));
 
+        case "session/delete":
+          return res.json(rpcResult(id, await handleSessionDelete(params)));
+
         default:
           if (isNotification) return res.status(200).end();
           return res.status(404).json(rpcError(id, -32601, `Method not found: ${method}`));
@@ -613,43 +642,5 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   app.post("/acp", acpHandler);
   app.post("/v1/aibot/bots/:botId/acp", acpHandler);
 
-  // ── REST 便捷入口（playground 不依赖，仅运维/排障用） ─────────────────
-
-  const sessionsListHandler = async (_req: Request, res: Response) => {
-    try {
-      return res.json(await handleSessionList({}));
-    } catch (err) {
-      return res.status(500).json({ error: String(err) });
-    }
-  };
-
-  const sessionGetHandler = async (req: Request, res: Response) => {
-    try {
-      const { sessionId } = req.params;
-      const result = await db.collection(SESSIONS_COL).where({ sessionId }).get();
-      if (!result.data.length) return res.status(404).json({ error: "Session not found" });
-      return res.json(result.data[0]);
-    } catch (err) {
-      return res.status(500).json({ error: String(err) });
-    }
-  };
-
-  const sessionDeleteHandler = async (req: Request, res: Response) => {
-    try {
-      const { sessionId } = req.params;
-      await db.collection(SESSIONS_COL).where({ sessionId }).remove();
-      return res.json({ sessionId, deleted: true });
-    } catch (err) {
-      return res.status(500).json({ error: String(err) });
-    }
-  };
-
-  app.get("/acp/sessions", sessionsListHandler);
-  app.get("/acp/sessions/:sessionId", sessionGetHandler);
-  app.delete("/acp/sessions/:sessionId", sessionDeleteHandler);
-  app.get("/v1/aibot/bots/:botId/acp/sessions", sessionsListHandler);
-  app.get("/v1/aibot/bots/:botId/acp/sessions/:sessionId", sessionGetHandler);
-  app.delete("/v1/aibot/bots/:botId/acp/sessions/:sessionId", sessionDeleteHandler);
-
-  console.log("[ACP] Endpoints mounted: POST /acp (+ gateway path), GET /acp/sessions");
+  console.log("[ACP] Endpoints mounted: POST /acp (+ gateway path /v1/aibot/bots/:botId/acp)");
 }
