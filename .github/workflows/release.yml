@@ -34,7 +34,7 @@ jobs:
             out:    magent-darwin-arm64
           # Windows
           - runner: windows-latest
-            target: bun-windows-x64-baseline
+            target: bun-windows-x64
             out:    magent-windows-x64.exe
 
     steps:
