@@ -74,39 +74,32 @@ jobs:
           path: dist/${{ matrix.out }}
           retention-days: 1
 
-  # ── Publish to npm ─────────────────────────────────────────────────────────
-  npm-publish:
-    name: Publish to npm
-    runs-on: ubuntu-latest
-    environment: npm   # optional: protect with a GitHub Environment
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build SDK
-        run: npm run build:sdk
-
-      - name: Publish CLI (open-managed-agent)
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish SDK (open-managed-agent-sdk)
-        run: npm publish --access public --workspace=packages/sdk
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  # ── Publish to npm (skip for now — uncomment when NPM_TOKEN is configured) ──
+  # npm-publish:
+  #   name: Publish to npm
+  #   runs-on: ubuntu-latest
+  #   environment: npm
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: "20"
+  #         registry-url: "https://registry.npmjs.org"
+  #     - run: npm install
+  #     - run: npm run build:sdk
+  #     - name: Publish CLI (open-managed-agent)
+  #       run: npm publish --access public
+  #       env:
+  #         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  #     - name: Publish SDK (open-managed-agent-sdk)
+  #       run: npm publish --access public --workspace=packages/sdk
+  #       env:
+  #         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # ── Create GitHub Release with all binaries ────────────────────────────────
   release:
     name: Create GitHub Release
-    needs: [build, npm-publish]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
