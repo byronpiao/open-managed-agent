@@ -260,6 +260,87 @@ async function* streamEvents(sessionId) {
   }
 }
 
+// ── ACP (Agent Client Protocol) — JSON-RPC 2.0 over HTTP + NDJSON streaming ──
+// Used by `run` and `repl` commands to talk directly to the agent.
+
+let _acpId = 0;
+
+function getAcpUrl(args) {
+  const envId   = args.env   ?? process.env.CLOUDBASE_ENV_ID   ?? "";
+  const agentId = args.agent ?? process.env.CLOUDBASE_AGENT_ID ?? "";
+  if (!envId)   throw new Error("-e / --env is required (or set CLOUDBASE_ENV_ID)");
+  if (!agentId) throw new Error("-a / --agent is required (or set CLOUDBASE_AGENT_ID)");
+  return `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}/acp`;
+}
+
+function getAcpHeaders() {
+  const envId     = process.env.CLOUDBASE_ENV_ID     ?? "";
+  const accessKey = process.env.CLOUDBASE_ACCESS_KEY ?? "";
+  return {
+    "Content-Type": "application/json",
+    ...(accessKey ? { Authorization: `Bearer ${accessKey}` } : {}),
+    ...(envId     ? { "X-CloudBase-Env-Id": envId }         : {}),
+  };
+}
+
+async function acpCall(url, method, params = {}) {
+  const res = await fetch(url, {
+    method:  "POST",
+    headers: getAcpHeaders(),
+    body:    JSON.stringify({ jsonrpc: "2.0", id: ++_acpId, method, params }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    if (text.includes("Cannot POST") || text.includes("<!DOCTYPE")) {
+      throw new Error(`Agent ACP endpoint not found (HTTP ${res.status}). Is the agent deployed with open-managed-agent runtime?`);
+    }
+    throw new Error(`ACP HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  if (data.error) throw new Error(`ACP error: ${data.error.message ?? JSON.stringify(data.error)}`);
+  return data.result;
+}
+
+async function* acpStream(url, method, params = {}) {
+  const res = await fetch(url, {
+    method:  "POST",
+    headers: getAcpHeaders(),
+    body:    JSON.stringify({ jsonrpc: "2.0", id: ++_acpId, method, params }),
+  });
+  if (!res.ok || !res.body) throw new Error(`ACP stream error: HTTP ${res.status}`);
+
+  const reader = res.body.getReader();
+  const dec    = new TextDecoder();
+  let buf      = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const msg = JSON.parse(trimmed);
+        if ("method" in msg) {
+          // Notification — stream event
+          yield { type: "notification", data: msg };
+        } else if (msg.error) {
+          throw new Error(`ACP error: ${msg.error.message ?? JSON.stringify(msg.error)}`);
+        } else if ("result" in msg) {
+          yield { type: "result", data: msg.result };
+        }
+      } catch (e) {
+        if (e.message.startsWith("ACP error:")) throw e;
+        // ignore parse errors for partial lines
+      }
+    }
+  }
+}
+
 // ── Alias generation ──────────────────────────────────────────────────────────
 // tcb requires alias to be ASCII; convert Unicode/CJK names to a stable slug.
 function toAlias(name) {
@@ -672,54 +753,74 @@ const COMMANDS = {
     }
   },
 
-  // ─── Run (one-shot: create session + send + stream + cleanup) ─────────────
+  // ─── Run (one-shot: ACP session/new → session/prompt, no persistence) ─────
 
   "run": async (args) => {
-    if (!args.agent)   throw new Error("-a / --agent is required");
+    if (!args.agent && !process.env.CLOUDBASE_AGENT_ID) throw new Error("-a / --agent is required (or set CLOUDBASE_AGENT_ID)");
     if (!args.message) throw new Error("-m / --message is required");
 
+    const acpUrl = getAcpUrl(args);
+
+    process.stdout.write(dim("Connecting to agent... "));
+    const initResult = await acpCall(acpUrl, "initialize", {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "magent-cli", version: "0.1.0" },
+    });
+    console.log(green(initResult.agentInfo?.name ?? "OK"));
+
     process.stdout.write(dim("Creating session... "));
-    const session = await post("/sessions", {
-      agent: args.agent,
-      title: args.message.slice(0, 60),
-    });
-    console.log(dim(`${session.id}\n`));
+    const { sessionId } = await acpCall(acpUrl, "session/new", { cwd: "/", mcpServers: [] });
+    console.log(dim(sessionId));
 
-    const streamGen = streamEvents(session.id);
-
-    await post(`/sessions/${session.id}/events`, {
-      events: [{ type: "user.message", content: [{ type: "text", text: args.message }] }],
-    });
-
-    console.log(dim(`You: ${args.message}\n`));
+    console.log(dim(`\nYou: ${args.message}\n`));
     console.log(bold("Agent:"));
 
-    for await (const event of streamGen) {
-      renderEvent(event);
-      if (event.type === "session.status_idle" || event.type === "session.status_terminated") break;
-    }
-
-    if (!args["keep-session"]) {
-      await del(`/sessions/${session.id}`).catch(() => {});
-    } else {
-      console.log(dim(`\nSession kept: ${session.id}`));
+    for await (const item of acpStream(acpUrl, "session/prompt", {
+      sessionId,
+      prompt: [{ type: "text", text: args.message }],
+    })) {
+      if (item.type === "notification") {
+        const update = item.data.params?.update;
+        switch (update?.sessionUpdate) {
+          case "agent_message_chunk":
+            process.stdout.write(update.content?.text ?? "");
+            break;
+          case "tool_call":
+            console.log(yellow(`\n🔧 Tool: ${update.toolCall?.name ?? "?"} [${update.toolCall?.status}]`));
+            if (update.toolCall?.result) console.log(dim(`   ${update.toolCall.result.slice(0, 200)}`));
+            break;
+          case "error":
+            console.log(red(`\n❌ ${update.message ?? "unknown error"}`));
+            break;
+        }
+      } else if (item.type === "result") {
+        console.log(green(`\n\n✅ Done (${item.data.stopReason ?? "end_turn"})`));
+      }
     }
   },
 
-  // ─── Interactive REPL ─────────────────────────────────────────────────────
+  // ─── Interactive REPL (ACP session, multi-turn) ───────────────────────────
 
   "repl": async (args) => {
-    if (!args.agent) throw new Error("-a / --agent is required");
+    if (!args.agent && !process.env.CLOUDBASE_AGENT_ID) throw new Error("-a / --agent is required (or set CLOUDBASE_AGENT_ID)");
+
+    const acpUrl = getAcpUrl(args);
 
     console.log(bold("\n🤖 OpenManagedAgent REPL"));
     console.log(dim("Type your message, press Enter. Ctrl+C to exit.\n"));
 
-    process.stdout.write(dim("Creating session... "));
-    const session = await post("/sessions", {
-      agent: args.agent,
-      title: "REPL session",
+    process.stdout.write(dim("Connecting... "));
+    const initResult = await acpCall(acpUrl, "initialize", {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "magent-cli", version: "0.1.0" },
     });
-    console.log(green(session.id));
+    console.log(green(initResult.agentInfo?.name ?? "OK"));
+
+    process.stdout.write(dim("Creating session... "));
+    const { sessionId } = await acpCall(acpUrl, "session/new", { cwd: "/", mcpServers: [] });
+    console.log(green(sessionId));
     console.log();
 
     const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -728,26 +829,39 @@ const COMMANDS = {
       rl.question(cyan("You: "), async (message) => {
         if (!message.trim()) return ask();
         try {
-          const streamGen = streamEvents(session.id);
-          await post(`/sessions/${session.id}/events`, {
-            events: [{ type: "user.message", content: [{ type: "text", text: message }] }],
-          });
           process.stdout.write(bold("\nAgent: "));
-          for await (const event of streamGen) {
-            renderEvent(event);
-            if (event.type === "session.status_idle" || event.type === "session.status_terminated") break;
+          for await (const item of acpStream(acpUrl, "session/prompt", {
+            sessionId,
+            prompt: [{ type: "text", text: message }],
+          })) {
+            if (item.type === "notification") {
+              const update = item.data.params?.update;
+              switch (update?.sessionUpdate) {
+                case "agent_message_chunk":
+                  process.stdout.write(update.content?.text ?? "");
+                  break;
+                case "tool_call":
+                  console.log(yellow(`\n🔧 Tool: ${update.toolCall?.name ?? "?"} [${update.toolCall?.status}]`));
+                  if (update.toolCall?.result) console.log(dim(`   ${update.toolCall.result.slice(0, 200)}`));
+                  break;
+                case "error":
+                  console.log(red(`\n❌ ${update.message ?? "unknown error"}`));
+                  break;
+              }
+            } else if (item.type === "result") {
+              console.log(green(`\n  (${item.data.stopReason ?? "end_turn"})`));
+            }
           }
           console.log();
         } catch (err) {
-          console.error(red(`Error: ${err.message}`));
+          console.error(red(`\nError: ${err.message}`));
         }
         ask();
       });
     };
 
-    rl.on("close", async () => {
-      console.log(dim("\nCleaning up..."));
-      await del(`/sessions/${session.id}`).catch(() => {});
+    rl.on("close", () => {
+      console.log(dim("\nBye!"));
       process.exit(0);
     });
 
