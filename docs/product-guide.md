@@ -364,6 +364,21 @@ magent repl --agent <id>
 magent chat --session <id> --message "Add unit tests"
 ```
 
+`magent run` 响应示例：
+
+```
+$ magent run -a agent-my-agent-7gi10oad3e9b3e8c -m "Hello" -e test-6g2rfs50c69b7fb8
+Connecting to agent... my-agent
+Creating session... sess_mpp8aw36_dmi18
+
+You: Hello
+
+Agent:
+Hello! How can I help you today? I can assist you with coding tasks, file operations, running shell commands, and more. Just let me know what you'd like to work on! 😊
+
+✅ Done (end_turn)
+```
+
 ### Session 管理
 
 ```bash
