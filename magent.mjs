@@ -14,7 +14,7 @@
  *   agent:delete   [-i <agent-id>]
  *   agent:update   [-i <id>] [options]
  *
- *   cloudrun:create -n <name> [options]      Container-mode agent (function-typed cloudrun + ibot- agent)
+ *   cloudrun:create -n <name> [options]      Container-mode agent (cloudrun + CreateAgent API)
  *   cloudrun:list   [-e <envId>]
  *   cloudrun:delete -n <serviceName>
  *
@@ -354,6 +354,71 @@ function readTcbLoginCredential() {
   } catch {
     return null;
   }
+}
+
+// Call a Tencent Cloud OpenAPI action (V3 TC3-HMAC-SHA256 signing) using the
+// current tcb login credentials. Used to invoke `tcb` service actions like
+// `CreateAgent` that the tcb CLI doesn't expose as a subcommand.
+async function callTcbCloudApi({
+  action,
+  payload,
+  region = "ap-shanghai",
+  service = "tcb",
+  version = "2018-06-08",
+  endpoint,
+}) {
+  const cred = readTcbLoginCredential();
+  if (!cred) {
+    throw new Error(
+      "No tcb login credentials found. Run `tcb login` first " +
+      "(or set CLOUDBASE_API_KEY for direct gateway access).",
+    );
+  }
+  const { sign } = _require("@cloudbase/signature-nodejs");
+
+  const host = endpoint ?? `${service}.tencentcloudapi.com`;
+  const url = `https://${host}/`;
+  const method = "POST";
+  const headers = {
+    "Content-Type": "application/json; charset=utf-8",
+    Host: host,
+    "X-TC-Action": action,
+    "X-TC-Version": version,
+    "X-TC-Region": region,
+    ...(cred.token ? { "X-TC-Token": cred.token } : {}),
+  };
+  const timestamp = Math.floor(Date.now() / 1000) - 1;
+  const { authorization } = sign({
+    secretId: cred.secretId,
+    secretKey: cred.secretKey,
+    method,
+    url,
+    headers,
+    params: payload,
+    timestamp,
+    withSignedParams: false,
+    isCloudApi: true,
+    service,
+  });
+  headers["Authorization"] = authorization;
+  headers["X-TC-Timestamp"] = String(timestamp);
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  let body;
+  try { body = JSON.parse(text); } catch { body = { raw: text }; }
+  if (!res.ok) {
+    throw new Error(`Tencent Cloud API ${action} HTTP ${res.status}: ${text.slice(0, 300)}`);
+  }
+  if (body?.Response?.Error) {
+    const e = body.Response.Error;
+    throw new Error(`Tencent Cloud API ${action} ${e.Code}: ${e.Message} (RequestId=${body.Response.RequestId})`);
+  }
+  return body?.Response ?? body;
 }
 
 async function getAcpHeaders() {
@@ -827,11 +892,14 @@ const COMMANDS = {
   },
 
   // ─── Cloud Run (container-mode agent) ─────────────────────────────────────
-  // Deploy agent-runtime as a CloudBase CloudRun service AND register it as a
-  // function-typed agent in one shot. Backed by `tcb cloudrun deploy --createAgent`.
-  //
-  // Resulting agent ID has the shape `ibot-<slug>-<random>`, addressable via
-  // the same `magent run -a <agentId>` path as SCF-mode agents.
+  // Two-phase deploy:
+  //   1. `tcb cloudrun deploy` (container-typed, with our Dockerfile, no
+  //      --createAgent flag, fully non-interactive).
+  //   2. POST `tcb/CreateAgent` (TencentCloud V3 signed) with
+  //      Template=alreadyExitResource + ServiceId=<service>, which registers
+  //      the running cloudrun service as a TCBR agent and returns an
+  //      `agent-<slug>-<random>` ID. The same `magent run -a <agentId>`
+  //      gateway path then works identically to SCF agents.
 
   "cloudrun:create": async (args) => {
     const { name, model, system } = args;
@@ -862,20 +930,20 @@ const COMMANDS = {
 
     const configB64 = Buffer.from(JSON.stringify(config)).toString("base64");
 
-    // ── Derive ibot- agent id ────────────────────────────────────────────
-    // tcb requires the form `ibot-<a>-<b>` where each segment is [a-z0-9_]+.
-    // We use toAlias(name) for <a> and a 6-char random suffix for <b>.
-    const slug = toAlias(name).replace(/-/g, "_");
-    const suffix = Math.random().toString(36).slice(2, 8).replace(/[^a-z0-9_]/g, "0");
-    const botSegments = `${slug}-${suffix}`;
-    const agentId = `ibot-${botSegments}`;
-    const serviceName = `ibot-${slug}`; // first two segments per tcb convention
+    // ── Names ────────────────────────────────────────────────────────────
+    // CloudRun service name: free-form. We use `<slug>-<rand>` for uniqueness.
+    // Tencent Cloud will assign the agent ID itself; we suggest a base via
+    // `AgentId: agent-<slug>` (the API appends a unique suffix).
+    const slug = toAlias(name);
+    const rand = Math.random().toString(36).slice(2, 8);
+    const serviceName = args.service ?? `${slug}-${rand}`;
+    const suggestedAgentId = `agent-${slug}`;
 
     console.log(bold("Creating cloud-run agent..."));
     console.log(dim(`  name:        ${config.name}`));
     console.log(dim(`  model:       ${config.model}`));
-    console.log(dim(`  agent id:    ${agentId}`));
     console.log(dim(`  service:     ${serviceName}`));
+    console.log(dim(`  envId:       ${envId}`));
     console.log(dim(`  code:        ${code}`));
     console.log();
 
@@ -892,12 +960,11 @@ const COMMANDS = {
         if (existsSync(src)) execSync(`cp -r "${src}" "${deployDir}/"`, { encoding: "utf-8" });
       }
 
-      // ── Dockerfile (Node 20 + production deps) ─────────────────────────
+      // Dockerfile (Node 20, Tencent mirrors, listens on 9000)
       const dockerfile = `# Auto-generated by magent cloudrun:create
 FROM node:20-alpine
 WORKDIR /app
 
-# Tencent mirrors for faster builds inside CloudBase
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.tencent.com|g' /etc/apk/repositories || true \\
  && apk add --no-cache tzdata ca-certificates \\
  && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo Asia/Shanghai > /etc/timezone
@@ -916,71 +983,91 @@ CMD ["node", "dist/index.js"]
 `;
       writeFileSync(resolve(deployDir, "Dockerfile"), dockerfile);
 
-      // ── cloudbaserc.json (carries envParams for the container) ─────────
-      // envParams uses xx=a&yy=b form. Values must be URL-safe — base64 is OK.
+      // cloudbaserc.json carries envParams that get baked into the container's
+      // environment (xx=a&yy=b form, base64 values are URL-safe enough).
       const envParams = `CLOUDBASE_ENV_ID=${envId}&AGENT_CONFIG_B64=${configB64}`;
-      const cloudbaseRc = {
-        version: "2.0",
-        envId,
-        $schema: "https://framework-1258016615.tcloudbaseapp.com/schema/latest.json",
-        cloudrun: {
-          name: serviceName,
-          envParams,
-        },
-      };
-      writeFileSync(resolve(deployDir, "cloudbaserc.json"), JSON.stringify(cloudbaseRc, null, 2));
+      writeFileSync(
+        resolve(deployDir, "cloudbaserc.json"),
+        JSON.stringify({
+          version: "2.0",
+          envId,
+          $schema: "https://framework-1258016615.tcloudbaseapp.com/schema/latest.json",
+          cloudrun: { name: serviceName, envParams },
+        }, null, 2),
+      );
     } catch (err) {
       throw new Error(`Deploy prep failed: ${err.message}`);
     }
 
-    // ── Run `tcb cloudrun deploy --createAgent` ──────────────────────────
-    // The command is interactive: it asks for `Name` then `BotId` (the part
-    // inside ibot-(...)). We feed both via stdin.
-    process.stdout.write(dim("Deploying via tcb cloudrun deploy... "));
+    // ── Phase 1: tcb cloudrun deploy (container, non-interactive) ────────
+    process.stdout.write(dim("Phase 1/2: deploying cloudrun service... "));
     try {
-      const stdinAnswers = `${config.name}\n${botSegments}\n`;
-      const raw = runTcb(
+      runTcb(
         [
           "cloudrun", "deploy",
-          "--createAgent",
+          "-s", serviceName,
           "--source", deployDir,
           "--force",
           "--installDependency", "false",
-          "--json",
+          "-e", envId,
         ],
-        { input: stdinAnswers, timeout: 600000 },
+        { timeout: 600000 },
       );
       console.log(green("OK"));
-      console.log();
-      console.log(green(`✅ Agent created: ${agentId}`));
-      console.log(dim(`  service:    ${serviceName}`));
-      console.log(dim(`  envId:      ${envId}`));
-      console.log();
-      console.log("Next steps:");
-      console.log(dim(`  1. Wait for ready: tcb agent detail ${agentId} -e ${envId}`));
-      console.log(dim(`  2. Start chatting: magent run -a ${agentId} -e ${envId} -m "Hello"`));
-      // Print last few lines of tcb output for diagnostics
-      const tail = raw.split("\n").filter(Boolean).slice(-5).join("\n");
-      if (tail) console.log(dim(`\n${tail}`));
     } catch (err) {
       try { execSync(`rm -rf "${deployDir}"`, { encoding: "utf-8" }); } catch {}
       throw new Error(`tcb cloudrun deploy failed: ${err.message}`);
     }
     try { execSync(`rm -rf "${deployDir}"`, { encoding: "utf-8" }); } catch {}
+
+    // ── Phase 2: register the service as a TCBR agent ────────────────────
+    process.stdout.write(dim("Phase 2/2: registering agent (CreateAgent API)... "));
+    let createdAgentId;
+    try {
+      const resp = await callTcbCloudApi({
+        action: "CreateAgent",
+        payload: {
+          EnvId:    envId,
+          Name:     config.name,
+          AgentId:  suggestedAgentId,
+          Avatar:   "https://cloudcache.tencent-cloud.com/qcloud/ui/static/static_source_business/21235b0d-8db2-4e30-b946-3973e6f99c00.png",
+          ServiceId: serviceName,
+          EnvParams: "",
+          AgentType: "tcbr",
+          Template:  "alreadyExitResource",
+          Source:    "",
+        },
+      });
+      createdAgentId = resp.AgentId;
+      console.log(green("OK"));
+    } catch (err) {
+      throw new Error(`CreateAgent API failed: ${err.message}`);
+    }
+
+    console.log();
+    console.log(green(`✅ Agent created: ${createdAgentId}`));
+    console.log(dim(`  service:    ${serviceName}`));
+    console.log(dim(`  envId:      ${envId}`));
+    console.log();
+    console.log("Next steps (container build typically takes 2-5 minutes):");
+    console.log(dim(`  1. Wait for ready: tcb agent detail ${createdAgentId} -e ${envId}`));
+    console.log(dim(`  2. Start chatting: magent run -a ${createdAgentId} -e ${envId} -m "Hello"`));
   },
 
   "cloudrun:list": async (args) => {
     const envId = requireEnvId(args);
     spawnSync(
       getNodeExecutable(),
-      [getTcbScript(), "cloudrun", "list", "-e", envId, "--serverType", "function"],
+      [getTcbScript(), "cloudrun", "list", "-e", envId, "--serverType", "container"],
       { stdio: "inherit" },
     );
   },
 
   "cloudrun:delete": async (args) => {
-    if (!args.name) throw new Error("-n / --name is required (the cloudrun service name, e.g. ibot-my-agent)");
+    if (!args.name) throw new Error("-n / --name is required (the cloudrun service name)");
     const envId = requireEnvId(args);
+    // Note: this only deletes the cloudrun service. Use `tcb agent delete <agentId>`
+    // separately to remove the registered agent (or it will linger as a broken entry).
     spawnSync(
       getNodeExecutable(),
       [getTcbScript(), "cloudrun", "delete", "-s", args.name, "-e", envId, "--force"],
@@ -1233,16 +1320,22 @@ ${bold("AGENT COMMANDS")}
 
 ${bold("CLOUDRUN COMMANDS (container-mode agent, deployed as CloudBase Cloud Run)")}
   cloudrun:create -n <name> [options]         Deploy agent-runtime as a container service
-                                              and register an ibot-<slug>-<rand> agent.
+                                              (with Dockerfile) and register an
+                                              agent-<slug>-<rand> TCBR agent via the
+                                              CreateAgent API. Same 'magent run -a <id>'
+                                              path as SCF agents.
     -n, --name <name>           Agent name (required)
         --model <model>         Model (default: hunyuan-t1-latest)
         --system <prompt>       System prompt
     -f, --file <path>           Load config from YAML/JSON file
         --code <path>           Code directory (default: ./packages/agent-runtime)
+        --service <name>        Override the cloudrun service name (default: <slug>-<rand>)
     -e, --env <envId>           CloudBase environment ID
 
-  cloudrun:list   [-e <envId>]                List function-typed cloud-run services
-  cloudrun:delete -n <serviceName> [-e <id>]  Delete a cloud-run service
+  cloudrun:list   [-e <envId>]                List container-typed cloud-run services
+  cloudrun:delete -n <serviceName> [-e <id>]  Delete a cloud-run service (use
+                                              'tcb agent delete <agentId>' to remove
+                                              the registered agent separately)
 
 ${bold("CLOUDBASE ENVIRONMENT COMMANDS")}
   env:list [options]           List CloudBase environments
