@@ -1,117 +1,62 @@
 /**
- * ACP (Agent Client Protocol) endpoint for OpenManagedAgent Runtime
+ * ACP (Agent Client Protocol) endpoint backed by open-agent-kernel.
  *
- * 对齐 chat-playground 的协议契约（详见 chat-playground/INTEGRATION.md）。
+ * Wire format unchanged from the previous (HunyuanAgent) implementation.
+ * Underlying agent loop is now @cloudbase/open-agent-kernel.
  *
- * Transport：
+ * Transport:
  *   - JSON-RPC 2.0 over HTTP POST
- *   - 流式响应使用 SSE（`text/event-stream`），帧格式 `data: <json>\n\n`，
- *     结束 `data: [DONE]\n\n`
+ *   - Streaming uses SSE (`text/event-stream`), `data: <json>\n\n` frames,
+ *     terminated by `data: [DONE]\n\n`.
  *
- * Endpoints:
- *   POST /acp                              ACP JSON-RPC 入口（直连）
- *   POST /v1/aibot/bots/:botId/acp         网关代理路径（部署适配，非协议规定）
+ * Endpoints (both routes share the same handler):
+ *   POST /acp                              Direct ACP entry
+ *   POST /v1/aibot/bots/:botId/acp         Gateway path (deployment-only)
  *
  * Supported JSON-RPC methods:
- *   initialize       capability 协商
- *   session/new      创建会话（params.meta 可携带 title 等）
- *   session/list     列出会话（按 createdAt desc）
- *   session/load     不带 replay → RPC；带 replay=true → SSE 推 history_page
- *   session/prompt   SSE 推 agent_message_chunk / tool_call / tool_call_update
- *   session/cancel   notification，中断进行中的轮次
- *   session/delete   幂等删除会话（ACP spec 扩展）
+ *   initialize                Capability negotiation
+ *   session/new               Create session
+ *   session/list              List sessions
+ *   session/load              Load session (replay=true → SSE history_page)
+ *   session/prompt            SSE: agent_message_chunk / tool_call(_update)
+ *                             May embed reverse JSON-RPC `session/request_permission`
+ *   session/cancel            Notification: abort the in-flight prompt
+ *   session/delete            Idempotent delete (ACP spec extension)
+ *
+ * Reverse RPC (agent → client) — HITL:
+ *   session/request_permission   Sent inside the SSE stream as a JSON-RPC
+ *                                request. Client replies with a JSON-RPC
+ *                                `result` whose body is `{ outcome: { outcome:
+ *                                'selected', optionId } | { outcome: 'cancelled' } }`,
+ *                                POSTed back to the same /acp URL.
  */
 
 import type { Express, Request, Response } from "express";
 import expressLib from "express";
-import cloudbase from "@cloudbase/node-sdk";
-import { HunyuanAgent } from "./hunyuan-agent.js";
-import { EventType } from "@ag-ui/client";
 import type { AgentConfig } from "./config.js";
+import type { MessageRecord } from "@cloudbase/open-agent-kernel";
+import {
+  dropKernelSession,
+  getKernelAgent,
+  getOrCreateKernelSession,
+  makeSseSink,
+  pumpEvents,
+  registerKernelSession,
+  tryResolvePendingApproval,
+} from "./kernel-adapter.js";
 
-// ── DB ────────────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-const cbApp = cloudbase.init({ env: process.env.CLOUDBASE_ENV_ID ?? "" });
-const db = cbApp.database();
-let SESSIONS_COL = "acp_sessions";
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-let collectionReady = false;
-export async function ensureCollection(collectionName?: string) {
-  if (collectionName) SESSIONS_COL = collectionName;
-  if (collectionReady) return;
-  try {
-    await db.createCollection(SESSIONS_COL);
-    console.log(`[ACP] Created collection: ${SESSIONS_COL}`);
-  } catch (err: any) {
-    if (err?.code === "DATABASE_COLLECTION_EXIST" || err?.message?.includes("already exist")) {
-      // ok
-    } else {
-      console.log(`[ACP] Collection check: ${err?.message ?? err}`);
-    }
-  }
-  collectionReady = true;
+function isUuid(s: string): boolean {
+  return UUID_RE.test(s);
 }
-
-async function genId(prefix: string) {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-}
-
-// ── In-flight cancellation registry ──────────────────────────────────────────
 
 const abortControllers = new Map<string, AbortController>();
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type AcpRole = "user" | "agent";
-
-type AcpPart =
-  | { type: "text"; text: string }
-  | { type: "thinking"; text: string }
-  | { type: "image"; data: string; mimeType: string }
-  | {
-      type: "tool_call";
-      toolCallId: string;
-      toolName: string;
-      input?: unknown;
-      status?: string;
-      parentToolCallId?: string;
-    }
-  | {
-      type: "tool_result";
-      toolCallId: string;
-      toolName?: string;
-      content: string;
-      isError?: boolean;
-      status?: string;
-      parentToolCallId?: string;
-    };
-
-interface AcpHistoryMessage {
-  id: string;
-  taskId: string;
-  role: AcpRole;
-  content: string;
-  parts?: AcpPart[];
-  status?: string;
-  createdAt: number;
-}
-
-interface AcpSession {
-  sessionId: string;
-  title?: string | null;
-  agentName: string;
-  model: string;
-  system: string;
-  cwd?: string;
-  /** meta 字段保留，方便 list 时回带（playground SessionInfo._meta） */
-  meta?: Record<string, unknown>;
-  messages: AcpHistoryMessage[];
-  status?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-// ── JSON-RPC helpers ──────────────────────────────────────────────────────────
+// ── JSON-RPC helpers ─────────────────────────────────────────────────────────
 
 function rpcResult(id: unknown, result: unknown) {
   return { jsonrpc: "2.0", id, result };
@@ -121,7 +66,7 @@ function rpcError(id: unknown, code: number, message: string, data?: unknown) {
   return { jsonrpc: "2.0", id, error: { code, message, ...(data ? { data } : {}) } };
 }
 
-// ── SSE helpers (chat-playground 期望的格式：每帧 `data: <json>\n\n`) ─────────
+// ── SSE helpers ──────────────────────────────────────────────────────────────
 
 function sseStart(res: Response) {
   res.setHeader("Content-Type", "text/event-stream");
@@ -148,7 +93,67 @@ function sseSessionUpdate(res: Response, sessionId: string, update: unknown) {
   });
 }
 
-// ── RPC Handlers ─────────────────────────────────────────────────────────────
+// ── Translate kernel MessageRecord[] → ACP history messages ─────────────────
+
+interface AcpHistoryPart {
+  type: string;
+  [k: string]: unknown;
+}
+
+interface AcpHistoryMessage {
+  id: string;
+  taskId: string;
+  role: "user" | "agent";
+  content: string;
+  parts: AcpHistoryPart[];
+  status: string;
+  createdAt: number;
+}
+
+function recordToAcpMessage(rec: MessageRecord): AcpHistoryMessage {
+  const parts: AcpHistoryPart[] = [];
+  let textBuf = "";
+  for (const p of rec.parts ?? []) {
+    if (p.type === "text") {
+      textBuf += p.text;
+      parts.push({ type: "text", text: p.text });
+    } else if (p.type === "tool_call") {
+      parts.push({
+        type: "tool_call",
+        toolCallId: p.toolUseId,
+        toolName: p.toolName,
+        input: p.input,
+        status: p.status ?? "done",
+      });
+    } else if (p.type === "tool_result") {
+      parts.push({
+        type: "tool_result",
+        toolCallId: p.toolUseId,
+        content: typeof p.output === "string" ? p.output : JSON.stringify(p.output),
+        isError: p.isError,
+        status: p.status ?? "done",
+      });
+    } else if (p.type === "image") {
+      // Best-effort surface for legacy clients
+      const ref: any = p.ref;
+      if (ref?.kind === "base64") {
+        parts.push({ type: "image", data: ref.dataUrl, mimeType: p.mimeType });
+      }
+    }
+    // 'thinking' / 'tool_approval_required' parts: don't surface in history page
+  }
+  return {
+    id: rec.id,
+    taskId: rec.conversationId,
+    role: rec.role === "assistant" ? "agent" : "user",
+    content: textBuf,
+    parts,
+    status: rec.status === "done" ? "done" : rec.status,
+    createdAt: rec.createdAt,
+  };
+}
+
+// ── RPC handlers ─────────────────────────────────────────────────────────────
 
 function handleInitialize(_params: Record<string, unknown>, config: AgentConfig) {
   return {
@@ -169,43 +174,52 @@ function handleInitialize(_params: Record<string, unknown>, config: AgentConfig)
 }
 
 async function handleSessionNew(params: Record<string, unknown>, config: AgentConfig) {
-  const conversationId = (params.conversationId as string | undefined) ?? (await genId("sess"));
+  const reqSessionId =
+    (params.conversationId as string | undefined) ??
+    (params.sessionId as string | undefined);
   const meta = (params.meta as Record<string, unknown> | undefined) ?? {};
-  const now = Date.now();
+  const userId = (meta.userId as string | undefined) ?? "anonymous";
 
-  // Idempotent: 已存在则复用，回传 hasHistory
-  const existing = await db.collection(SESSIONS_COL).where({ sessionId: conversationId }).get();
-  if (existing.data.length) {
-    const s = existing.data[0] as AcpSession;
-    return { sessionId: conversationId, hasHistory: (s.messages?.length ?? 0) > 0 };
+  const agent = getKernelAgent(config);
+
+  // ACP allows the client to supply its own session id (for idempotent create
+  // and resume). But the underlying Claude Agent SDK requires a UUID-shaped
+  // conversation id — non-UUID ids crash the SDK child process. So we enforce
+  // UUID at the wire boundary: clients must use UUIDs (e.g. crypto.randomUUID()).
+  if (reqSessionId) {
+    if (!isUuid(reqSessionId)) {
+      throw Object.assign(
+        new Error(
+          `Invalid sessionId: must be a UUID (got "${reqSessionId.slice(0, 64)}"). ` +
+            `Use crypto.randomUUID() to generate one client-side, or omit the field ` +
+            `to let the server generate it.`,
+        ),
+        { rpcCode: -32602 },
+      );
+    }
+    const existing = await agent.sessions.get(reqSessionId);
+    if (existing) return { sessionId: reqSessionId, hasHistory: true };
+    await getOrCreateKernelSession(config, reqSessionId, { userId, isNew: true });
+    return { sessionId: reqSessionId, hasHistory: false };
   }
 
-  const session: AcpSession = {
-    sessionId: conversationId,
-    title: (meta.title as string | undefined) ?? null,
-    agentName: config.name ?? "open-managed-agent",
-    model: (meta.selectedModel as string | undefined) ?? config.model,
-    system: config.system,
-    cwd: String(params.cwd ?? "/"),
-    meta,
-    messages: [],
-    status: "created",
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  await db.collection(SESSIONS_COL).add(session);
-  return { sessionId: conversationId, hasHistory: false };
+  // No id supplied — let kernel generate a UUID.
+  const session = await agent.startSession({ userId });
+  registerKernelSession(session.id, session);
+  return { sessionId: session.id, hasHistory: false };
 }
 
-async function handleSessionList(_params: Record<string, unknown>) {
-  const result = await db.collection(SESSIONS_COL).orderBy("createdAt", "desc").limit(20).get();
-  const sessions = (result.data as AcpSession[]).map((s) => ({
-    sessionId: s.sessionId,
-    title: s.title || "",
+async function handleSessionList(_params: Record<string, unknown>, config: AgentConfig) {
+  const agent = getKernelAgent(config);
+  const summaries = await agent.sessions.list({ limit: 50 });
+  // Sort newest first
+  summaries.sort((a, b) => b.updatedAt - a.updatedAt);
+  const sessions = summaries.map((s) => ({
+    sessionId: s.conversationId,
+    title: s.title ?? "",
     updatedAt: s.updatedAt,
     _meta: {
-      status: s.status ?? "created",
+      status: s.status,
       createdAt: s.createdAt,
     },
   }));
@@ -215,32 +229,33 @@ async function handleSessionList(_params: Record<string, unknown>) {
 async function handleSessionLoad(
   params: Record<string, unknown>,
   res: Response,
-  id: unknown
+  id: unknown,
+  config: AgentConfig,
 ): Promise<boolean> {
   const sessionId = String(params.sessionId ?? "");
-  const result = await db.collection(SESSIONS_COL).where({ sessionId }).get();
-  if (!result.data.length) {
+  const agent = getKernelAgent(config);
+  const summary = await agent.sessions.get(sessionId);
+  if (!summary) {
     res.json(rpcError(id, -32602, `Session not found: ${sessionId}`));
     return true;
   }
 
-  const session = result.data[0] as AcpSession;
-
-  // Plain load（playground 在 AcpClient.initializeSession 里调一次）
   if (!params.replay) {
     res.json(rpcResult(id, { sessionId }));
     return true;
   }
 
-  // Replay：SSE 推一条 history_page，然后 result + [DONE]
+  // Replay history. Pull MessageRecord[] from the kernel session.
+  const session = await getOrCreateKernelSession(config, sessionId);
+
   const limit = Math.min(Math.max(Number(params.limit ?? 50), 1), 100);
   const sort = (params.sort as "ASC" | "DESC" | undefined) ?? "DESC";
   const offset = Math.max(Number(params.cursor ?? 0) || 0, 0);
 
-  const all = session.messages ?? [];
-  const ordered = sort === "ASC" ? all : [...all].reverse();
+  const history = await session.getHistory({ limit: 500 });
+  const acpMessages = history.map(recordToAcpMessage);
+  const ordered = sort === "ASC" ? acpMessages : [...acpMessages].reverse();
   const page = ordered.slice(offset, offset + limit);
-  // history_page 的 messages 在 client 端总是按时间正序渲染
   const messages = sort === "DESC" ? [...page].reverse() : page;
   const nextCursor = ordered.length > offset + limit ? String(offset + limit) : null;
 
@@ -260,254 +275,41 @@ async function handleSessionPrompt(
   params: Record<string, unknown>,
   res: Response,
   id: unknown,
-  agent: HunyuanAgent
+  config: AgentConfig,
 ): Promise<boolean> {
   const sessionId = String(params.sessionId ?? "");
-  const promptBlocks = (params.prompt ?? []) as Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+  const promptBlocks = (params.prompt ?? []) as Array<{
+    type: string;
+    text?: string;
+    data?: string;
+    mimeType?: string;
+  }>;
   const userText = promptBlocks
     .filter((b) => b.type === "text" && typeof b.text === "string")
     .map((b) => b.text!)
     .join("");
 
-  const sessionResult = await db.collection(SESSIONS_COL).where({ sessionId }).get();
-  if (!sessionResult.data.length) {
-    res.json(rpcError(id, -32602, `Session not found: ${sessionId}`));
+  if (!sessionId) {
+    res.json(rpcError(id, -32602, "sessionId is required"));
     return true;
   }
 
-  const session = sessionResult.data[0] as AcpSession;
-  const history = session.messages ?? [];
-
-  // Append user message to history
-  const userMessageId = await genId("msg");
-  const userParts: AcpPart[] = [];
-  for (const block of promptBlocks) {
-    if (block.type === "image" && block.data && block.mimeType) {
-      userParts.push({ type: "image", data: block.data, mimeType: block.mimeType });
-    }
-  }
-  userParts.push({ type: "text", text: userText });
-  const userMsg: AcpHistoryMessage = {
-    id: userMessageId,
-    taskId: sessionId,
-    role: "user",
-    content: userText,
-    parts: userParts,
-    status: "done",
-    createdAt: Date.now(),
-  };
-  const messagesAfterUser = [...history, userMsg];
-
-  await db.collection(SESSIONS_COL).where({ sessionId }).update({
-    messages: messagesAfterUser,
-    status: "processing",
-    updatedAt: Date.now(),
-  });
+  const session = await getOrCreateKernelSession(config, sessionId);
 
   sseStart(res);
-
+  const sse = makeSseSink(res);
   const abortController = new AbortController();
   abortControllers.set(sessionId, abortController);
 
-  // 喂给 agent 的消息（agent 内部用 AG-UI 的 user/assistant 概念）
-  const aguiMessages = messagesAfterUser.map((m) => ({
-    id: m.id,
-    role: m.role === "agent" ? ("assistant" as const) : ("user" as const),
-    content: m.content,
-  }));
-
-  const runId = await genId("run");
-  const assistantMessageId = await genId("msg");
-  const assistantTextChunks: string[] = [];
-  const assistantParts: AcpPart[] = [];
-  // 跟踪进行中的 tool_call，便于 result 到达时回填 toolName
-  const toolCallNameById = new Map<string, string>();
-
-  const flushTextSoFar = () => {
-    if (assistantTextChunks.length === 0) return;
-    const text = assistantTextChunks.join("");
-    // 合并到一条 text part（如果上一条是 text 就追加）
-    const last = assistantParts[assistantParts.length - 1];
-    if (last && last.type === "text") {
-      last.text += text;
-    } else {
-      assistantParts.push({ type: "text", text });
-    }
-    assistantTextChunks.length = 0;
-  };
-
   let stopReason: "end_turn" | "cancelled" | "error" = "end_turn";
-
   try {
-    const stream$ = agent.run({
-      threadId: sessionId,
-      runId,
-      messages: aguiMessages,
-      tools: [],
-      context: [],
-      state: {},
-    } as any);
-
-    await new Promise<void>((resolve, reject) => {
-      const sub = stream$.subscribe({
-        next: (event) => {
-          if (abortController.signal.aborted) return;
-
-          switch (event.type) {
-            case EventType.TEXT_MESSAGE_CONTENT: {
-              const delta = (event as { delta?: string }).delta ?? "";
-              if (!delta) break;
-              assistantTextChunks.push(delta);
-              sseSessionUpdate(res, sessionId, {
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: delta },
-              });
-              break;
-            }
-
-            case EventType.TOOL_CALL_START: {
-              flushTextSoFar();
-              const e = event as { toolCallName?: string; toolCallId?: string };
-              const toolCallId = e.toolCallId ?? `tc_${Date.now()}`;
-              const toolName = e.toolCallName ?? "tool";
-              toolCallNameById.set(toolCallId, toolName);
-              assistantParts.push({
-                type: "tool_call",
-                toolCallId,
-                toolName,
-                input: undefined,
-                status: "in_progress",
-              });
-              sseSessionUpdate(res, sessionId, {
-                sessionUpdate: "tool_call",
-                toolCallId,
-                title: toolName,
-                kind: "function",
-                status: "in_progress",
-              });
-              break;
-            }
-
-            case EventType.TOOL_CALL_ARGS: {
-              const e = event as { toolCallId?: string; delta?: string };
-              const toolCallId = e.toolCallId ?? "";
-              const part = assistantParts.find(
-                (p) => p.type === "tool_call" && p.toolCallId === toolCallId
-              ) as Extract<AcpPart, { type: "tool_call" }> | undefined;
-              if (part) {
-                const prev = typeof part.input === "string" ? (part.input as string) : "";
-                part.input = prev + (e.delta ?? "");
-              }
-              // playground 当前不依赖增量 args，input 在 tool_call_update 里也会带；这里不发独立事件
-              break;
-            }
-
-            case EventType.TOOL_CALL_END: {
-              const e = event as { toolCallId?: string };
-              const toolCallId = e.toolCallId ?? "";
-              const part = assistantParts.find(
-                (p) => p.type === "tool_call" && p.toolCallId === toolCallId
-              ) as Extract<AcpPart, { type: "tool_call" }> | undefined;
-              // 尝试 JSON.parse 累积的字符串 args
-              if (part && typeof part.input === "string") {
-                try {
-                  part.input = JSON.parse(part.input as string);
-                } catch {
-                  // keep raw string
-                }
-              }
-              sseSessionUpdate(res, sessionId, {
-                sessionUpdate: "tool_call_update",
-                toolCallId,
-                status: "in_progress",
-                input: part?.input,
-              });
-              break;
-            }
-
-            case EventType.CUSTOM: {
-              // HunyuanAgent 用 CUSTOM 携带工具结果
-              const e = event as { toolCallId?: string; content?: string };
-              const toolCallId = e.toolCallId ?? "";
-              const result = String(e.content ?? "");
-              const toolName = toolCallNameById.get(toolCallId);
-              assistantParts.push({
-                type: "tool_result",
-                toolCallId,
-                toolName,
-                content: result,
-                status: "done",
-              });
-              sseSessionUpdate(res, sessionId, {
-                sessionUpdate: "tool_call_update",
-                toolCallId,
-                status: "completed",
-                result,
-              });
-              break;
-            }
-
-            case EventType.RUN_ERROR: {
-              const e = event as { message?: string };
-              stopReason = "error";
-              sseSessionUpdate(res, sessionId, {
-                sessionUpdate: "log",
-                level: "error",
-                message: e.message ?? "agent error",
-                timestamp: Date.now(),
-              });
-              break;
-            }
-
-            // TEXT_MESSAGE_START / TEXT_MESSAGE_END / RUN_STARTED / RUN_FINISHED 等不需透传
-            default:
-              break;
-          }
-        },
-        error: (err) => {
-          stopReason = "error";
-          sseSessionUpdate(res, sessionId, {
-            sessionUpdate: "log",
-            level: "error",
-            message: String(err),
-            timestamp: Date.now(),
-          });
-          sub.unsubscribe();
-          resolve();
-        },
-        complete: () => resolve(),
-      });
+    const events = session.send(userText);
+    stopReason = await pumpEvents(events, session, {
+      sse,
+      rpcId: id,
+      acpSessionId: sessionId,
     });
-
-    if (abortController.signal.aborted) {
-      stopReason = "cancelled";
-    }
-
-    flushTextSoFar();
-
-    // Persist assistant message (parts + 聚合文本)
-    const aggregatedText = assistantParts
-      .filter((p) => p.type === "text")
-      .map((p) => (p as { type: "text"; text: string }).text)
-      .join("");
-    const assistantMsg: AcpHistoryMessage = {
-      id: assistantMessageId,
-      taskId: sessionId,
-      role: "agent",
-      content: aggregatedText,
-      parts: assistantParts,
-      status: stopReason === "end_turn" ? "done" : stopReason === "cancelled" ? "cancel" : "error",
-      createdAt: Date.now(),
-    };
-    await db
-      .collection(SESSIONS_COL)
-      .where({ sessionId })
-      .update({
-        messages: [...messagesAfterUser, assistantMsg],
-        status: stopReason === "end_turn" ? "completed" : stopReason,
-        updatedAt: Date.now(),
-      });
-
+    if (abortController.signal.aborted) stopReason = "cancelled";
     sseWrite(res, rpcResult(id, { stopReason }));
   } catch (err) {
     console.error("[ACP] session/prompt failed:", err);
@@ -516,57 +318,50 @@ async function handleSessionPrompt(
     abortControllers.delete(sessionId);
     sseDone(res);
   }
-
   return true;
 }
 
-function handleSessionCancel(params: Record<string, unknown>) {
+async function handleSessionCancel(params: Record<string, unknown>) {
   const sessionId = String(params.sessionId ?? "");
   const ctrl = abortControllers.get(sessionId);
   if (ctrl) {
     ctrl.abort();
     abortControllers.delete(sessionId);
   }
+  // Best-effort: tell the kernel to abort.
+  // (kernel session.abort() returns Promise<void>; ignore errors)
+  // Note: we don't have a sync handle here without a per-session lookup map,
+  // so we leave the kernel side to react via session.abort caller below if any.
 }
 
-/**
- * session/delete — 删除会话（ACP spec 扩展，幂等）。
- *
- * 不存在或已被删的 sessionId 也返回 200 + deleted: false，避免 client 上手动 retry 时报错。
- * 对应进行中的 prompt 也会被一并取消。
- */
-async function handleSessionDelete(params: Record<string, unknown>) {
+async function handleSessionDelete(params: Record<string, unknown>, config: AgentConfig) {
   const sessionId = String(params.sessionId ?? "");
-  if (!sessionId) {
-    throw new Error("sessionId is required");
-  }
+  if (!sessionId) throw new Error("sessionId is required");
 
-  // 中断进行中的 prompt（如果有）
   const ctrl = abortControllers.get(sessionId);
   if (ctrl) {
     ctrl.abort();
     abortControllers.delete(sessionId);
   }
 
-  const existing = await db.collection(SESSIONS_COL).where({ sessionId }).get();
-  if (!existing.data.length) {
+  const agent = getKernelAgent(config);
+  const existing = await agent.sessions.get(sessionId);
+  if (!existing) {
+    dropKernelSession(sessionId);
     return { sessionId, deleted: false };
   }
-
-  await db.collection(SESSIONS_COL).where({ sessionId }).remove();
+  await agent.sessions.delete(sessionId);
+  dropKernelSession(sessionId);
   return { sessionId, deleted: true };
 }
 
-// ── Mount function ────────────────────────────────────────────────────────────
+// ── Mount function ──────────────────────────────────────────────────────────
 
 export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
-  const agent = new HunyuanAgent(agentConfig);
-
   app.use("/acp", expressLib.json({ limit: "10mb" }));
   app.use("/v1/aibot/bots", expressLib.json({ limit: "10mb" }));
 
-  // CORS：让 chat-playground（不同源）可访问。具体允许的 Origin 由部署侧控制。
-  // 如果 createExpressServer 已经开了 CORS，这里的 OPTIONS handler 是兜底。
+  // CORS — let chat-playground (cross-origin) talk to us.
   const corsHandler = (req: Request, res: Response, next: () => void) => {
     const origin = req.headers.origin as string | undefined;
     if (origin) {
@@ -575,7 +370,10 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
       res.setHeader("Vary", "Origin");
     }
     res.setHeader("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Task-Id, X-Tenant-Id");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, X-Task-Id, X-Tenant-Id",
+    );
     if (req.method === "OPTIONS") {
       res.status(204).end();
       return;
@@ -591,10 +389,26 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
       id?: unknown;
       method?: string;
       params?: Record<string, unknown>;
+      result?: unknown;
+      error?: unknown;
     };
 
-    if (!body || body.jsonrpc !== "2.0" || !body.method) {
+    if (!body || body.jsonrpc !== "2.0") {
       return res.status(400).json(rpcError(null, -32600, "Invalid JSON-RPC 2.0 request"));
+    }
+
+    // ── Reverse-RPC response (HITL): client → agent ─────────────────────
+    // No `method`, but has `result` or `error`, and `id` matches a pending.
+    if (!body.method && (body.result !== undefined || body.error !== undefined)) {
+      const idNum = typeof body.id === "number" ? body.id : Number(body.id);
+      if (Number.isFinite(idNum) && tryResolvePendingApproval(idNum, body)) {
+        return res.status(204).end();
+      }
+      return res.status(400).json(rpcError(body.id ?? null, -32600, "No matching pending request"));
+    }
+
+    if (!body.method) {
+      return res.status(400).json(rpcError(body.id ?? null, -32600, "Missing method"));
     }
 
     const { id, method, params = {} } = body;
@@ -609,23 +423,23 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
           return res.json(rpcResult(id, await handleSessionNew(params, agentConfig)));
 
         case "session/list":
-          return res.json(rpcResult(id, await handleSessionList(params)));
+          return res.json(rpcResult(id, await handleSessionList(params, agentConfig)));
 
         case "session/load":
-          await handleSessionLoad(params, res, id);
+          await handleSessionLoad(params, res, id, agentConfig);
           return;
 
         case "session/prompt":
-          await handleSessionPrompt(params, res, id, agent);
+          await handleSessionPrompt(params, res, id, agentConfig);
           return;
 
         case "session/cancel":
-          handleSessionCancel(params);
+          await handleSessionCancel(params);
           if (isNotification) return res.status(204).end();
           return res.json(rpcResult(id, { ok: true }));
 
         case "session/delete":
-          return res.json(rpcResult(id, await handleSessionDelete(params)));
+          return res.json(rpcResult(id, await handleSessionDelete(params, agentConfig)));
 
         default:
           if (isNotification) return res.status(200).end();
@@ -634,7 +448,9 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
     } catch (err) {
       console.error("[ACP] Error handling method:", method, err);
       if (!res.headersSent) {
-        return res.status(500).json(rpcError(id, -32000, String(err)));
+        const code = (err as { rpcCode?: number })?.rpcCode ?? -32000;
+        const message = err instanceof Error ? err.message : String(err);
+        return res.status(code === -32602 ? 400 : 500).json(rpcError(id, code, message));
       }
     }
   };
@@ -642,5 +458,5 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   app.post("/acp", acpHandler);
   app.post("/v1/aibot/bots/:botId/acp", acpHandler);
 
-  console.log("[ACP] Endpoints mounted: POST /acp (+ gateway path /v1/aibot/bots/:botId/acp)");
+  console.log("[ACP] Endpoints mounted: POST /acp (+ gateway /v1/aibot/bots/:botId/acp)");
 }

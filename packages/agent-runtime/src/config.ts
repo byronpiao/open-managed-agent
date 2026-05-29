@@ -11,7 +11,10 @@
 
 import fs from "fs/promises";
 import path from "path";
+import { createRequire } from "module";
 import { parse as parseYaml } from "yaml";
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -147,6 +150,191 @@ export function getCustomTools(config: AgentConfig): CustomTool[] {
 
 export function getMcpToolsets(config: AgentConfig): McpToolset[] {
   return (config.tools ?? []).filter((t): t is McpToolset => t.type === "mcp_toolset");
+}
+
+// ── Mapping to kernel AgentConfig ─────────────────────────────────────────────
+
+import {
+  AgsStatefulSandbox,
+  CloudBaseDbDriver,
+  CloudBaseSessionStore,
+  InMemoryDriver,
+  InMemoryPermissionStore,
+  type AgentConfig as KernelAgentConfig,
+  type CloudBaseCredentials,
+  type McpServerConfig as KernelMcpServerConfig,
+  type RequireApprovalRule,
+} from "@cloudbase/open-agent-kernel";
+
+export interface ToKernelOptions {
+  /** Override envId; default reads CLOUDBASE_ENV_ID env var */
+  envId?: string;
+  /** Use in-memory store instead of CloudBase DB (tests). Default: false */
+  useInMemoryStore?: boolean;
+}
+
+/**
+ * Resolve CloudBase credentials in this priority order:
+ *   1. process.env.TCB_SECRET_ID / TCB_SECRET_KEY (production / SCF)
+ *   2. process.env.TENCENTCLOUD_SECRETID / SECRETKEY (SCF auto-injected)
+ *   3. ~/.config/.cloudbase/auth.json (`tcb login` cache, local dev)
+ * Returns null if nothing is found — let the kernel raise its own error then.
+ */
+function resolveCloudBaseCredentials(envId: string): CloudBaseCredentials | null {
+  const env = process.env;
+  const secretId  = env.TCB_SECRET_ID  ?? env.TENCENTCLOUD_SECRETID;
+  const secretKey = env.TCB_SECRET_KEY ?? env.TENCENTCLOUD_SECRETKEY;
+  const sessionToken = env.TCB_TOKEN ?? env.TENCENTCLOUD_SESSIONTOKEN ?? env.TENCENTCLOUD_TOKEN;
+  if (secretId && secretKey) {
+    return { envId, secretId, secretKey, sessionToken };
+  }
+  // Fallback: tcb CLI login cache (local development convenience)
+  try {
+    const home = env.HOME ?? env.USERPROFILE;
+    if (!home) return null;
+    // ESM-safe sync FS access via createRequire is overkill; use fs module directly.
+    // We import lazily to avoid pulling fs at module load time in environments
+    // where it is unavailable (e.g. browser bundles).
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = nodeRequire("fs") as typeof import("fs");
+    const authPath = `${home}/.config/.cloudbase/auth.json`;
+    if (!fs.existsSync(authPath)) return null;
+    const raw = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+    const c = raw?.credential;
+    if (!c?.tmpSecretId || !c?.tmpSecretKey) return null;
+    if (c.tmpExpired && Date.now() >= Number(c.tmpExpired)) {
+      console.warn(
+        "[Config] tcb login credentials in ~/.config/.cloudbase/auth.json have expired; run `tcb login` to refresh.",
+      );
+      return null;
+    }
+    return {
+      envId,
+      secretId: c.tmpSecretId,
+      secretKey: c.tmpSecretKey,
+      sessionToken: c.tmpToken,
+    };
+  } catch (err) {
+    console.warn("[Config] Failed to read tcb login credentials:", (err as Error).message);
+    return null;
+  }
+}
+
+/**
+ * Translate the YAML-shaped `AgentConfig` into a kernel `AgentConfig`.
+ *
+ * - `system` → `systemPrompt`
+ * - `model` → forwarded as ModelInput (string form)
+ * - `mcp_servers[]` → kernel `mcpServers` map (HTTP transport)
+ * - tools with `permission_policy.type === 'always_ask'` → `permissions.requireApproval`
+ *   (string-array rule). MCP tool names are namespaced as `mcp__<server>__<tool>`.
+ * - Sandbox: AGS stateful sandbox with `scope: 'session'`, cloudbaseTools off (one-shot).
+ * - Session store: CloudBaseSessionStore + CloudBaseDbDriver (`oak_*` collections),
+ *   `projectKey = envId` for multi-tenant isolation.
+ */
+export function toKernelAgentConfig(
+  config: AgentConfig,
+  opts: ToKernelOptions = {},
+): KernelAgentConfig {
+  const envId = opts.envId ?? process.env.CLOUDBASE_ENV_ID ?? "";
+  if (!envId) {
+    throw new Error("toKernelAgentConfig: envId is required (set CLOUDBASE_ENV_ID)");
+  }
+
+  // ── MCP servers ─────────────────────────────────────────────────────────
+  const mcpServers: Record<string, KernelMcpServerConfig> = {};
+  for (const s of config.mcp_servers ?? []) {
+    if (s.type === "url") {
+      mcpServers[s.name] = { type: "http", url: s.url } as KernelMcpServerConfig;
+    }
+  }
+
+  // ── requireApproval rule ────────────────────────────────────────────────
+  const approvalNames: string[] = [];
+  // Built-in tools (sandbox provides them; tool names follow `mcp__sandbox__*` convention)
+  const builtinPolicies = resolveBuiltinTools(config);
+  for (const [name, policy] of builtinPolicies) {
+    if (policy.enabled && policy.permissionPolicy.type === "always_ask") {
+      approvalNames.push(`mcp__sandbox__${name}`);
+    }
+  }
+  // MCP toolset overrides
+  for (const t of getMcpToolsets(config)) {
+    const defaultAsk = t.default_config?.permission_policy?.type === "always_ask";
+    if (defaultAsk) approvalNames.push(`mcp__${t.mcp_server_name}__*`);
+    for (const cfg of t.configs ?? []) {
+      if (cfg.permission_policy?.type === "always_ask") {
+        approvalNames.push(`mcp__${t.mcp_server_name}__${cfg.name}`);
+      }
+    }
+  }
+  const requireApproval: RequireApprovalRule | undefined =
+    approvalNames.length > 0 ? approvalNames : undefined;
+
+  // ── Session store ───────────────────────────────────────────────────────
+  // OAK_USE_MEMORY_STORE=1 → all session/transcript persistence in-memory.
+  // Useful for local dev when CloudBase DB credentials are unavailable.
+  const useMemoryStore = opts.useInMemoryStore || process.env.OAK_USE_MEMORY_STORE === "1";
+  let sessionStore: unknown;
+  if (useMemoryStore) {
+    sessionStore = new CloudBaseSessionStore({
+      driver: new InMemoryDriver(),
+      projectKey: envId,
+    });
+  } else {
+    const credentials = resolveCloudBaseCredentials(envId);
+    sessionStore = new CloudBaseSessionStore({
+      driver: new CloudBaseDbDriver(credentials ? { credentials } : undefined),
+      projectKey: envId,
+    });
+  }
+
+  // ── Model spec ──────────────────────────────────────────────────────────
+  // Allow overriding the upstream LLM gateway via env vars. Useful when running
+  // outside the CloudBase platform — point to any Anthropic-compatible endpoint.
+  //   ANTHROPIC_AUTH_TOKEN  / ANTHROPIC_API_KEY  → apiKey
+  //   ANTHROPIC_BASE_URL                          → apiBaseUrl
+  const overrideKey = process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY;
+  const overrideBase = process.env.ANTHROPIC_BASE_URL;
+  const model = overrideKey || overrideBase
+    ? {
+        id: config.model,
+        ...(overrideKey ? { apiKey: overrideKey } : {}),
+        ...(overrideBase ? { apiBaseUrl: overrideBase } : {}),
+      }
+    : config.model;
+
+  // ── Sandbox ─────────────────────────────────────────────────────────────
+  // AGS sandbox needs TCB_API_KEY (data plane) + TCB_SECRET_* (control plane).
+  // Set OAK_DISABLE_SANDBOX=1 for local dev where those aren't available.
+  const disableSandbox = process.env.OAK_DISABLE_SANDBOX === "1";
+
+  return {
+    envId,
+    name: config.name,
+    description: config.description,
+    metadata: config.metadata,
+    model,
+    systemPrompt: config.system,
+    mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
+    sandbox: disableSandbox
+      ? undefined
+      : {
+          runtime: new AgsStatefulSandbox(),
+          scope: "session",
+          cloudbaseTools: false,
+        },
+    permissions: requireApproval
+      ? {
+          requireApproval,
+          store: new InMemoryPermissionStore(),
+        }
+      : undefined,
+    session: {
+      store: sessionStore,
+      projectKey: envId,
+    },
+  };
 }
 
 // ── Loader ────────────────────────────────────────────────────────────────────
