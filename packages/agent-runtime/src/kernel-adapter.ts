@@ -290,6 +290,21 @@ export async function pumpEvents(
       }
 
       case "error": {
+        // Surface as much context as possible — Claude Agent SDK errors often
+        // bury the actual cause (failed spawn, missing binary, network) in
+        // .cause / .stack. Forward the full picture so the client can see it.
+        const err = e.error as Error & { cause?: unknown };
+        const causeText =
+          err?.cause instanceof Error
+            ? `${err.cause.name}: ${err.cause.message}`
+            : err?.cause
+              ? typeof err.cause === "string"
+                ? err.cause
+                : JSON.stringify(err.cause).slice(0, 500)
+              : undefined;
+        const detail = [err?.message, causeText, err?.stack].filter(Boolean).join("\n");
+        // Also dump to container stdout so cloudrun instance logs capture it.
+        console.error("[ACP] kernel error event:", detail);
         ctx.sse.write({
           jsonrpc: "2.0",
           method: "session/update",
@@ -298,7 +313,7 @@ export async function pumpEvents(
             update: {
               sessionUpdate: "log",
               level: "error",
-              message: e.error.message,
+              message: detail,
               timestamp: Date.now(),
             },
           },

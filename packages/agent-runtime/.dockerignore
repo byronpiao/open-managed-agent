@@ -1,0 +1,9 @@
+# Dockerfile context excludes — keep the build context lean.
+node_modules
+src
+.deploy
+.deploy-cloudrun
+*.log
+.env
+.env.*
+.DS_Store
