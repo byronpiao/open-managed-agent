@@ -14,11 +14,6 @@
  *   agent:delete   [-i <agent-id>]
  *   agent:update   [-i <id>] [options]
  *
- *   cloudrun:create -n <name> [options]      Container-mode agent (cloudrun + CreateAgent API)
- *   cloudrun:build  [--tag <name>]           Local linux/amd64 image build for iteration
- *   cloudrun:list   [-e <envId>]
- *   cloudrun:delete -n <serviceName>
- *
  *   env:list                                  List CloudBase environments (proxied to tcb)
  *
  *   session:create -a <agent-id> [--title <title>]
@@ -852,7 +847,77 @@ const COMMANDS = {
     const agentId = args.id ?? process.env.CLOUDBASE_AGENT_ID ?? "";
     if (!agentId) throw new Error("-i / --id is required (or set CLOUDBASE_AGENT_ID)");
     const envId = requireEnvId(args);
+
+    // Phase 1: discover the underlying compute resource so we can clean it up
+    // after the agent registration is removed. `tcb agent detail` doesn't
+    // expose ServiceId, so we hit DescribeAgentList directly.
+    let agentType = "";
+    let serviceId = "";
+    try {
+      const resp = await callTcbCloudApi({
+        action: "DescribeAgentList",
+        payload: { EnvId: envId, AgentId: agentId },
+      });
+      const found = (resp.AgentList ?? []).find((a) => a.AgentId === agentId);
+      if (found) {
+        agentType = found.AgentType ?? "";
+        serviceId = found.ServiceId ?? "";
+      }
+    } catch (err) {
+      console.log(yellow(`⚠️  could not look up agent metadata: ${err.message}`));
+      console.log(yellow("    proceeding with agent registration delete only."));
+    }
+
+    // Phase 2: remove the agent registration
+    process.stdout.write(dim(`Deleting agent registration... `));
     runTcb(["agent", "delete", agentId, "-e", envId], { input: "Y\n", timeout: 60000 });
+    console.log(green("OK"));
+
+    // Phase 3: cascade-delete the underlying compute (cloudrun service or
+    // SCF function). `baas` agents are built-in templates with no resource.
+    if (!serviceId) {
+      console.log(green(`✅ Agent ${agentId} deleted.`));
+      return;
+    }
+
+    if (agentType === "tcbr") {
+      process.stdout.write(dim(`Deleting cloudrun service '${serviceId}'... `));
+      const r = spawnSync(
+        getNodeExecutable(),
+        [getTcbScript(), "cloudrun", "delete", "-s", serviceId, "-e", envId, "--force"],
+        { encoding: "utf-8", timeout: 120000 },
+      );
+      const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+      if (r.status === 0 && !/✖|error|failed/i.test(out)) {
+        console.log(green("OK"));
+      } else if (/not found/i.test(out)) {
+        console.log(dim("(already gone)"));
+      } else {
+        console.log(yellow("FAILED"));
+        console.log(dim(out.split("\n").filter((l) => /✖|error/i.test(l)).join("\n").trim() || out.trim().slice(-300)));
+      }
+    } else if (agentType === "scf") {
+      process.stdout.write(dim(`Deleting cloud function '${serviceId}'... `));
+      const r = spawnSync(
+        getNodeExecutable(),
+        [getTcbScript(), "fn", "delete", serviceId, "-e", envId],
+        { encoding: "utf-8", timeout: 120000 },
+      );
+      const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+      if (r.status === 0 && !/✖|error|failed/i.test(out)) {
+        console.log(green("OK"));
+      } else if (/not found|不存在|ResourceNotFound/i.test(out)) {
+        console.log(dim("(already gone)"));
+      } else {
+        console.log(yellow("FAILED"));
+        console.log(dim(out.split("\n").filter((l) => /✖|error/i.test(l)).join("\n").trim() || out.trim().slice(-300)));
+      }
+    } else if (agentType === "baas") {
+      console.log(dim("(baas agent — no underlying compute to delete)"));
+    } else if (agentType) {
+      console.log(yellow(`⚠️  unknown agent type '${agentType}', skipping resource cleanup`));
+    }
+
     console.log(green(`✅ Agent ${agentId} deleted.`));
   },
 
@@ -960,6 +1025,10 @@ const COMMANDS = {
   },
 
   // ─── Cloud Run (container-mode agent) ─────────────────────────────────────
+  // Internal commands — not advertised in `magent --help`. They power the
+  // container deploy path and provide a fast local-build feedback loop.
+  // Kept callable for ops/debugging but intentionally undocumented.
+  //
   // Three-phase deploy, all driven via Tencent Cloud OpenAPIs (no `tcb cloudrun
   // deploy`). The runtime ships its own Dockerfile + .dockerignore under
   // packages/agent-runtime/, so the CLI just stages files — it never
@@ -1533,33 +1602,9 @@ ${bold("AGENT COMMANDS")}
 
   agent:list    [-e <envId>]                  List all agents
   agent:get     [-i <id>]                     Get agent details
-  agent:delete  [-i <id>]                     Delete an agent
-
-${bold("CLOUDRUN COMMANDS (container-mode agent, deployed as CloudBase Cloud Run)")}
-  cloudrun:create -n <name> [options]         Deploy agent-runtime as a container service
-                                              (with Dockerfile) and register an
-                                              agent-<slug>-<rand> TCBR agent via the
-                                              CreateAgent API. Same 'magent run -a <id>'
-                                              path as SCF agents.
-    -n, --name <name>           Agent name (required)
-        --model <model>         Model (default: hunyuan-t1-latest)
-        --system <prompt>       System prompt
-    -f, --file <path>           Load config from YAML/JSON file
-        --code <path>           Code directory (default: ./packages/agent-runtime)
-        --service <name>        Override the cloudrun service name (default: <slug>-<rand>)
-    -e, --env <envId>           CloudBase environment ID
-
-  cloudrun:build  [--tag <name>] [--code <dir>] [--port <port>]
-                                              Build the container image locally
-                                              (linux/amd64) for fast iteration
-                                              before paying the cloudrun deploy
-                                              round-trip. Stages the same files
-                                              cloudrun:create would.
-
-  cloudrun:list   [-e <envId>]                List container-typed cloud-run services
-  cloudrun:delete -n <serviceName> [-e <id>]  Delete a cloud-run service (use
-                                              'tcb agent delete <agentId>' to remove
-                                              the registered agent separately)
+  agent:delete  [-i <id>]                     Delete an agent (also cleans up
+                                              the underlying SCF function or
+                                              CloudRun service)
 
 ${bold("CLOUDBASE ENVIRONMENT COMMANDS")}
   env:list [options]           List CloudBase environments
