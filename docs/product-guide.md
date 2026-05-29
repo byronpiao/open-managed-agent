@@ -228,8 +228,12 @@ Agent: 我支持以下能力：
 ```bash
 $ magent agent:delete --id agent-my-agent-65abf85e
 
+Deleting agent registration... OK
+Deleting cloud function 'agent-my-agent-65abf85e'... OK
 ✅ Agent agent-my-agent-65abf85e deleted.
 ```
+
+> 删除会级联清理底层资源：SCF 类型的 Agent 同步删除云函数，TCBR 类型的 Agent 同步删除云托管服务，避免遗留计费资源。
 
 ---
 
@@ -348,7 +352,7 @@ magent agent:update --tools '[...]' --mcp-servers '[...]' --skills '[...]'
 # 查看 / 列出 / 删除
 magent agent:get [--id <id>]
 magent agent:list
-magent agent:delete [--id <id>]
+magent agent:delete [--id <id>]    # 同步清理底层 SCF 函数或 TCBR 云托管
 ```
 
 ### 对话
