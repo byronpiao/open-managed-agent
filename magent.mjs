@@ -421,6 +421,73 @@ async function callTcbCloudApi({
   return body?.Response ?? body;
 }
 
+// ── Cloud Run helpers (capi) ─────────────────────────────────────────────────
+// We bypass `tcb cloudrun deploy` entirely on the create path because the cli
+// becomes interactive on update (asks for traffic strategy) and silently hangs
+// when piped a non-TTY stdin. Instead we drive the same three OpenAPI calls
+// the cli would make ourselves: build-service upload URL → PUT zip →
+// CreateCloudRunServer. This stays fully non-interactive end-to-end.
+
+/** Zip a directory into a Buffer using the same archiver settings tcb uses. */
+async function zipDir(dir) {
+  const archiver = _require("archiver");
+  const fs = _require("fs");
+  const path = _require("path");
+  const archive = archiver("zip", { zlib: { level: 1 } });
+  const chunks = [];
+  const done = new Promise((resolve, reject) => {
+    archive.on("data", (c) => chunks.push(c));
+    archive.on("end", () => resolve(Buffer.concat(chunks)));
+    archive.on("error", reject);
+  });
+
+  async function addDir(absDir, relDir = "") {
+    const entries = await fs.promises.readdir(absDir, { withFileTypes: true });
+    for (const e of entries) {
+      const full = path.join(absDir, e.name);
+      const rel  = path.join(relDir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === ".git" || e.name === "node_modules" || e.name === "logs") continue;
+        await addDir(full, rel);
+      } else {
+        archive.file(full, { name: rel });
+      }
+    }
+  }
+  await addDir(path.resolve(dir));
+  await archive.finalize();
+  return done;
+}
+
+/** Get an upload URL for a brand-new cloudrun service. */
+async function describeBuildService(envId, serviceName) {
+  return callTcbCloudApi({
+    action: "DescribeCloudBaseBuildService",
+    payload: { EnvId: envId, ServiceName: serviceName },
+    service: "tcb",
+    version: "2018-06-08",
+  });
+}
+
+/** PUT the zip buffer to the build service's pre-signed URL. */
+async function uploadZipBuffer({ uploadUrl, headers, buffer }) {
+  const headerMap = {
+    "Content-Type": "application/x-zip-compressed",
+  };
+  for (const h of headers ?? []) {
+    if (h?.Key && h?.Value !== undefined) headerMap[h.Key] = h.Value;
+  }
+  const res = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: headerMap,
+    body: buffer,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Build package upload failed (HTTP ${res.status}): ${text.slice(0, 300)}`);
+  }
+}
+
 async function getAcpHeaders() {
   const envId     = process.env.CLOUDBASE_ENV_ID     ?? "";
   let   accessKey = process.env.CLOUDBASE_ACCESS_KEY ?? "";
@@ -892,15 +959,21 @@ const COMMANDS = {
   },
 
   // ─── Cloud Run (container-mode agent) ─────────────────────────────────────
-  // Two-phase deploy:
-  //   1. `tcb cloudrun deploy` (container-typed). The runtime ships its own
-  //      `Dockerfile` + `.dockerignore` under packages/agent-runtime/, so the
-  //      CLI just stages files — it never generates Dockerfiles.
-  //   2. POST `tcb/CreateAgent` (TencentCloud V3 signed) with
-  //      Template=alreadyExitResource + ServiceId=<service>, which registers
-  //      the running cloudrun service as a TCBR agent and returns an
-  //      `agent-<slug>-<random>` ID. The same `magent run -a <agentId>`
-  //      gateway path then works identically to SCF agents.
+  // Three-phase deploy, all driven via Tencent Cloud OpenAPIs (no `tcb cloudrun
+  // deploy`). The runtime ships its own Dockerfile + .dockerignore under
+  // packages/agent-runtime/, so the CLI just stages files — it never
+  // generates Dockerfiles.
+  //
+  //   1. DescribeCloudBaseBuildService → upload the staged dir as a zip
+  //      package to CloudBase build storage.
+  //   2. CreateCloudRunServer (Items form) → atomically create the container
+  //      service with Port=80, Dockerfile, EnvParam, scaling rules, etc.,
+  //      then wait until DescribeCloudRunDeployRecord reports the first
+  //      version `normal`.
+  //   3. CreateAgent (Template=alreadyExitResource + ServiceId=<service>)
+  //      → register the service as a TCBR agent. The API returns an
+  //      `agent-<slug>-<rand>` ID, addressable via the same gateway path
+  //      magent run uses for SCF agents.
 
   "cloudrun:create": async (args) => {
     const { name, model, system } = args;
@@ -987,74 +1060,31 @@ const COMMANDS = {
       throw new Error(`Deploy prep failed: ${err.message}`);
     }
 
-    // ── Phase 1: tcb cloudrun deploy (container, non-interactive) ────────
-    process.stdout.write(dim("Phase 1/3: deploying cloudrun service... "));
+    // ── Phase 1: upload code package ─────────────────────────────────────
+    // We don't go through `tcb cloudrun deploy` because the cli prompts
+    // interactively on update flows and silently hangs on a piped stdin.
+    // Driving the same OpenAPIs ourselves keeps this fully non-interactive.
+    process.stdout.write(dim("Phase 1/3: uploading code package... "));
+    let packageName, packageVersion;
     try {
-      runTcb(
-        [
-          "cloudrun", "deploy",
-          "-s", serviceName,
-          "--source", deployDir,
-          "--force",
-          "--installDependency", "false",
-          "-e", envId,
-        ],
-        { timeout: 600000 },
-      );
-      console.log(green("OK"));
+      const { UploadUrl, UploadHeaders, PackageName, PackageVersion } =
+        await describeBuildService(envId, serviceName);
+      const zip = await zipDir(deployDir);
+      await uploadZipBuffer({ uploadUrl: UploadUrl, headers: UploadHeaders, buffer: zip });
+      packageName = PackageName;
+      packageVersion = PackageVersion;
+      console.log(green(`OK (${(zip.length / 1024).toFixed(1)} KiB)`));
     } catch (err) {
       try { execSync(`rm -rf "${deployDir}"`, { encoding: "utf-8" }); } catch {}
-      throw new Error(`tcb cloudrun deploy failed: ${err.message}`);
+      throw new Error(`upload failed: ${err.message}`);
     }
     try { execSync(`rm -rf "${deployDir}"`, { encoding: "utf-8" }); } catch {}
 
-    // ── Phase 2: push EnvParams to the running container ─────────────────
-    // SubmitServerConfigChangeDiff atomically: (a) updates EnvParams on the
-    // service config and (b) rolls out a new deploy version that picks them
-    // up. The old image is reused (no rebuild), so this typically completes
-    // in 30-60s. EnvParam value is the JSON-encoded env map.
-    //
-    // Phase 1's `tcb cloudrun deploy` returns when CloudBase has accepted the
-    // build job — the container itself may still be coming up. Submitting
-    // another change while a deploy is in flight returns ResourceInUse, so
-    // we poll DescribeCloudRunDeployRecord until the latest record settles
-    // out of `creating`.
-    process.stdout.write(dim("Phase 2/3: waiting for first deploy to settle... "));
-    const startedAt = Date.now();
-    const maxWaitMs = 10 * 60 * 1000;
-    let lastStatus = "";
-    while (Date.now() - startedAt < maxWaitMs) {
-      try {
-        const detail = await callTcbCloudApi({
-          action: "DescribeCloudRunDeployRecord",
-          payload: { EnvId: envId, ServerName: serviceName },
-          service: "tcbr",
-          version: "2022-02-17",
-        });
-        const records = detail.DeployRecords ?? [];
-        // Latest record may not exist yet right after deploy submission;
-        // keep polling until we see one in a terminal state.
-        if (records.length > 0) {
-          lastStatus = records[records.length - 1]?.Status ?? "";
-          if (lastStatus && lastStatus !== "creating" && lastStatus !== "deploying") {
-            break;
-          }
-        }
-      } catch (err) {
-        // Transient errors (rate limits, etc.) — retry.
-      }
-      await new Promise((r) => setTimeout(r, 5000));
-    }
-    if (!lastStatus || lastStatus === "creating" || lastStatus === "deploying") {
-      throw new Error(`Initial deploy still ${lastStatus || "starting"} after ${maxWaitMs / 1000}s`);
-    }
-    if (lastStatus !== "normal") {
-      console.log(yellow(`first deploy status=${lastStatus}, continuing anyway...`));
-    } else {
-      console.log(green("ready"));
-    }
-
-    process.stdout.write(dim("            setting env vars + triggering redeploy... "));
+    // ── Phase 2: create the cloudrun service ─────────────────────────────
+    // CreateCloudRunServer takes Items (typed key/value list) which lets us
+    // set EnvParam, Port, Dockerfile, access types, scaling, etc. all in one
+    // call. The runtime listens on :80 (CloudBase's default container port).
+    process.stdout.write(dim("Phase 2/3: creating cloudrun service... "));
     try {
       const envMap = {
         CLOUDBASE_ENV_ID: envId,
@@ -1072,19 +1102,77 @@ const COMMANDS = {
       ]) {
         if (process.env[k]) envMap[k] = process.env[k];
       }
+
       await callTcbCloudApi({
-        action: "SubmitServerConfigChangeDiff",
+        action: "CreateCloudRunServer",
         payload: {
           EnvId: envId,
           ServerName: serviceName,
-          Items: [{ Key: "EnvParam", Value: JSON.stringify(envMap) }],
+          DeployInfo: {
+            DeployType:    "package",
+            PackageName:   packageName,
+            PackageVersion: packageVersion,
+          },
+          Items: [
+            { Key: "Port",           IntValue:   80 },
+            { Key: "Dockerfile",     Value:      "Dockerfile" },
+            { Key: "HasDockerfile",  BoolValue:  true },
+            { Key: "EnvParam",       Value:      JSON.stringify(envMap) },
+            { Key: "AccessTypes",    ArrayValue: ["OA", "PUBLIC", "MINIAPP"] },
+            { Key: "InternalAccess", Value:      "close" },
+            { Key: "CpuSpecs",       FloatValue: 1 },
+            { Key: "MemSpecs",       FloatValue: 2 },
+            { Key: "LogPath",        Value:      "stdout" },
+            { Key: "OperationMode",  Value:      "alwaysScale" },
+            { Key: "MinNum",         IntValue:   0 },
+            { Key: "MaxNum",         IntValue:   5 },
+            { Key: "PolicyDetails",  PolicyDetails: [] },
+            { Key: "Cmd",            ArrayValue: [] },
+            { Key: "EntryPoint",     ArrayValue: [] },
+          ],
+          VpcInfo: {},
         },
         service: "tcbr",
         version: "2022-02-17",
       });
       console.log(green("OK"));
     } catch (err) {
-      throw new Error(`SubmitServerConfigChangeDiff failed: ${err.message}`);
+      throw new Error(`CreateCloudRunServer failed: ${err.message}`);
+    }
+
+    // Wait for the service to come up before registering the agent — agent
+    // creation against a still-creating service tends to land in a bad state.
+    process.stdout.write(dim("            waiting for build to finish... "));
+    const startedAt = Date.now();
+    const maxWaitMs = 10 * 60 * 1000;
+    let lastStatus = "";
+    while (Date.now() - startedAt < maxWaitMs) {
+      try {
+        const detail = await callTcbCloudApi({
+          action: "DescribeCloudRunDeployRecord",
+          payload: { EnvId: envId, ServerName: serviceName },
+          service: "tcbr",
+          version: "2022-02-17",
+        });
+        const records = detail.DeployRecords ?? [];
+        if (records.length > 0) {
+          lastStatus = records[records.length - 1]?.Status ?? "";
+          if (lastStatus && lastStatus !== "creating" && lastStatus !== "deploying") {
+            break;
+          }
+        }
+      } catch {
+        // transient — retry
+      }
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+    if (!lastStatus || lastStatus === "creating" || lastStatus === "deploying") {
+      throw new Error(`build still ${lastStatus || "starting"} after ${maxWaitMs / 1000}s`);
+    }
+    if (lastStatus !== "normal") {
+      console.log(yellow(`build status=${lastStatus}, continuing anyway...`));
+    } else {
+      console.log(green("ready"));
     }
 
     // ── Phase 3: register the service as a TCBR agent ────────────────────
