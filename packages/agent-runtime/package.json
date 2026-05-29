@@ -10,13 +10,17 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@ag-ui/client": "^0.0.28",
-    "@cloudbase/agent-server": "^0.0.15",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.146",
+    "@cloudbase/manager-node": "^4.0.0",
     "@cloudbase/node-sdk": "^3.16.0",
-    "rxjs": "^7.8.0",
-    "yaml": "^2.4.0"
+    "@cloudbase/open-agent-kernel": "file:./vendor/cloudbase-open-agent-kernel-0.1.0-alpha.0.tgz",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "yaml": "^2.4.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
     "@types/express": "^5.0.6",
     "@types/node": "^20.0.0",
     "tsx": "^4.0.0",

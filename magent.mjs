@@ -421,8 +421,11 @@ async function* acpStream(url, method, params = {}) {
 
       try {
         const msg = JSON.parse(payload);
-        if ("method" in msg) {
-          // Notification — stream event
+        if ("method" in msg && "id" in msg && msg.id !== null && msg.id !== undefined) {
+          // Reverse JSON-RPC request (agent → client). E.g. session/request_permission.
+          yield { type: "reverse_request", data: msg };
+        } else if ("method" in msg) {
+          // Notification — stream event (no id)
           yield { type: "notification", data: msg };
         } else if (msg.error) {
           throw new Error(`ACP error: ${msg.error.message ?? JSON.stringify(msg.error)}`);
@@ -434,6 +437,51 @@ async function* acpStream(url, method, params = {}) {
         // ignore parse errors for partial lines
       }
     }
+  }
+}
+
+// ── Reverse JSON-RPC handling (HITL approvals) ────────────────────────────────
+//
+// When the server-side agent emits a `tool_approval_required`, our agent-runtime
+// wraps it into a JSON-RPC *request* (with id + method) sent over the SSE
+// channel as a `data: {...}\n\n` frame. The client must respond by POSTing back
+// a JSON-RPC *response* with the same id and a `result.outcome` payload.
+//
+// optionId:
+//   allow-once | allow-always | reject-once | reject-always
+//
+// outcome shape (per ACP spec):
+//   selected:  { outcome: { outcome: 'selected', optionId } }
+//   cancelled: { outcome: { outcome: 'cancelled' } }
+
+async function sendReverseResponse(url, id, outcome) {
+  const res = await fetch(url, {
+    method:  "POST",
+    headers: await getAcpHeaders(),
+    body:    JSON.stringify({ jsonrpc: "2.0", id, result: { outcome } }),
+  });
+  // 204 No Content is the success path; we don't read the body.
+  if (!res.ok && res.status !== 204) {
+    const text = await res.text().catch(() => "");
+    console.error(red(`[permission] response failed: HTTP ${res.status} ${text.slice(0, 120)}`));
+  }
+}
+
+async function handleReverseRequest(url, msg, autoApprove) {
+  if (msg.method !== "session/request_permission") {
+    // Ignore unknown reverse methods (forward compat). No response = no error
+    // path on the agent side; the agent will time out if it really needed one.
+    return;
+  }
+  const params = msg.params ?? {};
+  const toolName = params.toolCall?.toolName ?? "?";
+
+  if (autoApprove) {
+    console.log(yellow(`\n🔐 [permission] tool=${toolName} → auto-approve (allow-once)`));
+    await sendReverseResponse(url, msg.id, { outcome: "selected", optionId: "allow-once" });
+  } else {
+    console.log(red(`\n🔐 [permission] tool=${toolName} → no --auto-approve, sending cancelled`));
+    await sendReverseResponse(url, msg.id, { outcome: "cancelled" });
   }
 }
 
@@ -876,17 +924,22 @@ const COMMANDS = {
       sessionId,
       prompt: [{ type: "text", text: args.message }],
     })) {
-      if (item.type === "notification") {
+      if (item.type === "reverse_request") {
+        await handleReverseRequest(acpUrl, item.data, !!(args["auto-approve"] || args.y));
+      } else if (item.type === "notification") {
         const update = item.data.params?.update;
         switch (update?.sessionUpdate) {
           case "agent_message_chunk":
             process.stdout.write(update.content?.text ?? "");
             break;
           case "tool_call":
-            console.log(yellow(`\n🔧 Tool: ${update.toolCall?.name ?? "?"} [${update.toolCall?.status}]`));
-            if (update.toolCall?.result) console.log(dim(`   ${update.toolCall.result.slice(0, 200)}`));
+            console.log(yellow(`\n🔧 Tool: ${update.title ?? update.toolCall?.name ?? "?"} [${update.status ?? update.toolCall?.status}]`));
             break;
-          case "error":
+          case "tool_call_update":
+            if (update.result) console.log(dim(`   ${String(update.result).slice(0, 200)}`));
+            else if (update.status) console.log(dim(`   [${update.status}]`));
+            break;
+          case "log":
             console.log(red(`\n❌ ${update.message ?? "unknown error"}`));
             break;
         }
@@ -930,17 +983,22 @@ const COMMANDS = {
             sessionId,
             prompt: [{ type: "text", text: message }],
           })) {
-            if (item.type === "notification") {
+            if (item.type === "reverse_request") {
+              await handleReverseRequest(acpUrl, item.data, !!(args["auto-approve"] || args.y));
+            } else if (item.type === "notification") {
               const update = item.data.params?.update;
               switch (update?.sessionUpdate) {
                 case "agent_message_chunk":
                   process.stdout.write(update.content?.text ?? "");
                   break;
                 case "tool_call":
-                  console.log(yellow(`\n🔧 Tool: ${update.toolCall?.name ?? "?"} [${update.toolCall?.status}]`));
-                  if (update.toolCall?.result) console.log(dim(`   ${update.toolCall.result.slice(0, 200)}`));
+                  console.log(yellow(`\n🔧 Tool: ${update.title ?? update.toolCall?.name ?? "?"} [${update.status ?? update.toolCall?.status}]`));
                   break;
-                case "error":
+                case "tool_call_update":
+                  if (update.result) console.log(dim(`   ${String(update.result).slice(0, 200)}`));
+                  else if (update.status) console.log(dim(`   [${update.status}]`));
+                  break;
+                case "log":
                   console.log(red(`\n❌ ${update.message ?? "unknown error"}`));
                   break;
               }
