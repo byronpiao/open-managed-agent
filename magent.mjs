@@ -15,6 +15,7 @@
  *   agent:update   [-i <id>] [options]
  *
  *   cloudrun:create -n <name> [options]      Container-mode agent (cloudrun + CreateAgent API)
+ *   cloudrun:build  [--tag <name>]           Local linux/amd64 image build for iteration
  *   cloudrun:list   [-e <envId>]
  *   cloudrun:delete -n <serviceName>
  *
@@ -975,6 +976,67 @@ const COMMANDS = {
   //      `agent-<slug>-<rand>` ID, addressable via the same gateway path
   //      magent run uses for SCF agents.
 
+  // Local build & run — fast feedback loop. Stages the same files as
+  // cloudrun:create, builds with `docker build --platform linux/amd64`,
+  // and runs the container locally. Use this to verify the runtime is
+  // healthy before paying the 5+ minute CloudBase build round-trip.
+  "cloudrun:build": async (args) => {
+    const code = args.code ?? "./packages/agent-runtime";
+    const tag  = args.tag  ?? "magent-runtime:dev";
+    const port = args.port ?? "8080";
+
+    if (!existsSync(resolve(code, "Dockerfile"))) {
+      throw new Error(`No Dockerfile at ${code}/Dockerfile`);
+    }
+    if (!existsSync(resolve(code, "dist"))) {
+      throw new Error(`No ${code}/dist — run \`npm run build\` first`);
+    }
+
+    const stage = resolve(code, ".local-build");
+    console.log(bold("Building image locally..."));
+    console.log(dim(`  tag:    ${tag}`));
+    console.log(dim(`  source: ${code}`));
+    console.log(dim(`  stage:  ${stage}`));
+    console.log();
+
+    try {
+      execSync(`rm -rf "${stage}" && mkdir -p "${stage}"`, { encoding: "utf-8" });
+      const required = ["Dockerfile", "dist", "package.json"];
+      const optional = ["package-lock.json", ".dockerignore", "vendor", "agent.yaml", "skills"];
+      for (const f of required) {
+        execSync(`cp -r "${resolve(code, f)}" "${stage}/"`, { encoding: "utf-8" });
+      }
+      for (const f of optional) {
+        const src = resolve(code, f);
+        if (existsSync(src)) execSync(`cp -r "${src}" "${stage}/"`, { encoding: "utf-8" });
+      }
+
+      const buildArgs = ["build", "--platform", "linux/amd64", "-t", tag, stage];
+      const result = spawnSync("docker", buildArgs, { stdio: "inherit" });
+      if (result.error) throw result.error;
+      if (result.status !== 0) throw new Error(`docker build exited ${result.status}`);
+    } finally {
+      try { execSync(`rm -rf "${stage}"`, { encoding: "utf-8" }); } catch {}
+    }
+
+    console.log();
+    console.log(green(`✅ Image built: ${tag}`));
+    console.log();
+    console.log("Run it locally:");
+    console.log(dim(`  docker run --rm -p ${port}:8080 \\`));
+    console.log(dim(`    -e ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL \\`));
+    console.log(dim(`    -e ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN \\`));
+    console.log(dim(`    -e CLOUDBASE_ENV_ID=$CLOUDBASE_ENV_ID \\`));
+    console.log(dim(`    -e AGENT_MODEL=mimo-v2.5-pro \\`));
+    console.log(dim(`    -e OAK_DISABLE_SANDBOX=1 -e OAK_USE_MEMORY_STORE=1 \\`));
+    console.log(dim(`    ${tag}`));
+    console.log();
+    console.log("Then probe in another terminal:");
+    console.log(dim(`  curl http://localhost:${port}/healthz`));
+    console.log(dim(`  curl http://localhost:${port}/debug/spawn-claude | jq`));
+  },
+
+
   "cloudrun:create": async (args) => {
     const { name, model, system } = args;
     if (!name) throw new Error("-n / --name is required");
@@ -1114,7 +1176,7 @@ const COMMANDS = {
             PackageVersion: packageVersion,
           },
           Items: [
-            { Key: "Port",           IntValue:   80 },
+            { Key: "Port",           IntValue:   8080 },
             { Key: "Dockerfile",     Value:      "Dockerfile" },
             { Key: "HasDockerfile",  BoolValue:  true },
             { Key: "EnvParam",       Value:      JSON.stringify(envMap) },
@@ -1486,6 +1548,13 @@ ${bold("CLOUDRUN COMMANDS (container-mode agent, deployed as CloudBase Cloud Run
         --code <path>           Code directory (default: ./packages/agent-runtime)
         --service <name>        Override the cloudrun service name (default: <slug>-<rand>)
     -e, --env <envId>           CloudBase environment ID
+
+  cloudrun:build  [--tag <name>] [--code <dir>] [--port <port>]
+                                              Build the container image locally
+                                              (linux/amd64) for fast iteration
+                                              before paying the cloudrun deploy
+                                              round-trip. Stages the same files
+                                              cloudrun:create would.
 
   cloudrun:list   [-e <envId>]                List container-typed cloud-run services
   cloudrun:delete -n <serviceName> [-e <id>]  Delete a cloud-run service (use
