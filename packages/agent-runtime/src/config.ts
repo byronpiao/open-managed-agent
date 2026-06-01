@@ -307,19 +307,11 @@ export function toKernelAgentConfig(
   // Canonical config form is ModelSpec ({id, apiKey, apiBaseUrl, options}) in
   // agent.yaml. A bare string in `model` is auto-promoted to {id: <string>}
   // and routed through CloudBase TokenHub.
-  //
-  // ANTHROPIC_* env vars are kept as a *last-resort* override for ops/debug
-  // scenarios where you can't (or don't want to) edit agent.yaml — they only
-  // fill in fields the config didn't already supply, so YAML wins on conflict.
   const baseModel: ModelSpec = typeof config.model === "string"
     ? { id: config.model }
     : { ...config.model };
-  const envKey = process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY;
-  const envBase = process.env.ANTHROPIC_BASE_URL;
-  if (envKey && !baseModel.apiKey) baseModel.apiKey = envKey;
-  if (envBase && !baseModel.apiBaseUrl) baseModel.apiBaseUrl = envBase;
-  // Pass the bare ID through if no key/url ended up being set — the kernel
-  // can still recognize a hosted model by name.
+  // Pass the bare ID through if no key/url is set — the kernel can still
+  // recognize a hosted model by name and route it through TokenHub.
   const model: string | ModelSpec = baseModel.apiKey || baseModel.apiBaseUrl || baseModel.options
     ? baseModel
     : baseModel.id;

@@ -79,9 +79,6 @@ ModelSpec 字段说明（与 kernel 的 `ModelSpec` 接口对齐）：
 model: hunyuan-t1-latest
 ```
 
-> ModelSpec 写在配置里之后，agent:create / agent:update 都会把它通过 `AGENT_CONFIG_B64` 整体传给 runtime；
-> **不需要**再去设 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `AGENT_MODEL` 环境变量。
-
 #### 方式 2：用 CloudBase TokenHub（仅 ID 字符串场景）
 
 如果你的 `model` 是字符串（如 `hunyuan-t1-latest` / `deepseek-v3.2`），runtime 会自动走 CloudBase TokenHub。
