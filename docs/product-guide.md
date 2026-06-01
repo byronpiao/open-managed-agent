@@ -47,6 +47,47 @@ CLOUDBASE_ENV_ID=your-env-id
 CLOUDBASE_ACCESS_KEY=your-access-key
 ```
 
+#### 模型凭证（二选一）
+
+Agent runtime 需要能访问到 LLM。两种方式：
+
+**方式 1（推荐）：用 Anthropic 兼容 endpoint（任意 OpenAI/Claude 兼容代理都行）**
+
+在 shell 或 `.env` 中设置：
+
+```ini
+ANTHROPIC_BASE_URL=https://your-proxy.example.com/anthropic
+ANTHROPIC_AUTH_TOKEN=tp-xxxxxxxxxxxxxxxxxxxxxxxx
+AGENT_MODEL=mimo-v2.5-pro          # 或代理支持的任何模型 ID
+```
+
+`agent:create` 会把这些自动转发到容器/函数的环境变量里，runtime 会优先使用 `ANTHROPIC_*` 配的 endpoint+token，绕过 CloudBase TokenHub。
+适用于：本地开发、海外模型、自托管 LLM 网关。
+
+**方式 2：用 CloudBase TokenHub（混元/DeepSeek 等内置模型）**
+
+在 [TokenHub 控制台](https://console.cloud.tencent.com/tokenhub) 创建 API key，导出：
+
+```ini
+TENCENTCLOUD_TOKENHUB_API_KEY=xxxxxxxx
+# 或者 forward-compatible 别名：
+CLOUDBASE_API_KEY=xxxxxxxx
+```
+
+适用于：直接使用 `hunyuan-t1-latest`、`deepseek-v3.2` 等 CloudBase 托管模型。
+
+> 不设任何一种时，runtime 会在第一次调用时报错 `No API key found`。
+
+#### CloudBase 凭证（仅 tcbr 容器需要）
+
+SCF 函数会被自动注入 `TENCENTCLOUD_SECRETID/KEY/SESSIONTOKEN`，无需手工设置。
+TCBR 云托管容器**不会自动注入**，所以 `agent:create --type tcbr` 时 magent 会按以下顺序选择凭证写进 `EnvParam`：
+
+1. shell 中的 `TCB_SECRET_ID` + `TCB_SECRET_KEY`（推荐 — 永久密钥不会过期）
+2. fallback 到 `tcb login` 的 STS 临时凭证（约 2h 后过期，过期后 agent 调用会 `MISSING_CREDENTIALS`）
+
+生产环境务必走 1。
+
 ---
 
 ## 完整使用流程
@@ -95,6 +136,17 @@ Next steps:
   2. Update config:  magent agent:update --id agent-my-agent-65abf85e --file agent.yaml
   3. Start chatting: magent run --agent agent-my-agent-65abf85e --message "Hello"
 ```
+
+> **想部署成容器型（TCBR 云托管）？** 在 `agent:create` 上加 `--type tcbr`：
+>
+> ```bash
+> $ magent agent:create --name "my-agent" --type tcbr \
+>     --system "You are a helpful coding assistant."
+> ```
+>
+> 容器路径会用 `packages/agent-runtime/Dockerfile` 构建镜像、走云托管部署。
+> 整个过程约 3-5 分钟（vs SCF 的 60-90s），但能装系统库、用任意 Node 版本，且写权限不像 SCF 那样受限。
+> 之后所有 `agent:get / agent:update / agent:delete / run / chat` 命令都通用，magent 自动按 `AgentType` 分发到正确的 API 路径。
 
 ### Step 3: 等待就绪
 
@@ -179,13 +231,16 @@ skills:
     source: ./skills/github.md
 ```
 
-执行更新（~8s，无需重新部署代码）：
+执行更新：
 
 ```bash
 $ magent agent:update --file ./agent.yaml
 ```
 
-输出：
+> SCF agent 走 `tcb agent update`，约 8s 完成，不重启函数。
+> TCBR agent 走 `SubmitServerConfigChangeDiff`（无 in-place 接口），会触发一次滚动重启，整体 60-90s。
+
+输出（SCF agent 示例）：
 ```
 Fetching current config... OK
 
