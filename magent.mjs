@@ -1234,6 +1234,34 @@ const COMMANDS = {
         if (process.env[k]) envMap[k] = process.env[k];
       }
 
+      // ── CloudBase credentials for the runtime ────────────────────────────
+      // Unlike SCF (which auto-injects TENCENTCLOUD_SECRETID/KEY/SESSIONTOKEN
+      // via the function role), TCBR cloudrun containers don't get any creds
+      // by default. The runtime needs them to talk to NoSQL for session
+      // storage, so we forward the operator's creds:
+      //
+      //   1. TCB_SECRET_ID / TCB_SECRET_KEY (long-lived, recommended)
+      //   2. fallback to the current `tcb login` STS (short-lived, ~2h —
+      //      good enough for E2E and dev, but the agent will start failing
+      //      with MISSING_CREDENTIALS once the token expires).
+      //
+      // For production, set TCB_SECRET_ID / TCB_SECRET_KEY in your shell
+      // before running cloudrun:create.
+      if (process.env.TCB_SECRET_ID && process.env.TCB_SECRET_KEY) {
+        envMap.TCB_SECRET_ID = process.env.TCB_SECRET_ID;
+        envMap.TCB_SECRET_KEY = process.env.TCB_SECRET_KEY;
+        if (process.env.TCB_TOKEN) envMap.TCB_TOKEN = process.env.TCB_TOKEN;
+      } else {
+        const sts = readTcbLoginCredential();
+        if (sts) {
+          envMap.TCB_SECRET_ID = sts.secretId;
+          envMap.TCB_SECRET_KEY = sts.secretKey;
+          if (sts.token) envMap.TCB_TOKEN = sts.token;
+          console.log();
+          process.stdout.write(dim("            (warning: forwarded short-lived STS creds; will expire in ~2h)\n            "));
+        }
+      }
+
       await callTcbCloudApi({
         action: "CreateCloudRunServer",
         payload: {
