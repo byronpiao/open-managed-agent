@@ -528,21 +528,20 @@ async function lookupAgent(envId, agentId) {
 // Build the EnvParam map that ships into a cloudrun (tcbr) container. Used by
 // both cloudrun:create (initial deploy) and agent:update on tcbr agents
 // (re-pushed via SubmitServerConfigChangeDiff). Pulls the agent config from
-// the caller, then layers on operator overrides (ANTHROPIC_*, OAK_*) and
-// CloudBase creds (TCB_SECRET_*) from shell env or tcb-login STS.
+// the caller, then layers on OAK_* knobs and CloudBase creds (TCB_SECRET_*)
+// from shell env or tcb-login STS.
 //
 // Contract: every env update has to re-supply these via the operator's shell
 // because TCBR replaces (not merges) EnvParam on each config-change.
+//
+// Model credentials (apiKey/apiBaseUrl) belong in agent.yaml's `model`
+// ModelSpec — they ride inside AGENT_CONFIG_B64 and don't need separate env.
 function buildCloudRunEnvParam({ envId, configB64 }) {
   const envMap = {
     CLOUDBASE_ENV_ID: envId,
     AGENT_CONFIG_B64: configB64,
   };
   for (const k of [
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_API_KEY",
-    "AGENT_MODEL",
     "OAK_DISABLE_SANDBOX",
     "OAK_USE_MEMORY_STORE",
     "TCB_API_KEY",
@@ -1252,67 +1251,6 @@ const COMMANDS = {
   //      → register the service as a TCBR agent. The API returns an
   //      `agent-<slug>-<rand>` ID, addressable via the same gateway path
   //      magent run uses for SCF agents.
-
-  // Local build & run — fast feedback loop. Stages the same files as
-  // cloudrun:create, builds with `docker build --platform linux/amd64`,
-  // and runs the container locally. Use this to verify the runtime is
-  // healthy before paying the 5+ minute CloudBase build round-trip.
-  "cloudrun:build": async (args) => {
-    const code = args.code ?? "./packages/agent-runtime";
-    const tag  = args.tag  ?? "magent-runtime:dev";
-    const port = args.port ?? "8080";
-
-    if (!existsSync(resolve(code, "Dockerfile"))) {
-      throw new Error(`No Dockerfile at ${code}/Dockerfile`);
-    }
-    if (!existsSync(resolve(code, "dist"))) {
-      throw new Error(`No ${code}/dist — run \`npm run build\` first`);
-    }
-
-    const stage = resolve(code, ".local-build");
-    console.log(bold("Building image locally..."));
-    console.log(dim(`  tag:    ${tag}`));
-    console.log(dim(`  source: ${code}`));
-    console.log(dim(`  stage:  ${stage}`));
-    console.log();
-
-    try {
-      execSync(`rm -rf "${stage}" && mkdir -p "${stage}"`, { encoding: "utf-8" });
-      const required = ["Dockerfile", "dist", "package.json"];
-      const optional = ["package-lock.json", ".dockerignore", "vendor", "agent.yaml", "skills"];
-      for (const f of required) {
-        execSync(`cp -r "${resolve(code, f)}" "${stage}/"`, { encoding: "utf-8" });
-      }
-      for (const f of optional) {
-        const src = resolve(code, f);
-        if (existsSync(src)) execSync(`cp -r "${src}" "${stage}/"`, { encoding: "utf-8" });
-      }
-
-      const buildArgs = ["build", "--platform", "linux/amd64", "-t", tag, stage];
-      const result = spawnSync("docker", buildArgs, { stdio: "inherit" });
-      if (result.error) throw result.error;
-      if (result.status !== 0) throw new Error(`docker build exited ${result.status}`);
-    } finally {
-      try { execSync(`rm -rf "${stage}"`, { encoding: "utf-8" }); } catch {}
-    }
-
-    console.log();
-    console.log(green(`✅ Image built: ${tag}`));
-    console.log();
-    console.log("Run it locally:");
-    console.log(dim(`  docker run --rm -p ${port}:8080 \\`));
-    console.log(dim(`    -e ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL \\`));
-    console.log(dim(`    -e ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN \\`));
-    console.log(dim(`    -e CLOUDBASE_ENV_ID=$CLOUDBASE_ENV_ID \\`));
-    console.log(dim(`    -e AGENT_MODEL=mimo-v2.5-pro \\`));
-    console.log(dim(`    -e OAK_DISABLE_SANDBOX=1 -e OAK_USE_MEMORY_STORE=1 \\`));
-    console.log(dim(`    ${tag}`));
-    console.log();
-    console.log("Then probe in another terminal:");
-    console.log(dim(`  curl http://localhost:${port}/healthz`));
-    console.log(dim(`  curl http://localhost:${port}/debug/spawn-claude | jq`));
-  },
-
 
   "cloudrun:create": async (args) => {
     const { name, model, system } = args;
