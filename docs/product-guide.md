@@ -66,12 +66,12 @@ model:
 
 ModelSpec 字段说明（与 kernel 的 `ModelSpec` 接口对齐）：
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `id` | `string` | 模型 ID，如 `hunyuan-t1-latest` / `deepseek-v3.2` / `gpt-5` |
-| `apiKey` | `string?` | 不传则走 CloudBase 网关代理（计费走平台）；传则用自带 key |
-| `apiBaseUrl` | `string?` | 自带 key 时的 endpoint（任意 Anthropic-compatible 代理） |
-| `options` | `Record<string, unknown>?` | 透传到底层 provider 的额外选项 |
+| 字段         | 类型                       | 说明                                                        |
+| ------------ | -------------------------- | ----------------------------------------------------------- |
+| `id`         | `string`                   | 模型 ID，如 `hunyuan-t1-latest` / `deepseek-v3.2` / `gpt-5` |
+| `apiKey`     | `string?`                  | 不传则走 CloudBase 网关代理（计费走平台）；传则用自带 key   |
+| `apiBaseUrl` | `string?`                  | 自带 key 时的 endpoint（任意 Anthropic-compatible 代理）    |
+| `options`    | `Record<string, unknown>?` | 透传到底层 provider 的额外选项                              |
 
 只用 ID 字符串的简写形式（适用于平台模型，如混元 / DeepSeek）：
 
@@ -92,13 +92,6 @@ TENCENTCLOUD_TOKENHUB_API_KEY=xxxxxxxx
 # 或 forward-compatible 别名：
 CLOUDBASE_API_KEY=xxxxxxxx
 ```
-
-#### 方式 3：环境变量兜底（不推荐）
-
-`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` 仍然受支持，但只作为**最后兜底**：
-仅在 ModelSpec 没有提供 `apiKey` / `apiBaseUrl` 时才会被采纳。生产建议把这些信息写进 `agent.yaml` 的 ModelSpec，配置可读、可审计、可版本化。
-
-> 不设以上任何一种时，runtime 会在第一次调用时报错 `No API key found`。
 
 #### CloudBase 凭证（仅 tcbr 容器需要）
 
@@ -372,37 +365,37 @@ metadata:                         # 自定义元数据（可选）
 
 ### 字段说明
 
-| 字段 | 类型 | 必需 | 说明 |
-|------|------|------|------|
-| `name` | string | ✓ | Agent 名称 |
-| `model` | string \| ModelSpec | ✓ | 模型 ID（字符串）或完整 ModelSpec 对象（带 `apiKey` / `apiBaseUrl` / `options`）。详见上文「模型凭证」 |
-| `system` | string | ✓ | System prompt |
-| `tools` | array | - | 工具配置 |
-| `mcp_servers` | array | - | MCP 服务器声明 |
-| `skills` | array | - | 领域知识文件 |
-| `sessions_collection` | string | - | NoSQL 集合名（默认 `acp_sessions`，自动创建） |
+| 字段                  | 类型                | 必需 | 说明                                                                                                   |
+| --------------------- | ------------------- | ---- | ------------------------------------------------------------------------------------------------------ |
+| `name`                | string              | ✓    | Agent 名称                                                                                             |
+| `model`               | string \| ModelSpec | ✓    | 模型 ID（字符串）或完整 ModelSpec 对象（带 `apiKey` / `apiBaseUrl` / `options`）。详见上文「模型凭证」 |
+| `system`              | string              | ✓    | System prompt                                                                                          |
+| `tools`               | array               | -    | 工具配置                                                                                               |
+| `mcp_servers`         | array               | -    | MCP 服务器声明                                                                                         |
+| `skills`              | array               | -    | 领域知识文件                                                                                           |
+| `sessions_collection` | string              | -    | NoSQL 集合名（默认 `acp_sessions`，自动创建）                                                          |
 
 ### 工具类型
 
-| 类型 | 执行方 | 说明 |
-|------|--------|------|
-| `agent_toolset` | 服务端 | 内置工具：bash, read_file, write_file, list_files |
-| `mcp_toolset` | 服务端代理 | 远程 MCP 服务器提供的工具 |
-| `custom` | 客户端 | Agent 请求调用，由你的代码执行后返回结果 |
+| 类型            | 执行方     | 说明                                              |
+| --------------- | ---------- | ------------------------------------------------- |
+| `agent_toolset` | 服务端     | 内置工具：bash, read_file, write_file, list_files |
+| `mcp_toolset`   | 服务端代理 | 远程 MCP 服务器提供的工具                         |
+| `custom`        | 客户端     | Agent 请求调用，由你的代码执行后返回结果          |
 
 ### Permission Policy
 
-| 策略 | 行为 |
-|------|------|
-| `always_allow` | 工具自动执行 |
-| `always_ask` | 暂停等待 `user.tool_confirmation` 事件 |
+| 策略           | 行为                                   |
+| -------------- | -------------------------------------- |
+| `always_allow` | 工具自动执行                           |
+| `always_ask`   | 暂停等待 `user.tool_confirmation` 事件 |
 
 ### 支持的模型
 
-| Provider | 模型 | 推荐 |
-|----------|------|------|
+| Provider      | 模型                                         | 推荐                  |
+| ------------- | -------------------------------------------- | --------------------- |
 | `hunyuan-exp` | `hunyuan-t1-latest`, `hunyuan-turbos-latest` | ✅ `hunyuan-t1-latest` |
-| `deepseek` | `deepseek-v3.2`, `deepseek-r1-0528` | ✅ `deepseek-v3.2` |
+| `deepseek`    | `deepseek-v3.2`, `deepseek-r1-0528`          | ✅ `deepseek-v3.2`     |
 
 ---
 
@@ -522,12 +515,12 @@ await client.sessions.delete(session.id);
 
 ### 流式事件
 
-| 事件类型 | 字段 | 说明 |
-|----------|------|------|
-| `chunk` | `text` | 文本增量 |
-| `tool_call` | `name`, `status`, `result?` | 工具调用 (pending → completed) |
-| `error` | `message` | 错误 |
-| `done` | `stopReason` | 结束 (`end_turn` / `cancelled`) |
+| 事件类型    | 字段                        | 说明                            |
+| ----------- | --------------------------- | ------------------------------- |
+| `chunk`     | `text`                      | 文本增量                        |
+| `tool_call` | `name`, `status`, `result?` | 工具调用 (pending → completed)  |
+| `error`     | `message`                   | 错误                            |
+| `done`      | `stopReason`                | 结束 (`end_turn` / `cancelled`) |
 
 ---
 
