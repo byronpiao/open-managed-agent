@@ -504,6 +504,97 @@ async function getAcpHeaders() {
   };
 }
 
+// ── Agent-type dispatch helpers ───────────────────────────────────────────
+// Look up the AgentType (scf | tcbr | baas) and underlying ServiceId for an
+// agent. tcb agent detail doesn't expose ServiceId, so we hit DescribeAgentList
+// directly. Returns { agentType, serviceId } or {} when not found.
+async function lookupAgent(envId, agentId) {
+  try {
+    const resp = await callTcbCloudApi({
+      action: "DescribeAgentList",
+      payload: { EnvId: envId, AgentId: agentId },
+    });
+    const found = (resp.AgentList ?? []).find((a) => a.AgentId === agentId);
+    if (!found) return {};
+    return {
+      agentType: found.AgentType ?? "",
+      serviceId: found.ServiceId ?? "",
+    };
+  } catch {
+    return {};
+  }
+}
+
+// Build the EnvParam map that ships into a cloudrun (tcbr) container. Used by
+// both cloudrun:create (initial deploy) and agent:update on tcbr agents
+// (re-pushed via SubmitServerConfigChangeDiff). Pulls the agent config from
+// the caller, then layers on operator overrides (ANTHROPIC_*, OAK_*) and
+// CloudBase creds (TCB_SECRET_*) from shell env or tcb-login STS.
+//
+// Contract: every env update has to re-supply these via the operator's shell
+// because TCBR replaces (not merges) EnvParam on each config-change.
+function buildCloudRunEnvParam({ envId, configB64 }) {
+  const envMap = {
+    CLOUDBASE_ENV_ID: envId,
+    AGENT_CONFIG_B64: configB64,
+  };
+  for (const k of [
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "AGENT_MODEL",
+    "OAK_DISABLE_SANDBOX",
+    "OAK_USE_MEMORY_STORE",
+    "TCB_API_KEY",
+  ]) {
+    if (process.env[k]) envMap[k] = process.env[k];
+  }
+  let credsSource = "";
+  if (process.env.TCB_SECRET_ID && process.env.TCB_SECRET_KEY) {
+    envMap.TCB_SECRET_ID = process.env.TCB_SECRET_ID;
+    envMap.TCB_SECRET_KEY = process.env.TCB_SECRET_KEY;
+    if (process.env.TCB_TOKEN) envMap.TCB_TOKEN = process.env.TCB_TOKEN;
+    credsSource = "shell";
+  } else {
+    const sts = readTcbLoginCredential();
+    if (sts) {
+      envMap.TCB_SECRET_ID = sts.secretId;
+      envMap.TCB_SECRET_KEY = sts.secretKey;
+      if (sts.token) envMap.TCB_TOKEN = sts.token;
+      credsSource = "sts";
+    }
+  }
+  return { envMap, credsSource };
+}
+
+// Wait for a tcbr cloudrun service deploy to leave creating/deploying state.
+// Returns the final status string (typically "normal" on success).
+async function waitForCloudRunDeploy(envId, serviceName, { maxWaitMs = 10 * 60 * 1000 } = {}) {
+  const startedAt = Date.now();
+  let lastStatus = "";
+  while (Date.now() - startedAt < maxWaitMs) {
+    try {
+      const detail = await callTcbCloudApi({
+        action: "DescribeCloudRunDeployRecord",
+        payload: { EnvId: envId, ServerName: serviceName },
+        service: "tcbr",
+        version: "2022-02-17",
+      });
+      const records = detail.DeployRecords ?? [];
+      if (records.length > 0) {
+        lastStatus = records[records.length - 1]?.Status ?? "";
+        if (lastStatus && lastStatus !== "creating" && lastStatus !== "deploying") {
+          return lastStatus;
+        }
+      }
+    } catch {
+      // transient — retry
+    }
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  return lastStatus;
+}
+
 async function acpCall(url, method, params = {}) {
   const res = await fetch(url, {
     method:  "POST",
@@ -728,6 +819,19 @@ const COMMANDS = {
   "agent:create": async (args) => {
     const { name, model, system } = args;
     if (!name) throw new Error("-n / --name is required");
+    const type = (args.type ?? "scf").toLowerCase();
+    if (type !== "scf" && type !== "tcbr") {
+      throw new Error(`--type must be 'scf' or 'tcbr' (got '${type}')`);
+    }
+
+    // Container-mode (TCBR cloudrun) — delegate to the cloudrun:create flow,
+    // which builds an image from the agent-runtime Dockerfile, deploys it as
+    // a CloudRun service, and registers it as a tcbr agent.
+    if (type === "tcbr") {
+      return COMMANDS["cloudrun:create"](args);
+    }
+
+    // SCF cloud function path (default).
     const envId   = requireEnvId(args);
     const code    = args.code    ?? "./packages/agent-runtime";
     const runtime = args.runtime ?? "Nodejs20.19";
@@ -851,21 +955,9 @@ const COMMANDS = {
     // Phase 1: discover the underlying compute resource so we can clean it up
     // after the agent registration is removed. `tcb agent detail` doesn't
     // expose ServiceId, so we hit DescribeAgentList directly.
-    let agentType = "";
-    let serviceId = "";
-    try {
-      const resp = await callTcbCloudApi({
-        action: "DescribeAgentList",
-        payload: { EnvId: envId, AgentId: agentId },
-      });
-      const found = (resp.AgentList ?? []).find((a) => a.AgentId === agentId);
-      if (found) {
-        agentType = found.AgentType ?? "";
-        serviceId = found.ServiceId ?? "";
-      }
-    } catch (err) {
-      console.log(yellow(`⚠️  could not look up agent metadata: ${err.message}`));
-      console.log(yellow("    proceeding with agent registration delete only."));
+    const { agentType, serviceId } = await lookupAgent(envId, agentId);
+    if (!agentType) {
+      console.log(yellow(`⚠️  could not look up agent metadata; proceeding with registration delete only.`));
     }
 
     // Phase 2: remove the agent registration
@@ -1005,11 +1097,55 @@ const COMMANDS = {
     console.log(dim(`  skills:      ${merged.skills?.length ?? 0} items`));
     console.log();
 
+    // Dispatch by agent type. SCF agents go through `tcb agent update`
+    // (~8s, no redeploy). TCBR cloudrun agents need a config-change diff
+    // submitted to tcbr (~60-90s, full redeploy of the container) because
+    // tcb agent update doesn't support tcbr (and there's no in-place env
+    // mutation API on cloudrun).
+    const { agentType, serviceId } = await lookupAgent(envId, agentId);
+    const configBase64 = Buffer.from(configJson).toString("base64");
+
+    if (agentType === "tcbr") {
+      if (!serviceId) throw new Error(`tcbr agent ${agentId} has no ServiceId`);
+      const { envMap, credsSource } = buildCloudRunEnvParam({ envId, configB64: configBase64 });
+      if (!credsSource) {
+        console.log(yellow("⚠️  no TCB_SECRET_* found in shell or tcb login — agent may fail with MISSING_CREDENTIALS"));
+      } else if (credsSource === "sts") {
+        console.log(dim("(using short-lived tcb-login STS creds — they will expire in ~2h)"));
+      }
+      process.stdout.write(dim("Applying via SubmitServerConfigChangeDiff (tcbr)... "));
+      try {
+        await callTcbCloudApi({
+          action: "SubmitServerConfigChangeDiff",
+          payload: {
+            EnvId: envId,
+            ServerName: serviceId,
+            Items: [{ Key: "EnvParam", Value: JSON.stringify(envMap) }],
+          },
+          service: "tcbr",
+          version: "2022-02-17",
+        });
+        console.log(green("submitted"));
+      } catch (err) {
+        throw new Error(`SubmitServerConfigChangeDiff failed: ${err.message}`);
+      }
+
+      process.stdout.write(dim("Waiting for redeploy to finish... "));
+      const finalStatus = await waitForCloudRunDeploy(envId, serviceId);
+      if (finalStatus === "normal") {
+        console.log(green("ready"));
+      } else {
+        console.log(yellow(`status=${finalStatus || "timeout"}, agent may still be coming up`));
+      }
+      console.log(green(`\n✅ Agent ${agentId} updated successfully.`));
+      return;
+    }
+
+    // SCF (or unknown — fall through to legacy path).
     process.stdout.write("Applying via tcb agent update... ");
     try {
-      const configBase64 = Buffer.from(configJson).toString("base64");
-      const envStr       = `CLOUDBASE_ENV_ID=${envId},AGENT_CONFIG_B64=${configBase64}`;
-      const raw          = runTcb(
+      const envStr = `CLOUDBASE_ENV_ID=${envId},AGENT_CONFIG_B64=${configBase64}`;
+      const raw = runTcb(
         ["agent", "update", agentId, "--env", envStr, "-e", envId, "--json"],
         { timeout: 120000 },
       );
@@ -1217,49 +1353,14 @@ const COMMANDS = {
     // call. The runtime listens on :80 (CloudBase's default container port).
     process.stdout.write(dim("Phase 2/3: creating cloudrun service... "));
     try {
-      const envMap = {
-        CLOUDBASE_ENV_ID: envId,
-        AGENT_CONFIG_B64: configB64,
-      };
-      // Forward common dev/test overrides if the operator has them set
-      // locally (handy for staging deploys without re-running update).
-      for (const k of [
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_API_KEY",
-        "AGENT_MODEL",
-        "OAK_DISABLE_SANDBOX",
-        "OAK_USE_MEMORY_STORE",
-      ]) {
-        if (process.env[k]) envMap[k] = process.env[k];
-      }
-
-      // ── CloudBase credentials for the runtime ────────────────────────────
-      // Unlike SCF (which auto-injects TENCENTCLOUD_SECRETID/KEY/SESSIONTOKEN
-      // via the function role), TCBR cloudrun containers don't get any creds
-      // by default. The runtime needs them to talk to NoSQL for session
-      // storage, so we forward the operator's creds:
-      //
-      //   1. TCB_SECRET_ID / TCB_SECRET_KEY (long-lived, recommended)
-      //   2. fallback to the current `tcb login` STS (short-lived, ~2h —
-      //      good enough for E2E and dev, but the agent will start failing
-      //      with MISSING_CREDENTIALS once the token expires).
-      //
-      // For production, set TCB_SECRET_ID / TCB_SECRET_KEY in your shell
-      // before running cloudrun:create.
-      if (process.env.TCB_SECRET_ID && process.env.TCB_SECRET_KEY) {
-        envMap.TCB_SECRET_ID = process.env.TCB_SECRET_ID;
-        envMap.TCB_SECRET_KEY = process.env.TCB_SECRET_KEY;
-        if (process.env.TCB_TOKEN) envMap.TCB_TOKEN = process.env.TCB_TOKEN;
-      } else {
-        const sts = readTcbLoginCredential();
-        if (sts) {
-          envMap.TCB_SECRET_ID = sts.secretId;
-          envMap.TCB_SECRET_KEY = sts.secretKey;
-          if (sts.token) envMap.TCB_TOKEN = sts.token;
-          console.log();
-          process.stdout.write(dim("            (warning: forwarded short-lived STS creds; will expire in ~2h)\n            "));
-        }
+      const { envMap, credsSource } = buildCloudRunEnvParam({ envId, configB64 });
+      if (!credsSource) {
+        console.log();
+        console.log(yellow("⚠️  no TCB_SECRET_* found in shell or tcb login — agent may fail with MISSING_CREDENTIALS"));
+        process.stdout.write(dim("            "));
+      } else if (credsSource === "sts") {
+        console.log();
+        process.stdout.write(dim("            (warning: forwarded short-lived STS creds; will expire in ~2h)\n            "));
       }
 
       await callTcbCloudApi({
@@ -1302,31 +1403,9 @@ const COMMANDS = {
     // Wait for the service to come up before registering the agent — agent
     // creation against a still-creating service tends to land in a bad state.
     process.stdout.write(dim("            waiting for build to finish... "));
-    const startedAt = Date.now();
-    const maxWaitMs = 10 * 60 * 1000;
-    let lastStatus = "";
-    while (Date.now() - startedAt < maxWaitMs) {
-      try {
-        const detail = await callTcbCloudApi({
-          action: "DescribeCloudRunDeployRecord",
-          payload: { EnvId: envId, ServerName: serviceName },
-          service: "tcbr",
-          version: "2022-02-17",
-        });
-        const records = detail.DeployRecords ?? [];
-        if (records.length > 0) {
-          lastStatus = records[records.length - 1]?.Status ?? "";
-          if (lastStatus && lastStatus !== "creating" && lastStatus !== "deploying") {
-            break;
-          }
-        }
-      } catch {
-        // transient — retry
-      }
-      await new Promise((r) => setTimeout(r, 5000));
-    }
+    const lastStatus = await waitForCloudRunDeploy(envId, serviceName);
     if (!lastStatus || lastStatus === "creating" || lastStatus === "deploying") {
-      throw new Error(`build still ${lastStatus || "starting"} after ${maxWaitMs / 1000}s`);
+      throw new Error(`build still ${lastStatus || "starting"} after timeout`);
     }
     if (lastStatus !== "normal") {
       console.log(yellow(`build status=${lastStatus}, continuing anyway...`));
@@ -1611,14 +1690,22 @@ ${bold("AUTHENTICATION")}
 ${bold("AGENT COMMANDS")}
   agent:create  -n <name> [options]           Create and deploy a new agent
     -n, --name <name>           Agent name (required)
+        --type <scf|tcbr>       Compute backend (default: scf)
+                                  scf  = SCF cloud function (~60-90s deploy)
+                                  tcbr = CloudRun container (~3-5min deploy,
+                                         needs Docker image, supports custom
+                                         system libs)
         --model <model>         Model (default: hunyuan-t1-latest)
         --system <prompt>       System prompt
     -f, --file <path>           Load config from YAML/JSON file
         --code <path>           Code directory (default: ./packages/agent-runtime)
-        --runtime <rt>          Runtime (default: Nodejs20.19)
+        --runtime <rt>          [scf only] Runtime (default: Nodejs20.19)
+        --service <name>        [tcbr only] Override cloudrun service name
     -e, --env <envId>           CloudBase environment ID
 
-  agent:update  [-i <id>] [options]           Update agent config (~8s, no redeploy)
+  agent:update  [-i <id>] [options]           Update agent config
+                                              (scf: ~8s no redeploy;
+                                               tcbr: ~60-90s rolling redeploy)
         --system <prompt>       Update system prompt
         --model <model>         Update model
     -n, --name <name>           Update agent name
