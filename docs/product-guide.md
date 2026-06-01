@@ -49,34 +49,56 @@ CLOUDBASE_ACCESS_KEY=your-access-key
 
 #### 模型凭证（二选一）
 
-Agent runtime 需要能访问到 LLM。两种方式：
+Agent runtime 需要能访问到 LLM。**推荐用 ModelSpec 在配置里直接声明**，而不是分散到环境变量。
 
-**方式 1（推荐）：用 Anthropic 兼容 endpoint（任意 OpenAI/Claude 兼容代理都行）**
+#### 方式 1（推荐）：在 agent.yaml 用 ModelSpec 对象
 
-在 shell 或 `.env` 中设置：
+`model` 字段既可以是字符串（仅模型 ID，走 CloudBase TokenHub），也可以是完整的 ModelSpec 对象：
 
-```ini
-ANTHROPIC_BASE_URL=https://your-proxy.example.com/anthropic
-ANTHROPIC_AUTH_TOKEN=tp-xxxxxxxxxxxxxxxxxxxxxxxx
-AGENT_MODEL=mimo-v2.5-pro          # 或代理支持的任何模型 ID
+```yaml
+model:
+  id: mimo-v2.5-pro                                        # 模型 ID
+  apiKey: tp-xxxxxxxxxxxxxxxxxxxxxxxx                       # 自带的 API key
+  apiBaseUrl: https://your-proxy.example.com/anthropic     # 自带 endpoint
+  options:                                                  # 可选，透传到底层 provider
+    max_tokens: 4096
 ```
 
-`agent:create` 会把这些自动转发到容器/函数的环境变量里，runtime 会优先使用 `ANTHROPIC_*` 配的 endpoint+token，绕过 CloudBase TokenHub。
-适用于：本地开发、海外模型、自托管 LLM 网关。
+ModelSpec 字段说明（与 kernel 的 `ModelSpec` 接口对齐）：
 
-**方式 2：用 CloudBase TokenHub（混元/DeepSeek 等内置模型）**
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | `string` | 模型 ID，如 `hunyuan-t1-latest` / `deepseek-v3.2` / `gpt-5` |
+| `apiKey` | `string?` | 不传则走 CloudBase 网关代理（计费走平台）；传则用自带 key |
+| `apiBaseUrl` | `string?` | 自带 key 时的 endpoint（任意 Anthropic-compatible 代理） |
+| `options` | `Record<string, unknown>?` | 透传到底层 provider 的额外选项 |
 
-在 [TokenHub 控制台](https://console.cloud.tencent.com/tokenhub) 创建 API key，导出：
+只用 ID 字符串的简写形式（适用于平台模型，如混元 / DeepSeek）：
+
+```yaml
+model: hunyuan-t1-latest
+```
+
+> ModelSpec 写在配置里之后，agent:create / agent:update 都会把它通过 `AGENT_CONFIG_B64` 整体传给 runtime；
+> **不需要**再去设 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `AGENT_MODEL` 环境变量。
+
+#### 方式 2：用 CloudBase TokenHub（仅 ID 字符串场景）
+
+如果你的 `model` 是字符串（如 `hunyuan-t1-latest` / `deepseek-v3.2`），runtime 会自动走 CloudBase TokenHub。
+在 [TokenHub 控制台](https://console.cloud.tencent.com/tokenhub) 创建 API key 并设置：
 
 ```ini
 TENCENTCLOUD_TOKENHUB_API_KEY=xxxxxxxx
-# 或者 forward-compatible 别名：
+# 或 forward-compatible 别名：
 CLOUDBASE_API_KEY=xxxxxxxx
 ```
 
-适用于：直接使用 `hunyuan-t1-latest`、`deepseek-v3.2` 等 CloudBase 托管模型。
+#### 方式 3：环境变量兜底（不推荐）
 
-> 不设任何一种时，runtime 会在第一次调用时报错 `No API key found`。
+`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` 仍然受支持，但只作为**最后兜底**：
+仅在 ModelSpec 没有提供 `apiKey` / `apiBaseUrl` 时才会被采纳。生产建议把这些信息写进 `agent.yaml` 的 ModelSpec，配置可读、可审计、可版本化。
+
+> 不设以上任何一种时，runtime 会在第一次调用时报错 `No API key found`。
 
 #### CloudBase 凭证（仅 tcbr 容器需要）
 
@@ -353,7 +375,7 @@ metadata:                         # 自定义元数据（可选）
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
 | `name` | string | ✓ | Agent 名称 |
-| `model` | string | ✓ | 模型。可选：`hunyuan-t1-latest`、`deepseek-v3.2` |
+| `model` | string \| ModelSpec | ✓ | 模型 ID（字符串）或完整 ModelSpec 对象（带 `apiKey` / `apiBaseUrl` / `options`）。详见上文「模型凭证」 |
 | `system` | string | ✓ | System prompt |
 | `tools` | array | - | 工具配置 |
 | `mcp_servers` | array | - | MCP 服务器声明 |

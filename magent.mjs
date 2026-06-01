@@ -595,6 +595,37 @@ async function waitForCloudRunDeploy(envId, serviceName, { maxWaitMs = 10 * 60 *
   return lastStatus;
 }
 
+// Poll a tcbr server-management task until it leaves running/pending state.
+// Used after SubmitServerConfigChangeDiff to wait until the new version is
+// actually serving traffic (not just deployed). DescribeCloudRunDeployRecord
+// reports "normal" as soon as the new version exists, but the LB takes
+// another 30-60s to swap traffic — DescribeServerManageTask tracks the full
+// rollout. Returns the final status (success | failed | timeout).
+async function waitForServerManageTask(envId, serviceName, taskId, { maxWaitMs = 5 * 60 * 1000 } = {}) {
+  if (!taskId) return "skipped";
+  const startedAt = Date.now();
+  let lastStatus = "";
+  while (Date.now() - startedAt < maxWaitMs) {
+    try {
+      const detail = await callTcbCloudApi({
+        action: "DescribeServerManageTask",
+        payload: { EnvId: envId, ServerName: serviceName, TaskId: taskId },
+        service: "tcbr",
+        version: "2022-02-17",
+      });
+      // Response shape varies; common fields: Status / TaskStatus, Success / Failed.
+      lastStatus = detail.Status ?? detail.TaskStatus ?? lastStatus;
+      if (lastStatus && lastStatus !== "running" && lastStatus !== "pending") {
+        return lastStatus;
+      }
+    } catch {
+      // transient — retry
+    }
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  return lastStatus || "timeout";
+}
+
 async function acpCall(url, method, params = {}) {
   const res = await fetch(url, {
     method:  "POST",
@@ -1021,15 +1052,19 @@ const COMMANDS = {
     const envId  = requireEnvId(args);
     const apiKey = args["api-key"] ?? process.env.CLOUDBASE_ACCESS_KEY ?? "";
 
-    // Fetch current config from running agent
-    let currentConfig = {};
+    // Fetch current config from running agent. We need it so that partial
+    // updates (e.g. --system foo with everything else preserved) don't blow
+    // away unrelated fields. ACP `initialize` is the only public way to
+    // read the config back; if it's down (e.g. mid-redeploy on tcbr), we
+    // retry once and then refuse to proceed unless --file supplies a full
+    // config — silently filling in 'open-managed-agent' / 'hunyuan-t1-latest'
+    // would corrupt the agent's identity, which has bitten us before.
+    let currentConfig = null;
     const agentUrl = args.url ??
       `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}/acp`;
-
-    try {
-      process.stdout.write(dim("Fetching current config... "));
-      const initRes  = await fetch(agentUrl, {
-        method:  "POST",
+    const fetchCurrent = async () => {
+      const initRes = await fetch(agentUrl, {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
@@ -1041,13 +1076,26 @@ const COMMANDS = {
       });
       const initData = await initRes.json();
       if (initData.result?.agentConfig) {
-        currentConfig = initData.result.agentConfig;
-        if (initData.result.agentInfo?.name)  currentConfig.name        = initData.result.agentInfo.name;
-        if (initData.result.agentInfo?.title) currentConfig.description = initData.result.agentInfo.title;
+        const cfg = { ...initData.result.agentConfig };
+        if (initData.result.agentInfo?.name) cfg.name = initData.result.agentInfo.name;
+        if (initData.result.agentInfo?.title) cfg.description = initData.result.agentInfo.title;
+        return cfg;
       }
-      console.log(green("OK"));
+      return null;
+    };
+
+    process.stdout.write(dim("Fetching current config... "));
+    try {
+      currentConfig = await fetchCurrent();
     } catch {
-      console.log(yellow("(could not fetch, starting fresh)"));
+      // first attempt failed — pause and retry once
+      await new Promise((r) => setTimeout(r, 5000));
+      try { currentConfig = await fetchCurrent(); } catch { /* fall through */ }
+    }
+    if (currentConfig) {
+      console.log(green("OK"));
+    } else {
+      console.log(yellow("not available"));
     }
 
     // Collect updates
@@ -1081,16 +1129,34 @@ const COMMANDS = {
       return;
     }
 
-    const merged = { ...currentConfig, ...updates };
-    if (!merged.name)   merged.name   = "open-managed-agent";
-    if (!merged.model)  merged.model  = "hunyuan-t1-latest";
-    if (!merged.system) merged.system = "You are a helpful assistant.";
+    // Merge: file/CLI updates over current config. If we never got the
+    // current config, the caller has to supply a full one via --file, or
+    // the partial update will be missing required fields.
+    const merged = { ...(currentConfig ?? {}), ...updates };
+    const requireFullConfig = !currentConfig;
+    if (requireFullConfig) {
+      const missing = [];
+      if (!merged.name) missing.push("name");
+      if (!merged.model) missing.push("model");
+      if (!merged.system) missing.push("system");
+      if (missing.length > 0) {
+        throw new Error(
+          `Could not read the agent's current config (initialize failed). ` +
+          `Cannot fall back to defaults — that would silently overwrite the ` +
+          `agent's identity. Provide a full config via --file (must include ${missing.join(", ")}) ` +
+          `or wait for the agent to come back online and retry.`,
+        );
+      }
+    }
 
+    const modelDisplay = typeof merged.model === "string"
+      ? merged.model
+      : `${merged.model?.id ?? "?"}${merged.model?.apiBaseUrl ? ` @ ${merged.model.apiBaseUrl}` : ""}`;
     const configJson = JSON.stringify(merged);
 
     console.log(dim(`\nUpdated config (${configJson.length} bytes):`));
     console.log(dim(`  name:        ${merged.name}`));
-    console.log(dim(`  model:       ${merged.model}`));
+    console.log(dim(`  model:       ${modelDisplay}`));
     console.log(dim(`  system:      ${merged.system?.slice(0, 60)}${merged.system?.length > 60 ? "..." : ""}`));
     console.log(dim(`  tools:       ${merged.tools?.length ?? 0} items`));
     console.log(dim(`  mcp_servers: ${merged.mcp_servers?.length ?? 0} items`));
@@ -1114,8 +1180,9 @@ const COMMANDS = {
         console.log(dim("(using short-lived tcb-login STS creds — they will expire in ~2h)"));
       }
       process.stdout.write(dim("Applying via SubmitServerConfigChangeDiff (tcbr)... "));
+      let taskId;
       try {
-        await callTcbCloudApi({
+        const submitResp = await callTcbCloudApi({
           action: "SubmitServerConfigChangeDiff",
           payload: {
             EnvId: envId,
@@ -1125,17 +1192,32 @@ const COMMANDS = {
           service: "tcbr",
           version: "2022-02-17",
         });
-        console.log(green("submitted"));
+        taskId = submitResp.TaskId;
+        console.log(green(`submitted (TaskId=${taskId})`));
       } catch (err) {
         throw new Error(`SubmitServerConfigChangeDiff failed: ${err.message}`);
       }
 
-      process.stdout.write(dim("Waiting for redeploy to finish... "));
+      process.stdout.write(dim("Waiting for new version to deploy... "));
       const finalStatus = await waitForCloudRunDeploy(envId, serviceId);
       if (finalStatus === "normal") {
         console.log(green("ready"));
       } else {
         console.log(yellow(`status=${finalStatus || "timeout"}, agent may still be coming up`));
+      }
+
+      // Wait until the rollout task fully finishes (traffic switched). The
+      // deploy-record API reports "normal" as soon as the new version exists
+      // but the LB takes another 30-60s to swap traffic. Without this poll,
+      // an immediate `magent run` after update can hit the old replica.
+      process.stdout.write(dim("Waiting for traffic switchover... "));
+      const taskStatus = await waitForServerManageTask(envId, serviceId, taskId);
+      if (taskStatus === "success" || taskStatus === "succeed" || taskStatus === "successful") {
+        console.log(green("done"));
+      } else if (taskStatus === "skipped") {
+        console.log(dim("(no task id, skipping)"));
+      } else {
+        console.log(yellow(`status=${taskStatus} — new replicas may still be rolling`));
       }
       console.log(green(`\n✅ Agent ${agentId} updated successfully.`));
       return;
