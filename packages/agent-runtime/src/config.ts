@@ -68,9 +68,23 @@ export interface Skill {
   source: string;
 }
 
+export interface ModelSpec {
+  /** Model ID, e.g. 'hunyuan-t1-latest' / 'deepseek-v3.2' / 'gpt-5' */
+  id: string;
+  /** Optional. When omitted, the runtime routes through CloudBase TokenHub
+   *  (platform billing). When set, requests use this key directly. */
+  apiKey?: string;
+  /** Endpoint to use with `apiKey` (e.g. an Anthropic-compatible proxy). */
+  apiBaseUrl?: string;
+  /** Provider-specific options forwarded by the kernel. */
+  options?: Record<string, unknown>;
+}
+
 export interface AgentConfig {
   name: string;
-  model: string;
+  /** Model can be a bare ID string (CloudBase-hosted model) or a ModelSpec
+   *  object that brings its own key + endpoint. */
+  model: string | ModelSpec;
   system: string;
   description?: string;
   tools?: AgentTool[];
@@ -290,19 +304,25 @@ export function toKernelAgentConfig(
   }
 
   // ── Model spec ──────────────────────────────────────────────────────────
-  // Allow overriding the upstream LLM gateway via env vars. Useful when running
-  // outside the CloudBase platform — point to any Anthropic-compatible endpoint.
-  //   ANTHROPIC_AUTH_TOKEN  / ANTHROPIC_API_KEY  → apiKey
-  //   ANTHROPIC_BASE_URL                          → apiBaseUrl
-  const overrideKey = process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY;
-  const overrideBase = process.env.ANTHROPIC_BASE_URL;
-  const model = overrideKey || overrideBase
-    ? {
-        id: config.model,
-        ...(overrideKey ? { apiKey: overrideKey } : {}),
-        ...(overrideBase ? { apiBaseUrl: overrideBase } : {}),
-      }
-    : config.model;
+  // Canonical config form is ModelSpec ({id, apiKey, apiBaseUrl, options}) in
+  // agent.yaml. A bare string in `model` is auto-promoted to {id: <string>}
+  // and routed through CloudBase TokenHub.
+  //
+  // ANTHROPIC_* env vars are kept as a *last-resort* override for ops/debug
+  // scenarios where you can't (or don't want to) edit agent.yaml — they only
+  // fill in fields the config didn't already supply, so YAML wins on conflict.
+  const baseModel: ModelSpec = typeof config.model === "string"
+    ? { id: config.model }
+    : { ...config.model };
+  const envKey = process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY;
+  const envBase = process.env.ANTHROPIC_BASE_URL;
+  if (envKey && !baseModel.apiKey) baseModel.apiKey = envKey;
+  if (envBase && !baseModel.apiBaseUrl) baseModel.apiBaseUrl = envBase;
+  // Pass the bare ID through if no key/url ended up being set — the kernel
+  // can still recognize a hosted model by name.
+  const model: string | ModelSpec = baseModel.apiKey || baseModel.apiBaseUrl || baseModel.options
+    ? baseModel
+    : baseModel.id;
 
   // ── Sandbox ─────────────────────────────────────────────────────────────
   // AGS sandbox needs TCB_API_KEY (data plane) + TCB_SECRET_* (control plane).
@@ -357,8 +377,13 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
     try {
       const config = JSON.parse(rawConfig) as AgentConfig;
       console.log(`[Config] Loaded from AGENT_CONFIG env var`);
-      // Individual env vars still override scalar fields
-      if (process.env.AGENT_MODEL) config.model = process.env.AGENT_MODEL;
+      // AGENT_MODEL only patches the model ID, preserving any ModelSpec
+      // fields (apiKey, apiBaseUrl, options) the config already set.
+      if (process.env.AGENT_MODEL) {
+        config.model = typeof config.model === "object"
+          ? { ...config.model, id: process.env.AGENT_MODEL }
+          : process.env.AGENT_MODEL;
+      }
       if (process.env.AGENT_SYSTEM) config.system = decodeURIComponent(process.env.AGENT_SYSTEM);
       if (process.env.AGENT_NAME) config.name = process.env.AGENT_NAME;
       return config;
@@ -381,8 +406,12 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
       const config = parseYaml(content) as AgentConfig;
       console.log(`[Config] Loaded agent config from: ${p}`);
 
-      // Env vars override simple fields
-      if (process.env.AGENT_MODEL) config.model = process.env.AGENT_MODEL;
+      // AGENT_MODEL only patches the model ID, preserving ModelSpec fields.
+      if (process.env.AGENT_MODEL) {
+        config.model = typeof config.model === "object"
+          ? { ...config.model, id: process.env.AGENT_MODEL }
+          : process.env.AGENT_MODEL;
+      }
       if (process.env.AGENT_SYSTEM) config.system = decodeURIComponent(process.env.AGENT_SYSTEM);
       if (process.env.AGENT_NAME) config.name = process.env.AGENT_NAME;
 
