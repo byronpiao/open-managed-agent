@@ -541,13 +541,24 @@ function buildCloudRunEnvParam({ envId, configB64 }) {
     CLOUDBASE_ENV_ID: envId,
     AGENT_CONFIG_B64: configB64,
   };
-  for (const k of [
-    "OAK_DISABLE_SANDBOX",
-    "OAK_USE_MEMORY_STORE",
-    "TCB_API_KEY",
-  ]) {
-    if (process.env[k]) envMap[k] = process.env[k];
-  }
+  // Forward TCB_API_KEY when set — enables the AGS Sandbox (requires a
+  // long-lived TokenHub JWT, not the STS creds used for DB access).
+  if (process.env.TCB_API_KEY) envMap.TCB_API_KEY = process.env.TCB_API_KEY;
+
+  // OAK_DISABLE_SANDBOX: when TCB_API_KEY is not available the runtime would
+  // crash on first prompt ("AgsStatefulSandbox requires TCB_API_KEY"). Auto-
+  // disable sandbox so the agent is reachable without a TokenHub key.
+  // The operator can override by explicitly setting TCB_API_KEY before deploy.
+  const hasTcbApiKey = !!(process.env.TCB_API_KEY);
+  if (!hasTcbApiKey) envMap.OAK_DISABLE_SANDBOX = "1";
+  // OAK_USE_MEMORY_STORE: fall back to in-process session storage when there
+  // are no CloudBase DB credentials; avoids a MISSING_CREDENTIALS crash on
+  // session create. Overridden to "0" if TCB_SECRET_ID is available.
+  const hasDbCreds = !!(process.env.TCB_SECRET_ID && process.env.TCB_SECRET_KEY);
+  // Explicit shell overrides still take precedence.
+  if (process.env.OAK_DISABLE_SANDBOX !== undefined) envMap.OAK_DISABLE_SANDBOX = process.env.OAK_DISABLE_SANDBOX;
+  if (process.env.OAK_USE_MEMORY_STORE !== undefined) envMap.OAK_USE_MEMORY_STORE = process.env.OAK_USE_MEMORY_STORE;
+  else if (!hasDbCreds) envMap.OAK_USE_MEMORY_STORE = "1";
   let credsSource = "";
   if (process.env.TCB_SECRET_ID && process.env.TCB_SECRET_KEY) {
     envMap.TCB_SECRET_ID = process.env.TCB_SECRET_ID;
