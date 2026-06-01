@@ -605,12 +605,14 @@ async function waitForCloudRunDeploy(envId, serviceName, { maxWaitMs = 10 * 60 *
   return lastStatus;
 }
 
-// Poll the agent's own `initialize` endpoint until its echoed agentConfig.system
-// equals the value we just submitted. This is the most accurate "new config
-// is actually serving traffic" signal — TCBR's deploy-pipeline status reaches
-// "finished" before the LB has fully drained old pods (~90s gap), so without
-// this poll an immediate `magent run` after update can hit the old replica.
-async function waitForConfigLive({ agentUrl, expectedSystem, maxWaitMs = 5 * 60 * 1000 }) {
+// Poll the agent's own `initialize` endpoint until its echoed
+// agentConfig.metadata.__deployedAt matches the timestamp we stamped when
+// building the new config. This is the most accurate "new config is
+// actually serving traffic" signal — TCBR's deploy-pipeline status reaches
+// "finished" before the LB has fully drained old pods (~90s gap), and
+// comparing system prompt alone fails when the system prompt didn't change
+// between updates. The __deployedAt timestamp is always unique per update.
+async function waitForConfigLive({ agentUrl, expectedDeployedAt, maxWaitMs = 5 * 60 * 1000 }) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < maxWaitMs) {
     try {
@@ -619,7 +621,7 @@ async function waitForConfigLive({ agentUrl, expectedSystem, maxWaitMs = 5 * 60 
         clientCapabilities: {},
         clientInfo: { name: "magent", version: "0.1.0" },
       });
-      if (result?.agentConfig?.system === expectedSystem) return true;
+      if (result?.agentConfig?.metadata?.__deployedAt === expectedDeployedAt) return true;
     } catch {
       // transient — agent might be in mid-roll, retry
     }
@@ -1165,10 +1167,17 @@ const COMMANDS = {
     // tcb agent update doesn't support tcbr (and there's no in-place env
     // mutation API on cloudrun).
     const { agentType, serviceId } = await lookupAgent(envId, agentId);
-    const configBase64 = Buffer.from(configJson).toString("base64");
 
     if (agentType === "tcbr") {
       if (!serviceId) throw new Error(`tcbr agent ${agentId} has no ServiceId`);
+      // Stamp a deployment timestamp into the config's metadata so that
+      // waitForConfigLive has a unique marker even when the system prompt
+      // hasn't changed between updates. Without this marker the poll exits
+      // immediately (old pod has same system), falsely reporting "done" before
+      // the new pod with updated EnvParam has even started.
+      const configWithTs = { ...merged, metadata: { ...(merged.metadata ?? {}), __deployedAt: String(Date.now()) } };
+      const configBase64 = Buffer.from(JSON.stringify(configWithTs)).toString("base64");
+      const expectedDeployedAt = configWithTs.metadata.__deployedAt;
       const { envMap, credsSource } = buildCloudRunEnvParam({ envId, configB64: configBase64 });
       if (!credsSource) {
         console.log(yellow("⚠️  no TCB_SECRET_* found in shell or tcb login — agent may fail with MISSING_CREDENTIALS"));
@@ -1203,16 +1212,11 @@ const COMMANDS = {
       }
 
       // Wait until the new config is actually in effect on the live agent.
-      // The deploy-record API reports "normal" as soon as the new version
-      // exists, and the manage-task API reports "finished" when the release
-      // pipeline ends — but the LB still takes ~90s to drain traffic from
-      // old pods. The most accurate "new config is live" signal is to poll
-      // the agent's own `initialize` endpoint and compare its echoed
-      // agentConfig.system to what we just submitted: when they match, the
-      // request landed on a new pod and the rollout is effectively done.
+      // We stamp a __deployedAt timestamp into metadata so this comparison is
+      // always unique — even when the system prompt is identical between updates.
       process.stdout.write(dim("Waiting for traffic switchover... "));
       const matched = await waitForConfigLive({
-        agentUrl, expectedSystem: merged.system, maxWaitMs: 5 * 60 * 1000,
+        agentUrl, expectedDeployedAt, maxWaitMs: 5 * 60 * 1000,
       });
       if (matched) {
         console.log(green("done"));
@@ -1223,7 +1227,9 @@ const COMMANDS = {
       return;
     }
 
-    // SCF (or unknown — fall through to legacy path).
+    // SCF (or unknown — fall through to legacy path). For SCF the config
+    // is passed via env var directly; tcb agent update handles the deploy.
+    const configBase64 = Buffer.from(configJson).toString("base64");
     process.stdout.write("Applying via tcb agent update... ");
     try {
       const envStr = `CLOUDBASE_ENV_ID=${envId},AGENT_CONFIG_B64=${configBase64}`;
