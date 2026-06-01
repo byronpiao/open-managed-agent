@@ -168,6 +168,12 @@ function handleInitialize(_params: Record<string, unknown>, config: AgentConfig)
       title: config.description ?? "OpenManagedAgent",
       version: "0.1.0",
     },
+    // Echo the loaded AgentConfig back so `magent agent:update` can fetch
+    // it and patch only the fields the user touched (instead of falling
+    // back to silent defaults that would corrupt the agent's identity).
+    // The trust boundary is the gateway access_token — anyone who can
+    // call initialize already has full agent access.
+    agentConfig: config,
     authMethods: [],
     supportedModels: [],
   };

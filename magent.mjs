@@ -595,35 +595,27 @@ async function waitForCloudRunDeploy(envId, serviceName, { maxWaitMs = 10 * 60 *
   return lastStatus;
 }
 
-// Poll a tcbr server-management task until it leaves running/pending state.
-// Used after SubmitServerConfigChangeDiff to wait until the new version is
-// actually serving traffic (not just deployed). DescribeCloudRunDeployRecord
-// reports "normal" as soon as the new version exists, but the LB takes
-// another 30-60s to swap traffic — DescribeServerManageTask tracks the full
-// rollout. Returns the final status (success | failed | timeout).
-async function waitForServerManageTask(envId, serviceName, taskId, { maxWaitMs = 5 * 60 * 1000 } = {}) {
-  if (!taskId) return "skipped";
+// Poll the agent's own `initialize` endpoint until its echoed agentConfig.system
+// equals the value we just submitted. This is the most accurate "new config
+// is actually serving traffic" signal — TCBR's deploy-pipeline status reaches
+// "finished" before the LB has fully drained old pods (~90s gap), so without
+// this poll an immediate `magent run` after update can hit the old replica.
+async function waitForConfigLive({ agentUrl, expectedSystem, maxWaitMs = 5 * 60 * 1000 }) {
   const startedAt = Date.now();
-  let lastStatus = "";
   while (Date.now() - startedAt < maxWaitMs) {
     try {
-      const detail = await callTcbCloudApi({
-        action: "DescribeServerManageTask",
-        payload: { EnvId: envId, ServerName: serviceName, TaskId: taskId },
-        service: "tcbr",
-        version: "2022-02-17",
+      const result = await acpCall(agentUrl, "initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+        clientInfo: { name: "magent", version: "0.1.0" },
       });
-      // Response shape varies; common fields: Status / TaskStatus, Success / Failed.
-      lastStatus = detail.Status ?? detail.TaskStatus ?? lastStatus;
-      if (lastStatus && lastStatus !== "running" && lastStatus !== "pending") {
-        return lastStatus;
-      }
+      if (result?.agentConfig?.system === expectedSystem) return true;
     } catch {
-      // transient — retry
+      // transient — agent might be in mid-roll, retry
     }
     await new Promise((r) => setTimeout(r, 5000));
   }
-  return lastStatus || "timeout";
+  return false;
 }
 
 async function acpCall(url, method, params = {}) {
@@ -901,7 +893,7 @@ const COMMANDS = {
 
     console.log(bold("Creating agent..."));
     console.log(dim(`  name:    ${config.name}`));
-    console.log(dim(`  model:   ${config.model}`));
+    console.log(dim(`  model:   ${typeof config.model === "string" ? config.model : `${config.model?.id ?? "?"}${config.model?.apiBaseUrl ? ` @ ${config.model.apiBaseUrl}` : ""}`}`));
     console.log(dim(`  code:    ${code}`));
     console.log(dim(`  runtime: ${runtime}`));
     console.log();
@@ -1050,7 +1042,6 @@ const COMMANDS = {
     const agentId = args.id ?? process.env.CLOUDBASE_AGENT_ID ?? "";
     if (!agentId) throw new Error("-i / --id is required (or set CLOUDBASE_AGENT_ID)");
     const envId  = requireEnvId(args);
-    const apiKey = args["api-key"] ?? process.env.CLOUDBASE_ACCESS_KEY ?? "";
 
     // Fetch current config from running agent. We need it so that partial
     // updates (e.g. --system foo with everything else preserved) don't blow
@@ -1060,28 +1051,23 @@ const COMMANDS = {
     // config — silently filling in 'open-managed-agent' / 'hunyuan-t1-latest'
     // would corrupt the agent's identity, which has bitten us before.
     let currentConfig = null;
-    const agentUrl = args.url ??
-      `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}/acp`;
+    // getAcpUrl expects --agent; we have --id. Bridge with a fresh args copy.
+    const agentUrl = args.url ?? getAcpUrl({ ...args, agent: agentId });
     const fetchCurrent = async () => {
-      const initRes = await fetch(agentUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0", id: 1, method: "initialize",
-          params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "magent", version: "0.1.0" } },
-        }),
+      // Use acpCall so we pick up the same auth fallback as `magent run`
+      // (Bearer from CLOUDBASE_ACCESS_KEY, else mint access_token via tcb
+      // login STS). Without that, the gateway 401s and we'd silently treat
+      // it as "no config".
+      const result = await acpCall(agentUrl, "initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+        clientInfo: { name: "magent", version: "0.1.0" },
       });
-      const initData = await initRes.json();
-      if (initData.result?.agentConfig) {
-        const cfg = { ...initData.result.agentConfig };
-        if (initData.result.agentInfo?.name) cfg.name = initData.result.agentInfo.name;
-        if (initData.result.agentInfo?.title) cfg.description = initData.result.agentInfo.title;
-        return cfg;
-      }
-      return null;
+      if (!result?.agentConfig) return null;
+      const cfg = { ...result.agentConfig };
+      if (result.agentInfo?.name) cfg.name = result.agentInfo.name;
+      if (result.agentInfo?.title) cfg.description = result.agentInfo.title;
+      return cfg;
     };
 
     process.stdout.write(dim("Fetching current config... "));
@@ -1206,18 +1192,22 @@ const COMMANDS = {
         console.log(yellow(`status=${finalStatus || "timeout"}, agent may still be coming up`));
       }
 
-      // Wait until the rollout task fully finishes (traffic switched). The
-      // deploy-record API reports "normal" as soon as the new version exists
-      // but the LB takes another 30-60s to swap traffic. Without this poll,
-      // an immediate `magent run` after update can hit the old replica.
+      // Wait until the new config is actually in effect on the live agent.
+      // The deploy-record API reports "normal" as soon as the new version
+      // exists, and the manage-task API reports "finished" when the release
+      // pipeline ends — but the LB still takes ~90s to drain traffic from
+      // old pods. The most accurate "new config is live" signal is to poll
+      // the agent's own `initialize` endpoint and compare its echoed
+      // agentConfig.system to what we just submitted: when they match, the
+      // request landed on a new pod and the rollout is effectively done.
       process.stdout.write(dim("Waiting for traffic switchover... "));
-      const taskStatus = await waitForServerManageTask(envId, serviceId, taskId);
-      if (taskStatus === "success" || taskStatus === "succeed" || taskStatus === "successful") {
+      const matched = await waitForConfigLive({
+        agentUrl, expectedSystem: merged.system, maxWaitMs: 5 * 60 * 1000,
+      });
+      if (matched) {
         console.log(green("done"));
-      } else if (taskStatus === "skipped") {
-        console.log(dim("(no task id, skipping)"));
       } else {
-        console.log(yellow(`status=${taskStatus} — new replicas may still be rolling`));
+        console.log(yellow("timeout — new config may still be rolling out"));
       }
       console.log(green(`\n✅ Agent ${agentId} updated successfully.`));
       return;
@@ -1364,7 +1354,7 @@ const COMMANDS = {
 
     console.log(bold("Creating cloud-run agent..."));
     console.log(dim(`  name:        ${config.name}`));
-    console.log(dim(`  model:       ${config.model}`));
+    console.log(dim(`  model:       ${typeof config.model === "string" ? config.model : `${config.model?.id ?? "?"}${config.model?.apiBaseUrl ? ` @ ${config.model.apiBaseUrl}` : ""}`}`));
     console.log(dim(`  service:     ${serviceName}`));
     console.log(dim(`  envId:       ${envId}`));
     console.log(dim(`  code:        ${code}`));
