@@ -38,16 +38,6 @@ async function main() {
     res.json({ ok: true, name: config.name, model: config.model });
   });
 
-  // Log whether the uid-shim applied its kernel patch (for SCF diagnosis).
-  try {
-    const { readFileSync, existsSync } = await import("fs");
-    const kPath = "/var/user/node_modules/@cloudbase/open-agent-kernel/dist/index.js";
-    if (existsSync(kPath)) {
-      const first100 = readFileSync(kPath, "utf8").slice(0, 100);
-      console.log(`[index] kernel first bytes: ${first100.replace(/\n/g, " ").slice(0, 80)}`);
-    }
-  } catch {}
-
   mountAcpEndpoint(app, config);
 
   app.listen(port, () => {
