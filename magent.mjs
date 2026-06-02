@@ -986,6 +986,18 @@ const COMMANDS = {
         `npm install --no-save --force --silent @anthropic-ai/claude-agent-sdk-linux-x64@${sdkVersion} 2>/dev/null`,
         { cwd: deployDir, encoding: "utf-8", timeout: 120000 },
       );
+      // Patch the kernel's package.json: remove the bad `exports.import` that
+      // points to the TypeScript source instead of the compiled dist.
+      // Node follows `exports` over `main` in ESM mode, and `.ts` files
+      // cause ERR_UNKNOWN_FILE_EXTENSION at runtime.
+      const kernelPkgPath = resolve(deployDir, "node_modules", "@cloudbase", "open-agent-kernel", "package.json");
+      if (existsSync(kernelPkgPath)) {
+        const kernelPkg = JSON.parse(readFileSync(kernelPkgPath, "utf-8"));
+        if (kernelPkg.exports?.["."]?.import?.endsWith(".ts")) {
+          kernelPkg.exports["."].import = kernelPkg.main ?? "./dist/index.js";
+          writeFileSync(kernelPkgPath, JSON.stringify(kernelPkg, null, 2), "utf-8");
+        }
+      }
       console.log(green("OK"));
       actualCode = deployDir;
     } catch (err) {
