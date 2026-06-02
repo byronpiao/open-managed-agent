@@ -124,6 +124,52 @@ export class SessionsResource {
     yield* this.acp.sessionPrompt(sessionId, text);
   }
 
+  /**
+   * Resume a paused turn by submitting a tool_result for a pending client-side
+   * tool call. Use after the previous prompt() generator yielded a `done`
+   * event with stopReason='tool_use'.
+   */
+  promptToolResult(
+    sessionId: string,
+    toolUseId: string,
+    content: string,
+    isError = false,
+  ): AsyncGenerator<AcpStreamEvent> {
+    return this._promptToolResult(sessionId, toolUseId, content, isError);
+  }
+
+  private async *_promptToolResult(
+    sessionId: string,
+    toolUseId: string,
+    content: string,
+    isError: boolean,
+  ): AsyncGenerator<AcpStreamEvent> {
+    await this.ensureInit();
+    yield* this.acp.sessionPromptToolResult(sessionId, toolUseId, content, isError);
+  }
+
+  /**
+   * Resume a paused turn by submitting a permission decision for a pending
+   * approval request (stopReason='awaiting_permission'). `decision` is the
+   * optionId (e.g. 'allow-once', 'reject-once') or 'cancelled'.
+   */
+  promptPermission(
+    sessionId: string,
+    toolUseId: string,
+    decision: string,
+  ): AsyncGenerator<AcpStreamEvent> {
+    return this._promptPermission(sessionId, toolUseId, decision);
+  }
+
+  private async *_promptPermission(
+    sessionId: string,
+    toolUseId: string,
+    decision: string,
+  ): AsyncGenerator<AcpStreamEvent> {
+    await this.ensureInit();
+    yield* this.acp.sessionPromptPermission(sessionId, toolUseId, decision);
+  }
+
   // ── cancel ────────────────────────────────────────────────────────────────
 
   async cancel(sessionId: string): Promise<void> {
