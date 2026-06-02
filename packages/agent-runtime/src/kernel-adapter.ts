@@ -64,8 +64,10 @@ export async function getOrCreateKernelSession(
   opts: { userId?: string; isNew?: boolean } = {},
 ): Promise<KernelSession> {
   const cached = sessionPool.get(acpSessionId);
-  console.log(`[KernelAdapter] getOrCreateKernelSession uid=${process.getuid?.()} cached=${!!cached} for ${acpSessionId}`);
   if (cached) return cached;
+
+  const agent = getKernelAgent(config);
+  const userId = opts.userId ?? "anonymous";
 
   let session: KernelSession;
   if (opts.isNew) {
@@ -177,6 +179,12 @@ function tryParseClientToolPending(output: unknown): ClientToolPendingPayload | 
   }
 }
 
+/** Strip 'mcp__<server>__' prefix added by kernel's MCP packaging. */
+function stripMcpPrefix(toolName: string): string {
+  const m = toolName.match(/^mcp__[^_]+__(.+)$/);
+  return m ? m[1] : toolName;
+}
+
 // ── Stream pump ──────────────────────────────────────────────────────────────
 
 interface SseSink {
@@ -286,11 +294,18 @@ export async function pumpEvents(
       case "tool_result": {
         // Intercept client-side tool sentinel — don't surface as failed; the
         // turn will end with stopReason='tool_use' and a pendingToolUse hint.
+        // We use the SDK-supplied toolUseId from the event itself (the
+        // sentinel payload's own toolUseId is empty because the wrapping MCP
+        // handler doesn't have access to ctx.toolUseId — this is fine; the
+        // event's toolUseId is the canonical id the model emitted).
         const sentinel = tryParseClientToolPending(e.output);
         if (sentinel) {
+          // Strip 'mcp__kernel__' prefix from toolName if present (when the
+          // user-defined tool was wrapped as an MCP server tool inside kernel).
+          const toolName = sentinel.toolName || stripMcpPrefix(e.toolName);
           pendingClientTool = {
-            toolUseId: sentinel.toolUseId,
-            toolName: sentinel.toolName,
+            toolUseId: e.toolUseId,
+            toolName,
             input: sentinel.input,
           };
           break;
@@ -396,9 +411,6 @@ export async function pumpEvents(
     }
   }
   console.log(`[KernelAdapter] pumpEvents done: total=${eventCount}`);
-  if (eventCount === 0) {
-    console.error(`[KernelAdapter] pumpEvents: ZERO events from session.send() — kernel turn completed with no output`);
-  }
   if (pendingClientTool) {
     return { stopReason: "tool_use", pendingToolUse: pendingClientTool };
   }

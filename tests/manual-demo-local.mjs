@@ -23,8 +23,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import ManagedAgents from "../packages/sdk/dist/index.js";
 
-const target = process.argv[2] || "/etc/hostname";
-const baseURL = process.env.RUNTIME_URL || "http://localhost:9000";
+const target = process.argv[2] || "/etc/shells";
+const baseURL = process.env.RUNTIME_URL || "http://localhost:9001";
 
 const dim   = (s) => `\x1b[2m${s}\x1b[0m`;
 const cyan  = (s) => `\x1b[36m${s}\x1b[0m`;
