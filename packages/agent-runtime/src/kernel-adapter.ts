@@ -230,8 +230,21 @@ export async function pumpEvents(
   ctx: StreamCtx,
 ): Promise<PumpResult> {
   let pendingClientTool: PendingToolUse | undefined;
+  let eventCount = 0;
 
   for await (const e of events) {
+    eventCount++;
+    // Write diagnostic log as SSE event so it's visible in magent run output.
+    if (e.type !== "message_delta") {
+      ctx.sse.write({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: ctx.acpSessionId,
+          update: { sessionUpdate: "log", level: "debug", message: `[pumpEvents] #${eventCount} type=${e.type}`, timestamp: Date.now() },
+        },
+      });
+    }
     switch (e.type) {
       case "message_delta": {
         ctx.sse.write({

@@ -936,11 +936,12 @@ const COMMANDS = {
     } else {
       scfEnvMap.OAK_DISABLE_SANDBOX = "1";
     }
-    // SCF processes may be replaced between session/new and session/prompt
-    // (each invocation can be a fresh cold start). Force in-memory store to
-    // keep session state within the same process lifetime. This means sessions
-    // are lost on restart, but avoids NoSQL auth issues in SCF's built-in role.
-    scfEnvMap.OAK_USE_MEMORY_STORE = "1";
+    // SCF is stateless (each invocation may be a fresh process). Sessions must
+    // be persisted in CloudBase NoSQL so session/new and session/prompt can
+    // land on different processes. SCF auto-injects TENCENTCLOUD_SECRETID/KEY/
+    // SESSIONTOKEN which the kernel's CloudBaseDbDriver uses for DB access.
+    // Do NOT set OAK_USE_MEMORY_STORE here — in-memory store breaks across
+    // SCF invocations.
     const envVars = Object.entries(scfEnvMap).map(([k, v]) => `${k}=${v}`).join(",");
 
     console.log(bold("Creating agent..."));
@@ -1346,7 +1347,7 @@ const COMMANDS = {
     } else {
       scfUpdateEnv.OAK_DISABLE_SANDBOX = "1";
     }
-    scfUpdateEnv.OAK_USE_MEMORY_STORE = "1";  // consistent with agent:create
+    // No OAK_USE_MEMORY_STORE — SCF needs NoSQL persistence across invocations.
     const envStr = Object.entries(scfUpdateEnv).map(([k, v]) => `${k}=${v}`).join(",");
     process.stdout.write("Applying via tcb agent update... ");
     try {
