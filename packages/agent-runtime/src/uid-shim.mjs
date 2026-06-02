@@ -4,9 +4,9 @@
 // to run with --dangerously-skip-permissions when it detects uid==0:
 //   "cannot be used with root/sudo privileges for security reasons"
 //
-// Fix: while still root, ensure the claude binary is world-executable,
-// then drop to uid=1001 so child processes (including claude) pass the
-// uid check. This must run before any module import.
+// Fix: while still root, make key paths world-accessible, then drop to
+// uid=1001 so child processes (including claude) pass the uid check.
+// Must run before any module import.
 
 import { execSync } from 'child_process';
 
@@ -15,12 +15,15 @@ if (process.getuid?.() === 0) {
   const GID = 1001;
 
   try {
-    // Ensure claude binary is readable+executable by non-root users.
-    // /var/user is read-only but chmod the binary (which is on the FS layer)
-    // should work from root before dropping privileges.
-    try {
-      execSync('find /var/user/node_modules/@anthropic-ai -name claude -type f -exec chmod 755 {} \\;', { stdio: 'pipe' });
-    } catch {}
+    // Make /var/user itself traversable by uid=1001.
+    try { execSync('chmod o+rx /var/user', { stdio: 'pipe' }); } catch {}
+    // Make claude SDK binary and its parent dirs accessible.
+    // More targeted than recursing all of node_modules.
+    try { execSync('chmod o+rx /var/user/node_modules', { stdio: 'pipe' }); } catch {}
+    try { execSync('chmod -R o+rx /var/user/node_modules/@anthropic-ai', { stdio: 'pipe' }); } catch {}
+    try { execSync('chmod -R o+rx /var/user/node_modules/@cloudbase', { stdio: 'pipe' }); } catch {}
+    // Give world read on the dist directory (index.js and friends).
+    try { execSync('chmod o+rx /var/user/dist', { stdio: 'pipe' }); } catch {}
 
     // Create agent user if needed.
     try { execSync(`getent group agent 2>/dev/null || groupadd --gid ${GID} agent`, { stdio: 'pipe' }); } catch {}
