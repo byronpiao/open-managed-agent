@@ -312,8 +312,7 @@ async function handleSessionPrompt(
 
   const session = await getOrCreateKernelSession(config, sessionId);
 
-  // SCF diagnostic: test the model API directly to verify connectivity
-  // and response format before going through the kernel.
+  // SCF diagnostic: test streaming model API to verify connectivity and format.
   const model = config.model;
   if (typeof model === "object" && model.apiBaseUrl && model.apiKey) {
     try {
@@ -323,17 +322,26 @@ async function handleSessionPrompt(
           "Content-Type": "application/json",
           "x-api-key": model.apiKey,
           "anthropic-version": "2023-06-01",
+          "anthropic-beta": "interleaved-thinking-2025-05-14",
         },
         body: JSON.stringify({
           model: model.id,
-          max_tokens: 10,
+          max_tokens: 16000,
+          thinking: { type: "enabled", budget_tokens: 5000 },
+          stream: true,
           messages: [{ role: "user", content: "hi" }],
         }),
       });
-      const testBody = await testRes.text();
-      console.error(`[direct-test] status=${testRes.status} body=${testBody.slice(0, 200)}`);
+      const streamText = await testRes.text();
+      // Count delta types
+      const textDeltaCount = (streamText.match(/"type":"text_delta"/g) || []).length;
+      const thinkingDeltaCount = (streamText.match(/"type":"thinking_delta"/g) || []).length;
+      console.error(`[direct-stream] status=${testRes.status} len=${streamText.length} text_deltas=${textDeltaCount} thinking_deltas=${thinkingDeltaCount}`);
+      if (textDeltaCount === 0) {
+        console.error(`[direct-stream] NO TEXT DELTAS! first500: ${streamText.slice(0, 500)}`);
+      }
     } catch (e) {
-      console.error(`[direct-test] FAILED: ${(e as Error).message}`);
+      console.error(`[direct-stream] FAILED: ${(e as Error).message}`);
     }
   }
 
