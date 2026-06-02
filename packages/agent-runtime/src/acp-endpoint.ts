@@ -347,8 +347,9 @@ async function handleSessionPrompt(
         .filter((b) => b.type === "text" && typeof b.text === "string")
         .map((b) => b.text!)
         .join("");
-      console.log(`[ACP] session.send userText="${userText.slice(0,50)}" sessionId=${sessionId}`);
+      sse.write({ _diag: "before_send", textLen: userText.length, sessionId });
       events = session.send(userText);
+      sse.write({ _diag: "after_send", eventsType: typeof events });
     }
 
     const result = await pumpEvents(events, session, {

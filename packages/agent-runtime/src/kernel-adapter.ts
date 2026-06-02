@@ -396,7 +396,7 @@ export async function pumpEvents(
         break;
     }
   }
-  console.log(`[KernelAdapter] pumpEvents done: total=${eventCount} textChunks=${eventCount - (eventCount > 0 ? 1 : 0)}`);
+  console.log(`[KernelAdapter] pumpEvents done: total=${eventCount}`);
   if (pendingClientTool) {
     return { stopReason: "tool_use", pendingToolUse: pendingClientTool };
   }
