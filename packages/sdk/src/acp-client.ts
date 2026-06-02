@@ -127,7 +127,19 @@ export class AcpClient {
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        const msg = JSON.parse(trimmed) as Record<string, unknown>;
+        // SSE frames are `data: <payload>`. Strip the prefix; ignore terminator.
+        let payload = trimmed;
+        if (payload.startsWith("data:")) {
+          payload = payload.slice(5).trim();
+        }
+        if (!payload || payload === "[DONE]") continue;
+        let msg: Record<string, unknown>;
+        try {
+          msg = JSON.parse(payload) as Record<string, unknown>;
+        } catch {
+          // Skip non-JSON heartbeats/comments
+          continue;
+        }
         if ("method" in msg) {
           yield { notification: msg as unknown as TNotification };
         } else if ("result" in msg || "error" in msg) {

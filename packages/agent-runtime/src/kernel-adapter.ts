@@ -68,6 +68,7 @@ export async function getOrCreateKernelSession(
 
   const agent = getKernelAgent(config);
   const userId = opts.userId ?? "anonymous";
+  console.log(`[KernelAdapter] getOrCreateKernelSession uid=${process.getuid?.()} for ${acpSessionId} isNew=${opts.isNew}`);
 
   let session: KernelSession;
   if (opts.isNew) {

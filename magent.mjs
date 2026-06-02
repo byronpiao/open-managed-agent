@@ -1731,7 +1731,13 @@ const COMMANDS = {
             else if (update.status) console.log(dim(`   [${update.status}]`));
             break;
           case "log":
-            console.log(red(`\n❌ ${update.message ?? "unknown error"}`));
+            // log frames carry a level — only paint errors red. debug/info
+            // are shown dim so they don't look like failures.
+            if (update.level === "error") {
+              console.log(red(`\n❌ ${update.message ?? "unknown error"}`));
+            } else if (process.env.MAGENT_VERBOSE) {
+              console.log(dim(`\n  ${update.level ?? "log"}: ${update.message ?? ""}`));
+            }
             break;
         }
       } else if (item.type === "result") {
@@ -1790,7 +1796,11 @@ const COMMANDS = {
                   else if (update.status) console.log(dim(`   [${update.status}]`));
                   break;
                 case "log":
-                  console.log(red(`\n❌ ${update.message ?? "unknown error"}`));
+                  if (update.level === "error") {
+                    console.log(red(`\n❌ ${update.message ?? "unknown error"}`));
+                  } else if (process.env.MAGENT_VERBOSE) {
+                    console.log(dim(`\n  ${update.level ?? "log"}: ${update.message ?? ""}`));
+                  }
                   break;
               }
             } else if (item.type === "result") {
