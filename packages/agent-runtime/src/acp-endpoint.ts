@@ -380,8 +380,10 @@ async function handleSessionPrompt(
         .filter((b) => b.type === "text" && typeof b.text === "string")
         .map((b) => b.text!)
         .join("");
+      console.log(`[ACP] session.send text="${userText.slice(0,20)}" uid=${process.getuid?.()}`);
       sse.write({ _diag: "before_send", textLen: userText.length, sessionId });
       events = session.send(userText);
+      console.log(`[ACP] session.send returned`);
       sse.write({ _diag: "after_send", eventsType: typeof events });
     }
 

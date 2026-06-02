@@ -64,11 +64,8 @@ export async function getOrCreateKernelSession(
   opts: { userId?: string; isNew?: boolean } = {},
 ): Promise<KernelSession> {
   const cached = sessionPool.get(acpSessionId);
+  console.log(`[KernelAdapter] getOrCreateKernelSession uid=${process.getuid?.()} cached=${!!cached} for ${acpSessionId}`);
   if (cached) return cached;
-
-  const agent = getKernelAgent(config);
-  const userId = opts.userId ?? "anonymous";
-  console.log(`[KernelAdapter] getOrCreateKernelSession uid=${process.getuid?.()} for ${acpSessionId} isNew=${opts.isNew}`);
 
   let session: KernelSession;
   if (opts.isNew) {
