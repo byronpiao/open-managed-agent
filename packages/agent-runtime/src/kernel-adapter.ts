@@ -80,8 +80,9 @@ export async function getOrCreateKernelSession(
       console.log(`[KernelAdapter] resumeSession OK for ${acpSessionId}`);
     } catch (err) {
       const msg = (err as Error)?.message ?? String(err);
-      console.warn(`[KernelAdapter] resumeSession FAILED: ${msg} — starting fresh`);
+      console.warn(`[KernelAdapter] resumeSession FAILED (${msg}) — starting fresh`);
       session = await agent.startSession({ userId, conversationId: acpSessionId });
+      console.log(`[KernelAdapter] startSession OK for ${acpSessionId}`);
     }
   }
   sessionPool.set(acpSessionId, session);
@@ -397,6 +398,9 @@ export async function pumpEvents(
     }
   }
   console.log(`[KernelAdapter] pumpEvents done: total=${eventCount}`);
+  if (eventCount === 0) {
+    console.error(`[KernelAdapter] pumpEvents: ZERO events from session.send() — kernel turn completed with no output`);
+  }
   if (pendingClientTool) {
     return { stopReason: "tool_use", pendingToolUse: pendingClientTool };
   }
