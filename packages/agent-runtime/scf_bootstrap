@@ -1,2 +1,27 @@
 #!/bin/bash
-node dist/index.js
+# SCF Web Function bootstrap for open-managed-agent runtime.
+#
+# SCF file system constraints:
+#   /var/user  — read-only (deployed code lives here)
+#   /tmp       — writable, up to 512MB
+#
+# Claude Code reads/writes:
+#   ~/.claude (settings, skills, memory) → set HOME=/tmp so this resolves
+#                                          to /tmp/.claude (writable)
+#   CLAUDE_CONFIG_DIR                    → explicit override, same effect
+#   project directory (cwd)             → must be writable for tool output;
+#                                          change to /tmp so bash/file tools work
+#
+# Port: SCF Web Function proxies to the port set in the function config.
+# Default is 9000 (matches our PORT ?? 9000 fallback in index.ts).
+
+export HOME=/tmp
+export CLAUDE_CONFIG_DIR=/tmp/.claude
+
+# Ensure the directories Claude Code expects to write exist.
+mkdir -p /tmp/.claude /tmp/workspace
+
+# Run from /tmp so relative-path file tools land in a writable directory.
+cd /tmp
+
+exec node /var/user/dist/index.js
