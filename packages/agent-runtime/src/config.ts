@@ -352,39 +352,20 @@ export function toKernelAgentConfig(
 // ── Loader ────────────────────────────────────────────────────────────────────
 //
 // Loading priority:
-//   1. AGENT_CONFIG env var (full JSON) — highest priority, set by `magent agent:update`
-//   2. agent.yaml / agent.yml file — bundled with code at deploy time
+//   1. agent.yaml / agent.yml file — highest priority; present only when the
+//      user explicitly created one (e.g. cp agent.yaml.example agent.yaml).
+//      The template ships as agent.yaml.example so the default deploy carries
+//      no yaml, letting AGENT_CONFIG_B64 drive config in the cloud.
+//   2. AGENT_CONFIG / AGENT_CONFIG_B64 env var — written by `magent agent:update`
+//      (the normal cloud path when no yaml file is present)
 //   3. Individual env vars (AGENT_MODEL, AGENT_SYSTEM, AGENT_NAME) — backward compat fallback
 //
-// Within each level, individual env vars (AGENT_MODEL etc.) can still override scalar fields.
+// Rationale: a user-placed agent.yaml is an intentional, version-controlled
+// override that should always win. Without it, the cloud operator controls
+// the config via env vars — no yaml means no accidental bundled config freeze.
 
 export async function loadAgentConfig(): Promise<AgentConfig> {
-  // Priority 1: AGENT_CONFIG or AGENT_CONFIG_B64 env var (from `magent agent:update`)
-  const rawConfig = process.env.AGENT_CONFIG
-    ?? (process.env.AGENT_CONFIG_B64
-      ? Buffer.from(process.env.AGENT_CONFIG_B64, "base64").toString("utf-8")
-      : null);
-
-  if (rawConfig) {
-    try {
-      const config = JSON.parse(rawConfig) as AgentConfig;
-      console.log(`[Config] Loaded from AGENT_CONFIG env var`);
-      // AGENT_MODEL only patches the model ID, preserving any ModelSpec
-      // fields (apiKey, apiBaseUrl, options) the config already set.
-      if (process.env.AGENT_MODEL) {
-        config.model = typeof config.model === "object"
-          ? { ...config.model, id: process.env.AGENT_MODEL }
-          : process.env.AGENT_MODEL;
-      }
-      if (process.env.AGENT_SYSTEM) config.system = decodeURIComponent(process.env.AGENT_SYSTEM);
-      if (process.env.AGENT_NAME) config.name = process.env.AGENT_NAME;
-      return config;
-    } catch (err) {
-      console.warn(`[Config] Failed to parse AGENT_CONFIG env var:`, err);
-    }
-  }
-
-  // Priority 2: YAML file
+  // Priority 1: YAML file (highest — explicit, version-controlled config)
   const searchPaths = [
     path.resolve("agent.yaml"),
     path.resolve("agent.yml"),
@@ -397,24 +378,30 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
       const content = await fs.readFile(p, "utf-8");
       const config = parseYaml(content) as AgentConfig;
       console.log(`[Config] Loaded agent config from: ${p}`);
-
-      // AGENT_MODEL only patches the model ID, preserving ModelSpec fields.
-      if (process.env.AGENT_MODEL) {
-        config.model = typeof config.model === "object"
-          ? { ...config.model, id: process.env.AGENT_MODEL }
-          : process.env.AGENT_MODEL;
-      }
-      if (process.env.AGENT_SYSTEM) config.system = decodeURIComponent(process.env.AGENT_SYSTEM);
-      if (process.env.AGENT_NAME) config.name = process.env.AGENT_NAME;
-
       return config;
     } catch {
       // File not found or parse error, try next
     }
   }
 
+  // Priority 2: AGENT_CONFIG or AGENT_CONFIG_B64 env var (from `magent agent:update`)
+  const rawConfig = process.env.AGENT_CONFIG
+    ?? (process.env.AGENT_CONFIG_B64
+      ? Buffer.from(process.env.AGENT_CONFIG_B64, "base64").toString("utf-8")
+      : null);
+
+  if (rawConfig) {
+    try {
+      const config = JSON.parse(rawConfig) as AgentConfig;
+      console.log(`[Config] Loaded from AGENT_CONFIG env var`);
+      return config;
+    } catch (err) {
+      console.warn(`[Config] Failed to parse AGENT_CONFIG env var:`, err);
+    }
+  }
+
   // Priority 3: pure env vars (backward compatible)
-  console.log("[Config] No agent.yaml found, using environment variables");
+  console.log("[Config] No agent.yaml or AGENT_CONFIG found, using environment variables");
   return {
     name: process.env.AGENT_NAME ?? "open-managed-agent",
     model: process.env.AGENT_MODEL ?? "hunyuan-t1-latest",

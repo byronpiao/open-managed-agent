@@ -1,9 +1,14 @@
-# OpenManagedAgent Configuration
+# OpenManagedAgent Configuration — example / template
+#
+# Copy this file to agent.yaml to activate it:
+#   cp agent.yaml.example agent.yaml
+#
+# When agent.yaml is present alongside the deployed code (or mounted at
+# /var/user/agent.yaml in a container), it takes the highest priority over
+# any AGENT_CONFIG env var injected by `magent agent:update`.
+#
 # Schema mirrors Anthropic Managed Agents API:
 # https://platform.claude.com/docs/en/managed-agents/agent-setup
-#
-# Environment variables AGENT_MODEL, AGENT_SYSTEM, AGENT_NAME
-# can override the corresponding fields below.
 
 name: OpenManagedAgent Coding Assistant
 model: hunyuan-t1-latest
