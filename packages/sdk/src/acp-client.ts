@@ -38,8 +38,32 @@ export interface AcpSessionDetail {
 export type AcpStreamEvent =
   | { type: "chunk"; text: string }
   | { type: "tool_call"; toolCallId: string; name: string; status: string; result?: string }
+  | {
+      type: "tool_use_request";
+      toolUseId: string;
+      toolName: string;
+      input: unknown;
+    }
+  | {
+      type: "permission_request";
+      toolCallId: string;
+      toolName: string;
+      args: unknown;
+      options: Array<{ optionId: string; name: string; kind: string }>;
+      hints?: unknown;
+    }
   | { type: "error"; message: string }
-  | { type: "done"; stopReason: string };
+  | {
+      type: "done";
+      stopReason: string;
+      pendingToolUse?: { toolUseId: string; toolName: string; input: unknown };
+      pendingPermission?: {
+        toolUseId: string;
+        toolName: string;
+        args: unknown;
+        options: Array<{ optionId: string; name: string; kind: string }>;
+      };
+    };
 
 export interface AcpCapabilities {
   loadSession: boolean;
@@ -169,6 +193,52 @@ export class AcpClient {
   // ── session/prompt (streams response) ─────────────────────────────────────
 
   async *sessionPrompt(sessionId: string, text: string): AsyncGenerator<AcpStreamEvent> {
+    yield* this._sessionPromptInternal(sessionId, [{ type: "text", text }]);
+  }
+
+  /**
+   * Resume a paused turn by submitting a tool_result for a pending client-side
+   * tool call. Use after receiving a `done` event with stopReason='tool_use'.
+   */
+  async *sessionPromptToolResult(
+    sessionId: string,
+    toolUseId: string,
+    content: string,
+    isError = false,
+  ): AsyncGenerator<AcpStreamEvent> {
+    yield* this._sessionPromptInternal(sessionId, [
+      {
+        type: "tool_result",
+        tool_use_id: toolUseId,
+        content,
+        is_error: isError,
+      },
+    ]);
+  }
+
+  /**
+   * Resume a paused turn by submitting a permission decision for a pending
+   * approval request. Use after receiving a `done` event with
+   * stopReason='awaiting_permission'.
+   */
+  async *sessionPromptPermission(
+    sessionId: string,
+    toolUseId: string,
+    decision: string, // optionId, e.g. "allow-once" / "reject-once" / "cancelled"
+  ): AsyncGenerator<AcpStreamEvent> {
+    yield* this._sessionPromptInternal(sessionId, [
+      {
+        type: "permission_decision",
+        tool_use_id: toolUseId,
+        decision,
+      },
+    ]);
+  }
+
+  private async *_sessionPromptInternal(
+    sessionId: string,
+    prompt: Array<Record<string, unknown>>,
+  ): AsyncGenerator<AcpStreamEvent> {
     type Notif = {
       method: string;
       params: {
@@ -176,13 +246,28 @@ export class AcpClient {
           sessionUpdate: string;
           content?: { text: string };
           toolCall?: { id: string; name: string; status: string; result?: string };
+          toolCallId?: string;
+          toolName?: string;
+          args?: unknown;
+          options?: Array<{ optionId: string; name: string; kind: string }>;
+          hints?: unknown;
           message?: string;
         };
       };
     };
-    for await (const item of this.rpcStream<Notif, { stopReason: string }>(
+    type DoneResult = {
+      stopReason: string;
+      pendingToolUse?: { toolUseId: string; toolName: string; input: unknown };
+      pendingPermission?: {
+        toolUseId: string;
+        toolName: string;
+        args: unknown;
+        options: Array<{ optionId: string; name: string; kind: string }>;
+      };
+    };
+    for await (const item of this.rpcStream<Notif, DoneResult>(
       "session/prompt",
-      { sessionId, prompt: [{ type: "text", text }] }
+      { sessionId, prompt },
     )) {
       if ("notification" in item) {
         const update = item.notification.params?.update;
@@ -192,11 +277,21 @@ export class AcpClient {
             break;
           case "tool_call":
             yield {
-              type:       "tool_call",
+              type: "tool_call",
               toolCallId: update.toolCall?.id ?? "",
-              name:       update.toolCall?.name ?? "",
-              status:     update.toolCall?.status ?? "",
-              result:     update.toolCall?.result,
+              name: update.toolCall?.name ?? "",
+              status: update.toolCall?.status ?? "",
+              result: update.toolCall?.result,
+            };
+            break;
+          case "permission_request":
+            yield {
+              type: "permission_request",
+              toolCallId: update.toolCallId ?? "",
+              toolName: update.toolName ?? "",
+              args: update.args,
+              options: update.options ?? [],
+              hints: update.hints,
             };
             break;
           case "error":
@@ -204,7 +299,23 @@ export class AcpClient {
             break;
         }
       } else if ("result" in item) {
-        yield { type: "done", stopReason: item.result.stopReason };
+        const r = item.result;
+        // Synthesize a tool_use_request event when the turn ended for a
+        // client-side tool, so consumers can react in a single stream.
+        if (r.stopReason === "tool_use" && r.pendingToolUse) {
+          yield {
+            type: "tool_use_request",
+            toolUseId: r.pendingToolUse.toolUseId,
+            toolName: r.pendingToolUse.toolName,
+            input: r.pendingToolUse.input,
+          };
+        }
+        yield {
+          type: "done",
+          stopReason: r.stopReason,
+          pendingToolUse: r.pendingToolUse,
+          pendingPermission: r.pendingPermission,
+        };
       }
     }
   }

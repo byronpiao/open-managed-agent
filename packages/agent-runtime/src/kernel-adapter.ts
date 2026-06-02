@@ -2,15 +2,25 @@
  * Kernel adapter — bridges open-agent-kernel's Session/SessionEvent to the
  * ACP wire protocol used by `acp-endpoint.ts`.
  *
- * Responsibilities:
- *  1. Lazy-construct the kernel `Agent` (one per process).
- *  2. Maintain a `Map<acpSessionId, Session>` to reuse warm kernel sessions.
- *  3. Translate kernel `SessionEvent` → ACP `session/update` SSE frames, and
- *     drive HITL via reverse JSON-RPC `session/request_permission` →
- *     `respondApproval()`.
+ * Stop-and-resume model (no reverse-RPC, no in-memory pending state):
  *
- * The adapter exposes a single entry point `streamPrompt()` consumed by
- * `acp-endpoint.ts` from `session/prompt`.
+ *   1. agent.yaml `type: custom` tools have no server-side implementation, so
+ *      they are CLIENT-SIDE. When the model invokes one, the runtime emits an
+ *      SSE `tool_call` frame, then ends the turn with stopReason='tool_use'
+ *      and a `pendingToolUse` payload telling the client what to execute.
+ *
+ *   2. Client executes the tool locally and resumes by POSTing a fresh
+ *      `session/prompt` whose prompt[] starts with a `tool_result` block.
+ *      The server calls `session.send({ type: 'tool_result', ... })` — the
+ *      kernel resumes the same conversation from its persisted transcript.
+ *
+ *   3. Permission requests follow the same pattern: SSE `permission_request`
+ *      frame + stopReason='awaiting_permission' + `pendingPermission` payload;
+ *      client resumes with a `permission_decision` block which we route to
+ *      `session.respondApproval(...)`.
+ *
+ * No service-side state is held between requests. The same conversation can
+ * resume on a different runtime instance (kernel session store is the SoR).
  */
 
 import type { Response } from "express";
@@ -34,7 +44,7 @@ let _kernelAgent: KernelAgent | null = null;
 /** Build (or return cached) kernel Agent for this process. */
 export function getKernelAgent(config: AgentConfig): KernelAgent {
   if (_kernelAgent) return _kernelAgent;
-  const customToolDefs = getCustomTools(config).map(makeCustomToolDefinition);
+  const customToolDefs = getCustomTools(config).map(makeClientSideToolDefinition);
   _kernelAgent = createAgent(toKernelAgentConfig(config, { customToolDefs }));
   console.log(`[KernelAdapter] kernel Agent created (id=${_kernelAgent.id})`);
   return _kernelAgent;
@@ -88,64 +98,14 @@ export function registerKernelSession(
   sessionPool.set(acpSessionId, session);
 }
 
-// ── Pending approvals (HITL) ─────────────────────────────────────────────────
-
-interface PendingApproval {
-  sessionId: string;
-  toolUseId: string;
-  resolve: (outcome: ApprovalOutcome) => void;
-  timeout: NodeJS.Timeout;
-}
+// ── Approval decision mapping (used by acp-endpoint when resuming) ──────────
 
 /** ACP-shaped permission outcome (per spec §session/request_permission). */
 export type ApprovalOutcome =
   | { outcome: "selected"; optionId: string }
   | { outcome: "cancelled" };
 
-/** reverseRpcId → pending. */
-const pendingApprovals = new Map<number, PendingApproval>();
-
-/** Default 60s — HTTP-based reverse RPC must not hang sessions forever. */
-const APPROVAL_TIMEOUT_MS = 60_000;
-
-let _reverseIdCounter = 0;
-function nextReverseId(): number {
-  // Negative numbers to avoid colliding with the client's positive RPC ids.
-  return --_reverseIdCounter;
-}
-
-/**
- * Called from `acp-endpoint.ts` POST handler when the request body is a
- * JSON-RPC *response* (has `result` or `error` and matches a pending id).
- * Resolves the corresponding waiter.
- *
- * @returns true iff the id matched a pending approval.
- */
-export function tryResolvePendingApproval(id: number, body: unknown): boolean {
-  const pending = pendingApprovals.get(id);
-  if (!pending) return false;
-  pendingApprovals.delete(id);
-  clearTimeout(pending.timeout);
-  const outcome = extractOutcome(body) ?? { outcome: "cancelled" };
-  pending.resolve(outcome);
-  return true;
-}
-
-function extractOutcome(body: unknown): ApprovalOutcome | null {
-  if (!body || typeof body !== "object") return null;
-  const b = body as { result?: { outcome?: unknown }; error?: unknown };
-  if (b.error) return { outcome: "cancelled" };
-  const o = b.result?.outcome;
-  if (!o || typeof o !== "object") return null;
-  const oo = o as { outcome?: string; optionId?: string };
-  if (oo.outcome === "selected" && typeof oo.optionId === "string") {
-    return { outcome: "selected", optionId: oo.optionId };
-  }
-  if (oo.outcome === "cancelled") return { outcome: "cancelled" };
-  return null;
-}
-
-function outcomeToDecision(outcome: ApprovalOutcome): ApprovalDecision {
+export function outcomeToDecision(outcome: ApprovalOutcome): ApprovalDecision {
   if (outcome.outcome === "cancelled") {
     return { kind: "deny", reason: "User cancelled", interrupt: true };
   }
@@ -163,12 +123,63 @@ function outcomeToDecision(outcome: ApprovalOutcome): ApprovalDecision {
   }
 }
 
+// ── Client-side tool sentinel ───────────────────────────────────────────────
+//
+// When a client-side custom tool is invoked, our `execute()` throws a
+// well-known error. The kernel/SDK wraps that into a `tool_result` event with
+// isError=true and the error message as content. We embed a sentinel JSON in
+// the message so `pumpEvents` can recognise it and intercept the flow before
+// the model is allowed to keep reasoning over a fake error.
+
+const CLIENT_TOOL_SENTINEL = "__OAK_CLIENT_TOOL_PENDING__";
+
+interface ClientToolPendingPayload {
+  [CLIENT_TOOL_SENTINEL]: true;
+  toolUseId: string;
+  toolName: string;
+  input: unknown;
+}
+
+class ClientToolPendingError extends Error {
+  constructor(public readonly payload: ClientToolPendingPayload) {
+    super(`${CLIENT_TOOL_SENTINEL}:${JSON.stringify(payload)}`);
+    this.name = "ClientToolPendingError";
+  }
+}
+
+function tryParseClientToolPending(output: unknown): ClientToolPendingPayload | null {
+  // SDK content may be a string OR an array of {type:'text', text}. Extract
+  // the first text-like fragment we can find.
+  const text = typeof output === "string"
+    ? output
+    : Array.isArray(output)
+      ? output
+          .map((b) =>
+            b && typeof b === "object" && "text" in b && typeof (b as { text?: unknown }).text === "string"
+              ? (b as { text: string }).text
+              : "",
+          )
+          .join("")
+      : "";
+  if (!text || !text.includes(CLIENT_TOOL_SENTINEL)) return null;
+  // Extract `{ ... }` JSON after the sentinel marker.
+  const idx = text.indexOf(CLIENT_TOOL_SENTINEL);
+  const colon = text.indexOf(":", idx);
+  if (colon < 0) return null;
+  const jsonStart = text.indexOf("{", colon);
+  if (jsonStart < 0) return null;
+  try {
+    const parsed = JSON.parse(text.slice(jsonStart)) as ClientToolPendingPayload;
+    return parsed?.[CLIENT_TOOL_SENTINEL] ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Stream pump ──────────────────────────────────────────────────────────────
 
 interface SseSink {
   write: (frame: unknown) => void;
-  /** Reverse JSON-RPC request from agent to client. */
-  writeRequest: (method: string, id: number, params: unknown) => void;
 }
 
 interface StreamCtx {
@@ -177,14 +188,49 @@ interface StreamCtx {
   acpSessionId: string;
 }
 
+export type StopReason =
+  | "end_turn"
+  | "cancelled"
+  | "error"
+  | "tool_use"
+  | "awaiting_permission";
+
+export interface PendingToolUse {
+  toolUseId: string;
+  toolName: string;
+  input: unknown;
+}
+
+export interface PendingPermission {
+  toolUseId: string;
+  toolName: string;
+  args: unknown;
+  options: ApprovalOption[];
+  hints?: {
+    displayName?: string;
+    description?: string;
+    suggestedScopes?: Array<"once" | "session" | "forever">;
+  };
+}
+
+export interface PumpResult {
+  stopReason: StopReason;
+  pendingToolUse?: PendingToolUse;
+  pendingPermission?: PendingPermission;
+}
+
 /**
- * Pump kernel events into ACP SSE frames. Returns the final stopReason.
+ * Pump kernel events into ACP SSE frames. Returns the final stopReason and,
+ * when the turn was paused for an external action, a pendingToolUse or
+ * pendingPermission payload describing what the client must do to resume.
  */
 export async function pumpEvents(
   events: AsyncIterable<SessionEvent>,
-  session: KernelSession,
+  _session: KernelSession,
   ctx: StreamCtx,
-): Promise<"end_turn" | "cancelled" | "error"> {
+): Promise<PumpResult> {
+  let pendingClientTool: PendingToolUse | undefined;
+
   for await (const e of events) {
     switch (e.type) {
       case "message_delta": {
@@ -222,6 +268,17 @@ export async function pumpEvents(
       }
 
       case "tool_result": {
+        // Intercept client-side tool sentinel — don't surface as failed; the
+        // turn will end with stopReason='tool_use' and a pendingToolUse hint.
+        const sentinel = tryParseClientToolPending(e.output);
+        if (sentinel) {
+          pendingClientTool = {
+            toolUseId: sentinel.toolUseId,
+            toolName: sentinel.toolName,
+            input: sentinel.input,
+          };
+          break;
+        }
         ctx.sse.write({
           jsonrpc: "2.0",
           method: "session/update",
@@ -239,57 +296,50 @@ export async function pumpEvents(
       }
 
       case "tool_approval_required": {
-        // 1) Send reverse JSON-RPC request to client over the SSE channel.
-        const reverseId = nextReverseId();
+        // Surface as a permission_request session update; the turn ends here.
+        // The client decides and resumes by POSTing a fresh session/prompt
+        // with a permission_decision block — see acp-endpoint.handleSessionPrompt.
         const options = buildApprovalOptions(e.hints?.suggestedScopes);
-        const outcomePromise = new Promise<ApprovalOutcome>((resolve) => {
-          const timeout = setTimeout(() => {
-            if (pendingApprovals.delete(reverseId)) {
-              console.warn(
-                `[KernelAdapter] approval ${reverseId} timed out after ${APPROVAL_TIMEOUT_MS}ms`,
-              );
-              resolve({ outcome: "cancelled" });
-            }
-          }, APPROVAL_TIMEOUT_MS);
-          pendingApprovals.set(reverseId, {
+        ctx.sse.write({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
             sessionId: ctx.acpSessionId,
-            toolUseId: e.toolUseId,
-            resolve,
-            timeout,
-          });
+            update: {
+              sessionUpdate: "permission_request",
+              toolCallId: e.toolUseId,
+              toolName: e.toolName,
+              args: e.input,
+              options,
+              hints: e.hints,
+            },
+          },
         });
-
-        ctx.sse.writeRequest("session/request_permission", reverseId, {
-          sessionId: ctx.acpSessionId,
-          toolCall: {
-            toolCallId: e.toolUseId,
+        return {
+          stopReason: "awaiting_permission",
+          pendingPermission: {
+            toolUseId: e.toolUseId,
             toolName: e.toolName,
             args: e.input,
+            options,
+            hints: e.hints,
           },
-          options,
-          hints: e.hints,
-        });
-
-        // 2) Wait for client to POST a JSON-RPC result with this reverseId.
-        const outcome = await outcomePromise;
-        const decision = outcomeToDecision(outcome);
-
-        // 3) Inject decision into kernel; recursively pump the new event stream.
-        return pumpEvents(
-          session.respondApproval({ toolUseId: e.toolUseId, decision }),
-          session,
-          ctx,
-        );
+        };
       }
 
       case "session_idle": {
-        if (e.reason === "completed") return "end_turn";
-        if (e.reason === "aborted") return "cancelled";
-        if (e.reason === "error") return "error";
-        // 'requires_action' means we already pumped tool_approval_required
-        // above and respondApproval consumed the next stream — should not reach
-        // here normally. Treat as cancelled to be safe.
-        return "cancelled";
+        // If we intercepted a client-tool sentinel earlier, the SDK has
+        // already finished the turn (it treats our throw as a tool error).
+        // Override with stopReason='tool_use' so the client can resume.
+        if (pendingClientTool) {
+          return { stopReason: "tool_use", pendingToolUse: pendingClientTool };
+        }
+        if (e.reason === "completed") return { stopReason: "end_turn" };
+        if (e.reason === "aborted") return { stopReason: "cancelled" };
+        if (e.reason === "error") return { stopReason: "error" };
+        // 'requires_action' — the approval branch above already returned.
+        // Reaching here would be a kernel ordering anomaly; treat as cancelled.
+        return { stopReason: "cancelled" };
       }
 
       case "error": {
@@ -321,7 +371,7 @@ export async function pumpEvents(
             },
           },
         });
-        return "error";
+        return { stopReason: "error" };
       }
 
       // 'message_complete' / 'handoff' — not surfaced to ACP
@@ -329,10 +379,13 @@ export async function pumpEvents(
         break;
     }
   }
-  return "end_turn";
+  if (pendingClientTool) {
+    return { stopReason: "tool_use", pendingToolUse: pendingClientTool };
+  }
+  return { stopReason: "end_turn" };
 }
 
-interface ApprovalOption {
+export interface ApprovalOption {
   optionId: string;
   name: string;
   kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
@@ -366,86 +419,21 @@ export function makeSseSink(res: Response): SseSink {
     write: (frame) => {
       res.write(`data: ${JSON.stringify(frame)}\n\n`);
     },
-    writeRequest: (method, id, params) => {
-      res.write(
-        `data: ${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n\n`,
-      );
-    },
   };
 }
 
-// ── Active SSE sinks per session ─────────────────────────────────────────────
-// Custom tool execute() callbacks need to send a reverse-RPC into the SSE
-// stream that's currently serving the session/prompt request. The acp-endpoint
-// registers/unregisters here around each streaming call.
+// ── Client-side tool definition ──────────────────────────────────────────────
+//
+// All `type: custom` tools in agent.yaml are client-side: they have no
+// server-side implementation. When the model calls one, we throw a sentinel
+// error; pumpEvents intercepts it and ends the turn with stopReason='tool_use'
+// so the client can execute the tool and POST back a tool_result.
 
-const activeSinks = new Map<string, SseSink>();
-
-export function registerSseSink(sessionId: string, sink: SseSink): void {
-  activeSinks.set(sessionId, sink);
-}
-export function unregisterSseSink(sessionId: string): void {
-  activeSinks.delete(sessionId);
-}
-
-// ── Pending custom-tool executions ───────────────────────────────────────────
-
-interface PendingCustomTool {
-  sessionId: string;
-  toolUseId: string;
-  resolve: (result: string) => void;
-  reject: (err: Error) => void;
-  timeout: NodeJS.Timeout;
-}
-
-/** toolUseId → pending. */
-const pendingCustomTools = new Map<string, PendingCustomTool>();
-
-/** Default 120s — custom tools run client-side; give them time. */
-const CUSTOM_TOOL_TIMEOUT_MS = 120_000;
-
-/**
- * Called from `acp-endpoint.ts` when the client POSTs a custom_tool_result
- * JSON-RPC response. Resolves (or rejects) the waiting execute() promise.
- *
- * @returns true iff toolUseId matched a pending execution.
- */
-export function tryResolvePendingCustomTool(toolUseId: string, body: unknown): boolean {
-  const pending = pendingCustomTools.get(toolUseId);
-  if (!pending) return false;
-  pendingCustomTools.delete(toolUseId);
-  clearTimeout(pending.timeout);
-
-  const b = body as { result?: { content?: string; is_error?: boolean }; error?: unknown };
-  if (b.error) {
-    const errMsg = typeof b.error === "object" && b.error !== null && "message" in b.error
-      ? String((b.error as { message?: unknown }).message)
-      : String(b.error);
-    pending.reject(new Error(`Custom tool error from client: ${errMsg}`));
-    return true;
-  }
-  const isError = b.result?.is_error === true;
-  const content = b.result?.content ?? "";
-  if (isError) {
-    pending.reject(new Error(content));
-  } else {
-    pending.resolve(content);
-  }
-  return true;
-}
-
-/**
- * Build a `ToolDefinition` for a custom tool defined in agent.yaml.
- * The execute() function sends a reverse JSON-RPC `session/request_custom_tool`
- * into the active SSE stream for the session, then waits for the client to
- * POST back a `custom_tool_result` via tryResolvePendingCustomTool().
- */
-export function makeCustomToolDefinition(
+export function makeClientSideToolDefinition(
   tool: { name: string; description: string; input_schema: Record<string, unknown> },
 ): ToolDefinition {
-  // We receive input_schema as a plain JSON Schema object from YAML.
-  // The kernel expects a Zod schema, so we use z.record(z.unknown()) as a
-  // passthrough — the actual validation and execution happens client-side.
+  // YAML supplies a plain JSON Schema. The kernel expects Zod, but the actual
+  // validation happens on the client — pass a permissive passthrough.
   const inputSchema = z.record(z.string(), z.unknown());
 
   return {
@@ -453,37 +441,14 @@ export function makeCustomToolDefinition(
     description: tool.description,
     parameters: inputSchema,
     execute: async (input: Record<string, unknown>, ctx) => {
-      const sessionId = ctx.conversationId;
-      const sink = activeSinks.get(sessionId);
-      if (!sink) {
-        throw new Error(
-          `[CustomTool] No active SSE sink for session ${sessionId} — ` +
-          `client must be connected via session/prompt to handle custom tools`,
-        );
-      }
-
-      return new Promise<string>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          if (pendingCustomTools.delete(ctx.toolUseId)) {
-            reject(new Error(`Custom tool '${tool.name}' timed out after ${CUSTOM_TOOL_TIMEOUT_MS}ms`));
-          }
-        }, CUSTOM_TOOL_TIMEOUT_MS);
-
-        pendingCustomTools.set(ctx.toolUseId, {
-          sessionId,
-          toolUseId: ctx.toolUseId,
-          resolve,
-          reject,
-          timeout,
-        });
-
-        // Send reverse-RPC to client: ask it to execute the custom tool.
-        sink.writeRequest("session/request_custom_tool", ctx.toolUseId as unknown as number, {
-          sessionId,
-          toolUseId: ctx.toolUseId,
-          toolName: tool.name,
-          input,
-        });
+      // Throwing here causes the SDK to emit a tool_result with isError=true.
+      // pumpEvents detects the sentinel in the result content and rewrites
+      // the final stopReason to 'tool_use'.
+      throw new ClientToolPendingError({
+        [CLIENT_TOOL_SENTINEL]: true,
+        toolUseId: ctx.toolUseId,
+        toolName: tool.name,
+        input,
       });
     },
   };
