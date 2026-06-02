@@ -958,6 +958,12 @@ const COMMANDS = {
     try {
       execSync(`rm -rf "${deployDir}" && mkdir -p "${deployDir}"`, { encoding: "utf-8" });
       const filesToCopy = ["dist", "package.json", "package-lock.json", "scf_bootstrap", "vendor"];
+      // uid-shim.js is a plain JS file (not compiled TypeScript) that patches
+      // process.getuid for SCF's root environment. Copy it alongside dist/.
+      const uidShim = resolve(code, "src", "uid-shim.js");
+      if (existsSync(uidShim)) {
+        execSync(`cp "${uidShim}" "${deployDir}/uid-shim.js"`, { encoding: "utf-8" });
+      }
       // agent.yaml is optional — only bundled if the user explicitly created one
       // (by copying agent.yaml.example). Without it, config is injected via AGENT_CONFIG_B64.
       if (existsSync(resolve(code, "agent.yaml"))) filesToCopy.push("agent.yaml");
