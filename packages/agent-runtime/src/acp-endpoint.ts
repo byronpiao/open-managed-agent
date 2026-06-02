@@ -312,6 +312,31 @@ async function handleSessionPrompt(
 
   const session = await getOrCreateKernelSession(config, sessionId);
 
+  // SCF diagnostic: test the model API directly to verify connectivity
+  // and response format before going through the kernel.
+  const model = config.model;
+  if (typeof model === "object" && model.apiBaseUrl && model.apiKey) {
+    try {
+      const testRes = await fetch(`${model.apiBaseUrl}/v1/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": model.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: model.id,
+          max_tokens: 10,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      });
+      const testBody = await testRes.text();
+      console.error(`[direct-test] status=${testRes.status} body=${testBody.slice(0, 200)}`);
+    } catch (e) {
+      console.error(`[direct-test] FAILED: ${(e as Error).message}`);
+    }
+  }
+
   sseStart(res);
   const sse = makeSseSink(res);
   const abortController = new AbortController();
