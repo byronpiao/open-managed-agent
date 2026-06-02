@@ -13,44 +13,38 @@ if (process.getuid?.() === 0) {
     process.setgid(GID);
     process.setuid(UID);
   } catch (e) {
-    process.stderr.write(`[uid-shim] Warning: could not drop root: ${e.message}\n`);
+    console.error('[uid-shim] Warning: could not drop root:', e.message);
   }
 }
 
-// Monkey-patch the kernel's event generator by wrapping the module.
-// Since we can't easily intercept the internal generator, we log all
-// stream events by patching the kernel dist file before it loads.
+// Patch kernel to log stream events for diagnosis
 const kernelPath = '/var/user/node_modules/@cloudbase/open-agent-kernel/dist/index.js';
 try {
+  console.error('[uid-shim] checking kernel at', kernelPath, 'exists=', existsSync(kernelPath));
   if (existsSync(kernelPath)) {
     let src = readFileSync(kernelPath, 'utf8');
-    // Check if already patched
-    if (!src.includes('__uid_shim_patched__')) {
-      // Add a global log for every stream event type
-      // Find the "stream_event" case and add logging before the text_delta check
+    console.error('[uid-shim] kernel src length=', src.length, 'already-patched=', src.includes('__uid_shim_v2__'));
+    if (!src.includes('__uid_shim_v2__')) {
       const marker = 'evt?.type === "content_block_delta" && evt.delta?.type === "text_delta"';
       if (src.includes(marker)) {
         src = src.replace(
           marker,
-          `(process.stderr.write("[k] cblock_delta type=" + (evt?.delta?.type||"?") + " text=" + JSON.stringify((evt?.delta?.text||"").slice(0,20)) + "\\n"), (evt?.type === "content_block_delta" && evt.delta?.type === "text_delta"))`
+          `(console.error("[k] delta type=" + (evt?.delta?.type||"?") + " text=" + JSON.stringify((evt?.delta?.text||"").slice(0,20))), (evt?.type === "content_block_delta" && evt.delta?.type === "text_delta"))`
         );
-        // Also log the result event
         src = src.replace(
           '"completed" }',
-          '"completed" }, process.stderr.write("[k] result:completed\\n")'
+          '"completed" }, console.error("[k] session_idle:completed")'
         );
-        src = '/* __uid_shim_patched__ */\n' + src;
+        src = '/* __uid_shim_v2__ */\n' + src;
         writeFileSync(kernelPath, src, 'utf8');
-        process.stderr.write('[uid-shim] kernel patch applied\n');
+        console.error('[uid-shim] kernel patch v2 applied OK');
       } else {
-        process.stderr.write('[uid-shim] marker not found in kernel, src length=' + src.length + '\n');
+        console.error('[uid-shim] marker not found, searching...');
+        const idx = src.indexOf('content_block_delta');
+        console.error('[uid-shim] content_block_delta at index:', idx, 'ctx:', src.slice(Math.max(0,idx-50), idx+100));
       }
-    } else {
-      process.stderr.write('[uid-shim] kernel already patched\n');
     }
-  } else {
-    process.stderr.write('[uid-shim] kernel not found at ' + kernelPath + '\n');
   }
 } catch (e) {
-  process.stderr.write('[uid-shim] patch error: ' + e.message + '\n');
+  console.error('[uid-shim] patch error:', e.message);
 }
