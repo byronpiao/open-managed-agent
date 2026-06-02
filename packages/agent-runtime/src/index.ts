@@ -18,12 +18,13 @@
 import express from "express";
 import cors from "cors";
 import { mountAcpEndpoint } from "./acp-endpoint.js";
-import { loadAgentConfig } from "./config.js";
+import { loadAgentConfig, resolveSkills } from "./config.js";
 
 const port = Number(process.env.PORT ?? 9000);
 
 async function main() {
-  const config = await loadAgentConfig();
+  const rawConfig = await loadAgentConfig();
+  const config = await resolveSkills(rawConfig);
 
   console.log(`[Agent] Name: ${config.name}`);
   console.log(`[Agent] Model: ${config.model}`);

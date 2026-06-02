@@ -166,6 +166,40 @@ export function getMcpToolsets(config: AgentConfig): McpToolset[] {
   return (config.tools ?? []).filter((t): t is McpToolset => t.type === "mcp_toolset");
 }
 
+// ── Helper: inject skills into system prompt ─────────────────────────────────
+//
+// Reads each skill's source file and appends its content to config.system.
+// Call this after loadAgentConfig() before passing config to toKernelAgentConfig().
+//
+// Source paths are resolved relative to the agent.yaml location (cwd), or
+// absolute if they start with '/'.
+
+export async function resolveSkills(config: AgentConfig): Promise<AgentConfig> {
+  const skills = config.skills;
+  if (!skills || skills.length === 0) return config;
+
+  const blocks: string[] = [];
+  for (const skill of skills) {
+    const srcPath = path.isAbsolute(skill.source)
+      ? skill.source
+      : path.resolve(skill.source);
+    try {
+      const content = await fs.readFile(srcPath, "utf-8");
+      const header = skill.description
+        ? `# Skill: ${skill.name}\n${skill.description}\n`
+        : `# Skill: ${skill.name}\n`;
+      blocks.push(`${header}\n${content.trim()}`);
+    } catch (err) {
+      console.warn(`[Config] Skill '${skill.name}': failed to read ${srcPath}: ${(err as Error).message}`);
+    }
+  }
+
+  if (blocks.length === 0) return config;
+
+  const skillSection = `\n\n---\n\n## Skills\n\n${blocks.join("\n\n---\n\n")}`;
+  return { ...config, system: config.system + skillSection };
+}
+
 // ── Mapping to kernel AgentConfig ─────────────────────────────────────────────
 
 import {
@@ -185,6 +219,8 @@ export interface ToKernelOptions {
   envId?: string;
   /** Use in-memory store instead of CloudBase DB (tests). Default: false */
   useInMemoryStore?: boolean;
+  /** ToolDefinition[] built from AgentConfig.tools[type=custom], passed by kernel-adapter */
+  customToolDefs?: import("@cloudbase/open-agent-kernel").ToolDefinition[];
 }
 
 /**
@@ -362,6 +398,9 @@ export function toKernelAgentConfig(
       store: sessionStore,
       projectKey: envId,
     },
+    tools: opts.customToolDefs && opts.customToolDefs.length > 0
+      ? opts.customToolDefs
+      : undefined,
   };
 }
 
