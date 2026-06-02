@@ -35,38 +35,7 @@ async function main() {
   const app = express();
   app.use(cors());
   app.get("/healthz", (_req, res) => {
-    res.json({ ok: true, name: config.name, model: config.model, uid: process.getuid?.() });
-  });
-
-  // Temporary connectivity probe: used to diagnose network access from
-  // inside SCF. Remove after debugging.
-  app.get("/debug/net", async (_req, res) => {
-    const model = config.model;
-    const apiBaseUrl = typeof model === "object" ? model.apiBaseUrl : undefined;
-    const apiKey = typeof model === "object" ? model.apiKey : undefined;
-    const results: Record<string, unknown> = { uid: process.getuid?.(), apiBaseUrl };
-    if (apiBaseUrl && apiKey) {
-      try {
-        const r = await fetch(`${apiBaseUrl}/v1/messages`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-          },
-          body: JSON.stringify({
-            model: typeof model === "object" ? model.id : model,
-            max_tokens: 10,
-            messages: [{ role: "user", content: "hi" }],
-          }),
-        });
-        results.status = r.status;
-        results.body = (await r.text()).slice(0, 500);
-      } catch (e) {
-        results.error = (e as Error).message;
-      }
-    }
-    res.json(results);
+    res.json({ ok: true, name: config.name, model: config.model });
   });
 
   mountAcpEndpoint(app, config);

@@ -35,15 +35,7 @@ let _kernelAgent: KernelAgent | null = null;
 export function getKernelAgent(config: AgentConfig): KernelAgent {
   if (_kernelAgent) return _kernelAgent;
   const customToolDefs = getCustomTools(config).map(makeCustomToolDefinition);
-  const kConfig = toKernelAgentConfig(config, { customToolDefs });
-  // Diagnostic log — model spec visible in SCF logs.
-  const modelSpec = kConfig.model;
-  console.log(`[KernelAdapter] model config: ${JSON.stringify(
-    typeof modelSpec === "string"
-      ? modelSpec
-      : { id: modelSpec?.id, hasApiKey: !!(modelSpec as { apiKey?: string })?.apiKey, apiBaseUrl: (modelSpec as { apiBaseUrl?: string })?.apiBaseUrl }
-  )}`);
-  _kernelAgent = createAgent(kConfig);
+  _kernelAgent = createAgent(toKernelAgentConfig(config, { customToolDefs }));
   console.log(`[KernelAdapter] kernel Agent created (id=${_kernelAgent.id})`);
   return _kernelAgent;
 }
@@ -193,12 +185,7 @@ export async function pumpEvents(
   session: KernelSession,
   ctx: StreamCtx,
 ): Promise<"end_turn" | "cancelled" | "error"> {
-  let eventCount = 0;
   for await (const e of events) {
-    eventCount++;
-    if (e.type !== "message_delta") {
-      console.log(`[KernelAdapter] event #${eventCount}: type=${e.type}`);
-    }
     switch (e.type) {
       case "message_delta": {
         ctx.sse.write({
