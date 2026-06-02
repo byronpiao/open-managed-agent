@@ -330,7 +330,10 @@ async function fetchAccessTokenViaSign({ envId, secretId, secretKey, token }) {
 
 // Read tcb CLI login credentials from ~/.config/.cloudbase/auth.json.
 // tcb stores temporary STS credentials there after `tcb login`.
-function readTcbLoginCredential() {
+// If the credentials are within 10 minutes of expiry (or already expired),
+// we fire `tcb env apikey list` in the background to let the tcb CLI
+// refresh its internal token. The refreshed file is re-read once.
+function readTcbLoginCredential({ allowRefresh = true } = {}) {
   const home = process.env.HOME || process.env.USERPROFILE;
   if (!home) return null;
   const authPath = resolve(home, ".config/.cloudbase/auth.json");
@@ -339,9 +342,28 @@ function readTcbLoginCredential() {
     const raw = JSON.parse(readFileSync(authPath, "utf-8"));
     const c = raw?.credential;
     if (!c) return null;
-    // tmpExpired is in ms. Treat missing/expired as no credential.
-    if (c.tmpExpired && Date.now() >= Number(c.tmpExpired)) return null;
     if (!c.tmpSecretId || !c.tmpSecretKey) return null;
+    const expiredMs = Number(c.tmpExpired) || 0;
+    const msLeft = expiredMs - Date.now();
+    // Trigger a silent refresh if within 10 min of expiry or already expired.
+    if (allowRefresh && msLeft < 10 * 60 * 1000) {
+      try {
+        // `tcb env apikey list` hits the CloudBase API which causes the CLI
+        // to silently refresh its STS token before returning. Use --json to
+        // suppress interactive output and pick any env known to the user.
+        const envId = process.env.CLOUDBASE_ENV_ID ?? "";
+        spawnSync(
+          getNodeExecutable(),
+          [getTcbScript(), "env", "apikey", "list", ...(envId ? ["-e", envId] : []), "--json"],
+          { encoding: "utf-8", timeout: 15000, stdio: "ignore" },
+        );
+        // Re-read the file after refresh and return the updated credential.
+        return readTcbLoginCredential({ allowRefresh: false });
+      } catch {
+        // refresh failed — fall through and use the stale cred (or null below)
+      }
+    }
+    if (expiredMs && Date.now() >= expiredMs) return null;
     return {
       secretId:  c.tmpSecretId,
       secretKey: c.tmpSecretKey,
