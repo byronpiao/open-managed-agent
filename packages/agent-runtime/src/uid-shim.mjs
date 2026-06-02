@@ -1,12 +1,11 @@
 // uid-shim.mjs — loaded via --import before index.js in SCF.
 
 import { execSync } from 'child_process';
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 
 if (process.getuid?.() === 0) {
   const UID = 1001;
   const GID = 1001;
-
   try {
     try { execSync(`getent group agent 2>/dev/null || groupadd --gid ${GID} agent`, { stdio: 'pipe' }); } catch {}
     try { execSync(`id agent 2>/dev/null || useradd --no-create-home --uid ${UID} --gid ${GID} agent`, { stdio: 'pipe' }); } catch {}
@@ -18,26 +17,40 @@ if (process.getuid?.() === 0) {
   }
 }
 
-// Patch kernel: log every text_delta and session_idle to stderr so we can
-// see whether the model is emitting text events at all.
+// Monkey-patch the kernel's event generator by wrapping the module.
+// Since we can't easily intercept the internal generator, we log all
+// stream events by patching the kernel dist file before it loads.
+const kernelPath = '/var/user/node_modules/@cloudbase/open-agent-kernel/dist/index.js';
 try {
-  const kernelPath = '/var/user/node_modules/@cloudbase/open-agent-kernel/dist/index.js';
-  let src = readFileSync(kernelPath, 'utf8');
-  if (src.includes('text_delta') && !src.includes('__patched_by_uid_shim')) {
-    src = '/* __patched_by_uid_shim */\n' + src;
-    // Log each text_delta event before the condition check
-    src = src.replace(
-      /evt\.delta\.type === "text_delta"/g,
-      `(process.stderr.write("[kernel-patch] got delta type=" + evt.delta.type + "\\n"), evt.delta.type === "text_delta")`
-    );
-    // Log session_idle
-    src = src.replace(
-      /"completed" \}/g,
-      `"completed" }, process.stderr.write("[kernel-patch] session_idle:completed\\n")`
-    );
-    writeFileSync(kernelPath, src);
-    process.stderr.write('[uid-shim] kernel event logging patch applied\n');
+  if (existsSync(kernelPath)) {
+    let src = readFileSync(kernelPath, 'utf8');
+    // Check if already patched
+    if (!src.includes('__uid_shim_patched__')) {
+      // Add a global log for every stream event type
+      // Find the "stream_event" case and add logging before the text_delta check
+      const marker = 'evt?.type === "content_block_delta" && evt.delta?.type === "text_delta"';
+      if (src.includes(marker)) {
+        src = src.replace(
+          marker,
+          `(process.stderr.write("[k] cblock_delta type=" + (evt?.delta?.type||"?") + " text=" + JSON.stringify((evt?.delta?.text||"").slice(0,20)) + "\\n"), (evt?.type === "content_block_delta" && evt.delta?.type === "text_delta"))`
+        );
+        // Also log the result event
+        src = src.replace(
+          '"completed" }',
+          '"completed" }, process.stderr.write("[k] result:completed\\n")'
+        );
+        src = '/* __uid_shim_patched__ */\n' + src;
+        writeFileSync(kernelPath, src, 'utf8');
+        process.stderr.write('[uid-shim] kernel patch applied\n');
+      } else {
+        process.stderr.write('[uid-shim] marker not found in kernel, src length=' + src.length + '\n');
+      }
+    } else {
+      process.stderr.write('[uid-shim] kernel already patched\n');
+    }
+  } else {
+    process.stderr.write('[uid-shim] kernel not found at ' + kernelPath + '\n');
   }
 } catch (e) {
-  process.stderr.write(`[uid-shim] kernel patch failed: ${e.message}\n`);
+  process.stderr.write('[uid-shim] patch error: ' + e.message + '\n');
 }
