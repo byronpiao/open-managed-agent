@@ -344,7 +344,9 @@ async function handleSessionPrompt(
         .filter((b) => b.type === "text" && typeof b.text === "string")
         .map((b) => b.text!)
         .join("");
+      console.log(`[ACP] session.send userText="${userText.slice(0,50)}" sessionId=${sessionId}`);
       events = session.send(userText);
+      console.log(`[ACP] session.send() returned (events type=${typeof events})`);
     }
 
     const result = await pumpEvents(events, session, {
