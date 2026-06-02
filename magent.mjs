@@ -936,10 +936,11 @@ const COMMANDS = {
     } else {
       scfEnvMap.OAK_DISABLE_SANDBOX = "1";
     }
-    // SCF functions get DB creds via the built-in role (TENCENTCLOUD_SECRETID
-    // etc. auto-injected), so we don't need OAK_USE_MEMORY_STORE unless the
-    // operator explicitly requests it.
-    if (process.env.OAK_USE_MEMORY_STORE) scfEnvMap.OAK_USE_MEMORY_STORE = process.env.OAK_USE_MEMORY_STORE;
+    // SCF processes may be replaced between session/new and session/prompt
+    // (each invocation can be a fresh cold start). Force in-memory store to
+    // keep session state within the same process lifetime. This means sessions
+    // are lost on restart, but avoids NoSQL auth issues in SCF's built-in role.
+    scfEnvMap.OAK_USE_MEMORY_STORE = "1";
     const envVars = Object.entries(scfEnvMap).map(([k, v]) => `${k}=${v}`).join(",");
 
     console.log(bold("Creating agent..."));
@@ -1345,7 +1346,7 @@ const COMMANDS = {
     } else {
       scfUpdateEnv.OAK_DISABLE_SANDBOX = "1";
     }
-    if (process.env.OAK_USE_MEMORY_STORE) scfUpdateEnv.OAK_USE_MEMORY_STORE = process.env.OAK_USE_MEMORY_STORE;
+    scfUpdateEnv.OAK_USE_MEMORY_STORE = "1";  // consistent with agent:create
     const envStr = Object.entries(scfUpdateEnv).map(([k, v]) => `${k}=${v}`).join(",");
     process.stdout.write("Applying via tcb agent update... ");
     try {
