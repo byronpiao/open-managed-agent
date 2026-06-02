@@ -82,9 +82,12 @@ function sseWrite(res: Response, payload: unknown) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-function sseDone(res: Response) {
-  res.write("data: [DONE]\n\n");
-  res.end();
+function sseDone(res: Response, sse?: { getAll?: () => string }) {
+  // SCF web-function: only res.end() content reaches the client.
+  // All intermediate res.write() are dropped by the gateway.
+  // Deliver the entire SSE body — buffered frames + [DONE] — in one call.
+  const all = sse?.getAll?.() ?? "";
+  res.end(`${all}data: [DONE]\n\n`);
 }
 
 function sseSessionUpdate(res: Response, sessionId: string, update: unknown) {
@@ -346,7 +349,6 @@ async function handleSessionPrompt(
         .join("");
       console.log(`[ACP] session.send userText="${userText.slice(0,50)}" sessionId=${sessionId}`);
       events = session.send(userText);
-      console.log(`[ACP] session.send() returned (events type=${typeof events})`);
     }
 
     const result = await pumpEvents(events, session, {
@@ -356,20 +358,18 @@ async function handleSessionPrompt(
     });
     let stopReason: StopReason = result.stopReason;
     if (abortController.signal.aborted) stopReason = "cancelled";
-    sseWrite(
-      res,
-      rpcResult(id, {
-        stopReason,
-        ...(result.pendingToolUse ? { pendingToolUse: result.pendingToolUse } : {}),
-        ...(result.pendingPermission ? { pendingPermission: result.pendingPermission } : {}),
-      }),
-    );
+    // Write result through sse sink so it's included in the buffered body.
+    sse.write(rpcResult(id, {
+      stopReason,
+      ...(result.pendingToolUse ? { pendingToolUse: result.pendingToolUse } : {}),
+      ...(result.pendingPermission ? { pendingPermission: result.pendingPermission } : {}),
+    }));
   } catch (err) {
     console.error("[ACP] session/prompt failed:", err);
-    sseWrite(res, rpcError(id, -32000, String(err)));
+    sse.write(rpcError(id, -32000, String(err)));
   } finally {
     abortControllers.delete(sessionId);
-    sseDone(res);
+    sseDone(res, sse);
   }
   return true;
 }
