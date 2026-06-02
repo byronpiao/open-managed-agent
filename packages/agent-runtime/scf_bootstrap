@@ -5,20 +5,9 @@
 #   /var/user  — read-only (deployed code lives here)
 #   /tmp       — writable, up to 512MB
 #
-# Claude Code reads/writes:
-#   ~/.claude (settings, skills, memory) → set HOME=/tmp so this resolves
-#                                          to /tmp/.claude (writable)
-#   CLAUDE_CONFIG_DIR                    → explicit override, same effect
-#   project directory (cwd)             → must be writable for tool output;
-#                                          change to /tmp so bash/file tools work
-#
-# Port: SCF Web Function proxies to the port set in the function config.
-# Default is 9000 (matches our PORT ?? 9000 fallback in index.ts).
-#
 # Non-root execution: Claude Code's CLI refuses --dangerously-skip-permissions
-# when running as uid==0. We patch process.getuid at the Node.js layer so
-# the SDK and kernel see uid=1001 without actually changing process identity.
-# This avoids the overhead of su/useradd which would delay cold-start port binding.
+# when running as uid==0. uid-shim.mjs drops root via process.setuid(1001)
+# before any module loads. --import (Node 20+) loads it as ESM before index.js.
 
 export HOME=/tmp
 export CLAUDE_CONFIG_DIR=/tmp/.claude
@@ -26,4 +15,4 @@ export CLAUDE_CONFIG_DIR=/tmp/.claude
 mkdir -p /tmp/.claude /tmp/workspace
 cd /tmp
 
-exec node --require /var/user/uid-shim.js /var/user/dist/index.js
+exec node --import /var/user/uid-shim.mjs /var/user/dist/index.js

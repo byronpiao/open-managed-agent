@@ -316,6 +316,21 @@ export function toKernelAgentConfig(
     ? baseModel
     : baseModel.id;
 
+  // ── Sandbox capabilities ─────────────────────────────────────────────────
+  // Map agent_toolset enabled flags → SandboxCapabilities.
+  //   bash         → shell
+  //   read_file / write_file / list_files → filesystem
+  // If no agent_toolset is configured, default is all enabled.
+  const builtinPoliciesForCaps = resolveBuiltinTools(config);
+  const shellEnabled = builtinPoliciesForCaps.get("bash")?.enabled ?? true;
+  const fsEnabled =
+    (builtinPoliciesForCaps.get("read_file")?.enabled ?? true) ||
+    (builtinPoliciesForCaps.get("write_file")?.enabled ?? true) ||
+    (builtinPoliciesForCaps.get("list_files")?.enabled ?? true);
+  const sandboxCapabilities = (!shellEnabled || !fsEnabled)
+    ? { shell: shellEnabled, filesystem: fsEnabled }
+    : undefined; // omit when all enabled — kernel defaults to all-on
+
   // ── Sandbox ─────────────────────────────────────────────────────────────
   // AGS sandbox needs TCB_API_KEY (data plane) + TCB_SECRET_* (control plane).
   // Set OAK_DISABLE_SANDBOX=1 for local dev where those aren't available.
@@ -335,6 +350,7 @@ export function toKernelAgentConfig(
           runtime: new AgsStatefulSandbox(),
           scope: "session",
           cloudbaseTools: false,
+          ...(sandboxCapabilities ? { capabilities: sandboxCapabilities } : {}),
         },
     permissions: requireApproval
       ? {
