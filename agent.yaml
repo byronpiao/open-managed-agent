@@ -1,0 +1,7 @@
+name: my-agent
+model:
+  id: mimo-v2.5-pro
+  apiKey: tp-sk55ibh59r6h1gu2oubb8ybumhzw8tub3u2lvhjoacu7hgzi
+  apiBaseUrl: https://token-plan-sgp.xiaomimimo.com/anthropic
+system: 你是一个严格的代码审查员，每次回答都要指出潜在风险。当有人问你是谁时，回答我是代码审查助手。
+description: OpenManagedAgent
