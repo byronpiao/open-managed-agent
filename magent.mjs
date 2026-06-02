@@ -166,6 +166,7 @@ const SHORT_FLAGS = {
   s: "session",
   f: "file",
   n: "name",
+  o: "output",
 };
 
 // ── Arg parser (supports --key value and -k value) ────────────────────────────
@@ -948,56 +949,57 @@ const COMMANDS = {
     console.log(dim(`  runtime: ${runtime}`));
     console.log();
 
-    // Prepare deploy directory: copy build + install deps
+    // Bundle node_modules locally so the SCF function has deps available
+    // on cold start. The key pain point: claude-agent-sdk ships the native
+    // claude binary as an optional platform package (linux-x64). npm skips
+    // optionals on non-matching platforms, so we force-install it afterward.
     const deployDir = resolve(code, ".deploy");
+    let actualCode = code;
     try {
       execSync(`rm -rf "${deployDir}" && mkdir -p "${deployDir}"`, { encoding: "utf-8" });
-
-      const filesToCopy = ["dist", "package.json", "scf_bootstrap", "vendor"];
-      if (existsSync(resolve(code, "package-lock.json"))) filesToCopy.push("package-lock.json");
+      const filesToCopy = ["dist", "package.json", "package-lock.json", "scf_bootstrap", "vendor"];
       if (existsSync(resolve(code, "agent.yaml"))) filesToCopy.push("agent.yaml");
       if (existsSync(resolve(code, "skills")))     filesToCopy.push("skills");
       for (const f of filesToCopy) {
         const src = resolve(code, f);
         if (existsSync(src)) execSync(`cp -r "${src}" "${deployDir}/"`, { encoding: "utf-8" });
       }
-
       process.stdout.write(dim("  Installing dependencies... "));
       execSync("npm install --production --silent 2>/dev/null", {
         cwd: deployDir, encoding: "utf-8", timeout: 120000,
       });
-      // Force-install the linux-x64 Claude SDK binary: npm skips optional
-      // platform packages in --production mode, but the SDK needs the binary
-      // at runtime in the cloud function environment (linux/x64).
-      const sdkPkg = "@anthropic-ai/claude-agent-sdk";
-      const sdkVersion = JSON.parse(
-        readFileSync(resolve(deployDir, "node_modules", sdkPkg, "package.json"), "utf-8"),
-      ).version;
+      // Force-install the linux-x64 Claude SDK binary. npm refuses to install
+      // cross-platform optional deps without --force on arm64/darwin.
+      const sdkPkgPath = resolve(deployDir, "node_modules", "@anthropic-ai", "claude-agent-sdk", "package.json");
+      const sdkVersion = JSON.parse(readFileSync(sdkPkgPath, "utf-8")).version;
       execSync(
-        `npm install --no-save --silent @anthropic-ai/claude-agent-sdk-linux-x64@${sdkVersion} 2>/dev/null`,
+        `npm install --no-save --force --silent @anthropic-ai/claude-agent-sdk-linux-x64@${sdkVersion} 2>/dev/null`,
         { cwd: deployDir, encoding: "utf-8", timeout: 120000 },
       );
       console.log(green("OK"));
+      actualCode = deployDir;
     } catch (err) {
-      console.log(yellow(`  Warning: deploy prep failed, using code dir directly: ${err.message?.split("\n")[0]}`));
+      console.log(yellow(`  Warning: dep bundling failed: ${err.message?.split("\n")[0]}`));
+      console.log(yellow("  Falling back to --install-dep (cloud-side install, slower cold start)"));
     }
 
-    const actualCode = existsSync(resolve(deployDir, "node_modules")) ? deployDir : code;
-
     try {
-      const alias  = toAlias(name);
-      const raw    = runTcb([
+      const alias = toAlias(name);
+      const tcbArgs = [
         "agent", "create",
         "--name",        alias,
         "--runtime",     runtime,
         "--code",        actualCode,
+        "--ignore",      ".git,node_modules,.DS_Store,.deploy,.deploy-cloudrun,logs",
         "--timeout",     "7200",
         "--memory-size", "256",
         "--env",         envVars,
         "-e",            envId,
+        ...(actualCode === code ? ["--install-dep"] : []),  // fallback: cloud-side install
         "--json",
-      ], { timeout: 300000 });
-      const data   = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
+      ];
+      const raw  = runTcb(tcbArgs, { timeout: 300000 });
+      const data = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
 
       if (data.data?.agentId) {
         console.log(green(`✅ Agent created: ${data.data.agentId}`));
@@ -1030,6 +1032,52 @@ const COMMANDS = {
     const envId  = requireEnvId(args);
     const result = runTcb(["agent", "detail", agentId, "-e", envId], { timeout: 30000 });
     console.log(result);
+  },
+
+  // ─── Agent Export (live config → YAML) ───────────────────────────────────
+
+  "agent:export": async (args) => {
+    const agentId = args.id ?? process.env.CLOUDBASE_AGENT_ID ?? "";
+    if (!agentId) throw new Error("-i / --id is required (or set CLOUDBASE_AGENT_ID)");
+    requireEnvId(args);
+    const agentUrl = args.url ?? getAcpUrl({ ...args, agent: agentId });
+
+    process.stdout.write(dim("Fetching config from agent... "));
+    let cfg;
+    try {
+      const result = await acpCall(agentUrl, "initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+        clientInfo: { name: "magent", version: "0.1.0" },
+      });
+      if (!result?.agentConfig) throw new Error("initialize returned no agentConfig");
+      cfg = { ...result.agentConfig };
+      if (result.agentInfo?.name)  cfg.name        = result.agentInfo.name;
+      if (result.agentInfo?.title) cfg.description = result.agentInfo.title;
+    } catch (err) {
+      console.log(red("FAILED"));
+      throw err;
+    }
+    console.log(green("OK"));
+
+    // Strip internal deployment stamp injected by agent:update so the
+    // exported YAML is clean and idempotent when fed back to agent:update -f.
+    if (cfg.metadata?.__deployedAt) {
+      cfg = { ...cfg, metadata: { ...cfg.metadata } };
+      delete cfg.metadata.__deployedAt;
+      if (Object.keys(cfg.metadata).length === 0) delete cfg.metadata;
+    }
+
+    const { stringify } = await import("yaml");
+    const yamlText = stringify(cfg, { lineWidth: 0 });
+
+    const outPath = args.output;
+    if (outPath) {
+      writeFileSync(outPath, yamlText, "utf-8");
+      console.log(green(`✅ Config written to ${outPath}`));
+    } else {
+      process.stdout.write(yamlText);
+    }
   },
 
   "agent:delete": async (args) => {
@@ -1804,6 +1852,10 @@ ${bold("AGENT COMMANDS")}
 
   agent:list    [-e <envId>]                  List all agents
   agent:get     [-i <id>]                     Get agent details
+  agent:export  [-i <id>] [-o <file>]         Export live agent config to YAML
+                                              (round-trip safe; use with agent:update -f)
+    -o, --output <path>     Output file path (omit to print to stdout)
+    -e, --env <envId>       CloudBase environment ID
   agent:delete  [-i <id>]                     Delete an agent (also cleans up
                                               the underlying SCF function or
                                               CloudRun service)
@@ -1854,6 +1906,10 @@ ${bold("EXAMPLES")}
   magent agent:update --system "You are a strict code reviewer" -e my-env-id
   magent agent:update -f ./agent.yaml -e my-env-id
   magent agent:update --model deepseek-v3.2 -e my-env-id
+
+  # Export live config to file (then edit and push back)
+  magent agent:export -i agent_xxx -e my-env-id -o ./agent.yaml
+  magent agent:update -f ./agent.yaml -e my-env-id
 
   # One-shot task
   magent run -a agent_xxx -m "Write a bubble sort in Python"
