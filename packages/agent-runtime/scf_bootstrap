@@ -14,14 +14,28 @@
 #
 # Port: SCF Web Function proxies to the port set in the function config.
 # Default is 9000 (matches our PORT ?? 9000 fallback in index.ts).
+#
+# Non-root execution: Claude Code's CLI refuses --dangerously-skip-permissions
+# when running as uid==0. We create a non-root user at startup and re-exec
+# under that uid. The user is created in /tmp (writable) to avoid needing
+# write access to /etc.
 
-export HOME=/tmp
-export CLAUDE_CONFIG_DIR=/tmp/.claude
+# If already running as non-root (re-exec case), just start the server.
+if [ "$(id -u)" != "0" ]; then
+  export HOME=/tmp/agent-home
+  export CLAUDE_CONFIG_DIR=/tmp/agent-home/.claude
+  mkdir -p /tmp/agent-home/.claude /tmp/workspace
+  cd /tmp
+  exec node /var/user/dist/index.js
+fi
 
-# Ensure the directories Claude Code expects to write exist.
-mkdir -p /tmp/.claude /tmp/workspace
+# Running as root — create a non-root user and re-exec under it.
+# useradd writes to /etc/{passwd,shadow,group} which are writable in SCF.
+if ! id agent >/dev/null 2>&1; then
+  useradd --create-home --home-dir /tmp/agent-home --shell /bin/bash --uid 1001 agent 2>/dev/null || true
+fi
+mkdir -p /tmp/agent-home/.claude /tmp/workspace
+chown -R agent:agent /tmp/agent-home /tmp/workspace 2>/dev/null || true
 
-# Run from /tmp so relative-path file tools land in a writable directory.
-cd /tmp
-
-exec node /var/user/dist/index.js
+# Re-exec this script as the agent user, preserving the current env.
+exec su agent -s /bin/bash -c "exec $0 $*"
