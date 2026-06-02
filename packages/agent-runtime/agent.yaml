@@ -1,13 +1,14 @@
 name: stop-and-resume-demo
 description: Demo agent for verifying client-side tool stop-and-resume.
 model:
-  id: claude-sonnet-4-5-20250929
-  apiKey: ${ANTHROPIC_API_KEY}
-  # apiBaseUrl is optional — defaults to https://api.anthropic.com
+  id: mimo-v2.5-pro
+  apiKey: 
+  apiBaseUrl: https://token-plan-sgp.xiaomimimo.com/anthropic
+
 system: |
   You are a helpful assistant. You have one tool: read_file. When the user
   asks about a file, ALWAYS call read_file with the given path. After you
-  receive the file content, summarize it briefly.
+  receive the file content, summarize it briefly in one sentence.
 
 tools:
   # CLIENT-SIDE: this tool has no server implementation. Invoking it stops
