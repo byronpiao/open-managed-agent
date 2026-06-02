@@ -14,15 +14,17 @@
  */
 
 import type { Response } from "express";
+import { z } from "zod";
 import {
   createAgent,
   type Agent as KernelAgent,
   type ApprovalDecision,
   type Session as KernelSession,
   type SessionEvent,
+  type ToolDefinition,
 } from "@cloudbase/open-agent-kernel";
 
-import { toKernelAgentConfig } from "./config.js";
+import { toKernelAgentConfig, getCustomTools } from "./config.js";
 import type { AgentConfig } from "./config.js";
 
 // ── Singletons ───────────────────────────────────────────────────────────────
@@ -32,7 +34,8 @@ let _kernelAgent: KernelAgent | null = null;
 /** Build (or return cached) kernel Agent for this process. */
 export function getKernelAgent(config: AgentConfig): KernelAgent {
   if (_kernelAgent) return _kernelAgent;
-  _kernelAgent = createAgent(toKernelAgentConfig(config));
+  const customToolDefs = getCustomTools(config).map(makeCustomToolDefinition);
+  _kernelAgent = createAgent(toKernelAgentConfig(config, { customToolDefs }));
   console.log(`[KernelAdapter] kernel Agent created (id=${_kernelAgent.id})`);
   return _kernelAgent;
 }
@@ -367,6 +370,121 @@ export function makeSseSink(res: Response): SseSink {
       res.write(
         `data: ${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n\n`,
       );
+    },
+  };
+}
+
+// ── Active SSE sinks per session ─────────────────────────────────────────────
+// Custom tool execute() callbacks need to send a reverse-RPC into the SSE
+// stream that's currently serving the session/prompt request. The acp-endpoint
+// registers/unregisters here around each streaming call.
+
+const activeSinks = new Map<string, SseSink>();
+
+export function registerSseSink(sessionId: string, sink: SseSink): void {
+  activeSinks.set(sessionId, sink);
+}
+export function unregisterSseSink(sessionId: string): void {
+  activeSinks.delete(sessionId);
+}
+
+// ── Pending custom-tool executions ───────────────────────────────────────────
+
+interface PendingCustomTool {
+  sessionId: string;
+  toolUseId: string;
+  resolve: (result: string) => void;
+  reject: (err: Error) => void;
+  timeout: NodeJS.Timeout;
+}
+
+/** toolUseId → pending. */
+const pendingCustomTools = new Map<string, PendingCustomTool>();
+
+/** Default 120s — custom tools run client-side; give them time. */
+const CUSTOM_TOOL_TIMEOUT_MS = 120_000;
+
+/**
+ * Called from `acp-endpoint.ts` when the client POSTs a custom_tool_result
+ * JSON-RPC response. Resolves (or rejects) the waiting execute() promise.
+ *
+ * @returns true iff toolUseId matched a pending execution.
+ */
+export function tryResolvePendingCustomTool(toolUseId: string, body: unknown): boolean {
+  const pending = pendingCustomTools.get(toolUseId);
+  if (!pending) return false;
+  pendingCustomTools.delete(toolUseId);
+  clearTimeout(pending.timeout);
+
+  const b = body as { result?: { content?: string; is_error?: boolean }; error?: unknown };
+  if (b.error) {
+    const errMsg = typeof b.error === "object" && b.error !== null && "message" in b.error
+      ? String((b.error as { message?: unknown }).message)
+      : String(b.error);
+    pending.reject(new Error(`Custom tool error from client: ${errMsg}`));
+    return true;
+  }
+  const isError = b.result?.is_error === true;
+  const content = b.result?.content ?? "";
+  if (isError) {
+    pending.reject(new Error(content));
+  } else {
+    pending.resolve(content);
+  }
+  return true;
+}
+
+/**
+ * Build a `ToolDefinition` for a custom tool defined in agent.yaml.
+ * The execute() function sends a reverse JSON-RPC `session/request_custom_tool`
+ * into the active SSE stream for the session, then waits for the client to
+ * POST back a `custom_tool_result` via tryResolvePendingCustomTool().
+ */
+export function makeCustomToolDefinition(
+  tool: { name: string; description: string; input_schema: Record<string, unknown> },
+): ToolDefinition {
+  // We receive input_schema as a plain JSON Schema object from YAML.
+  // The kernel expects a Zod schema, so we use z.record(z.unknown()) as a
+  // passthrough — the actual validation and execution happens client-side.
+  const inputSchema = z.record(z.string(), z.unknown());
+
+  return {
+    name: tool.name,
+    description: tool.description,
+    parameters: inputSchema,
+    execute: async (input: Record<string, unknown>, ctx) => {
+      const sessionId = ctx.conversationId;
+      const sink = activeSinks.get(sessionId);
+      if (!sink) {
+        throw new Error(
+          `[CustomTool] No active SSE sink for session ${sessionId} — ` +
+          `client must be connected via session/prompt to handle custom tools`,
+        );
+      }
+
+      return new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          if (pendingCustomTools.delete(ctx.toolUseId)) {
+            reject(new Error(`Custom tool '${tool.name}' timed out after ${CUSTOM_TOOL_TIMEOUT_MS}ms`));
+          }
+        }, CUSTOM_TOOL_TIMEOUT_MS);
+
+        pendingCustomTools.set(ctx.toolUseId, {
+          sessionId,
+          toolUseId: ctx.toolUseId,
+          resolve,
+          reject,
+          timeout,
+        });
+
+        // Send reverse-RPC to client: ask it to execute the custom tool.
+        sink.writeRequest("session/request_custom_tool", ctx.toolUseId as unknown as number, {
+          sessionId,
+          toolUseId: ctx.toolUseId,
+          toolName: tool.name,
+          input,
+        });
+      });
     },
   };
 }

@@ -42,7 +42,10 @@ import {
   makeSseSink,
   pumpEvents,
   registerKernelSession,
+  registerSseSink,
+  unregisterSseSink,
   tryResolvePendingApproval,
+  tryResolvePendingCustomTool,
 } from "./kernel-adapter.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -306,6 +309,7 @@ async function handleSessionPrompt(
   const sse = makeSseSink(res);
   const abortController = new AbortController();
   abortControllers.set(sessionId, abortController);
+  registerSseSink(sessionId, sse);
 
   let stopReason: "end_turn" | "cancelled" | "error" = "end_turn";
   try {
@@ -322,6 +326,7 @@ async function handleSessionPrompt(
     sseWrite(res, rpcError(id, -32000, String(err)));
   } finally {
     abortControllers.delete(sessionId);
+    unregisterSseSink(sessionId);
     sseDone(res);
   }
   return true;
@@ -407,7 +412,14 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
     // No `method`, but has `result` or `error`, and `id` matches a pending.
     if (!body.method && (body.result !== undefined || body.error !== undefined)) {
       const idNum = typeof body.id === "number" ? body.id : Number(body.id);
-      if (Number.isFinite(idNum) && tryResolvePendingApproval(idNum, body)) {
+      const idStr = typeof body.id === "string" ? body.id : String(body.id);
+
+      // Check pending approvals (numeric negative ids from reverse-RPC)
+      if (Number.isFinite(idNum) && idNum < 0 && tryResolvePendingApproval(idNum, body)) {
+        return res.status(204).end();
+      }
+      // Check pending custom tool executions (string toolUseId)
+      if (tryResolvePendingCustomTool(idStr, body)) {
         return res.status(204).end();
       }
       return res.status(400).json(rpcError(body.id ?? null, -32600, "No matching pending request"));
