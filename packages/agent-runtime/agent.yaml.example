@@ -30,7 +30,17 @@ tools:
         # permission_policy:
         #   type: always_ask  # Uncomment to require confirmation for shell commands
 
-  # Custom tools (executed by client, not server)
+  # Custom tools — ALWAYS client-side execution.
+  # YAML can only declare a tool's contract (name + description + input_schema);
+  # it has no place to put an implementation. So every `type: custom` tool
+  # below is executed by the *client* that opened the session/prompt stream.
+  #
+  # Wire flow:
+  #   1. Agent decides to call the tool → runtime emits SSE `tool_call` frame
+  #      then ends the turn with stopReason='tool_use' + a pendingToolUse hint.
+  #   2. Client executes the tool locally.
+  #   3. Client resumes by POSTing a fresh session/prompt whose prompt[] starts
+  #      with a `tool_result` block (tool_use_id + content + is_error).
   # - type: custom
   #   name: query_database
   #   description: Execute a read-only SQL query against the application database.

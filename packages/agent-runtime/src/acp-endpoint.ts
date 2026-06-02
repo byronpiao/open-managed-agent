@@ -40,12 +40,11 @@ import {
   getKernelAgent,
   getOrCreateKernelSession,
   makeSseSink,
+  outcomeToDecision,
   pumpEvents,
   registerKernelSession,
-  registerSseSink,
-  unregisterSseSink,
-  tryResolvePendingApproval,
-  tryResolvePendingCustomTool,
+  type ApprovalOutcome,
+  type StopReason,
 } from "./kernel-adapter.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -287,21 +286,26 @@ async function handleSessionPrompt(
   config: AgentConfig,
 ): Promise<boolean> {
   const sessionId = String(params.sessionId ?? "");
-  const promptBlocks = (params.prompt ?? []) as Array<{
-    type: string;
-    text?: string;
-    data?: string;
-    mimeType?: string;
-  }>;
-  const userText = promptBlocks
-    .filter((b) => b.type === "text" && typeof b.text === "string")
-    .map((b) => b.text!)
-    .join("");
-
   if (!sessionId) {
     res.json(rpcError(id, -32602, "sessionId is required"));
     return true;
   }
+
+  const promptBlocks = (params.prompt ?? []) as Array<{
+    type: string;
+    text?: string;
+    // tool_result block (client → agent, resumes a paused turn)
+    tool_use_id?: string;
+    content?: unknown;
+    is_error?: boolean;
+    // permission_decision block (client → agent, resolves a paused approval)
+    decision?: string;        // optionId, e.g. "allow-once"
+  }>;
+
+  // Dispatch by the FIRST non-text block type. Mixed prompts (e.g. text + tool_result)
+  // aren't supported — the kernel takes one logical SessionInput at a time.
+  const toolResultBlock = promptBlocks.find((b) => b.type === "tool_result");
+  const permissionBlock = promptBlocks.find((b) => b.type === "permission_decision");
 
   const session = await getOrCreateKernelSession(config, sessionId);
 
@@ -309,24 +313,60 @@ async function handleSessionPrompt(
   const sse = makeSseSink(res);
   const abortController = new AbortController();
   abortControllers.set(sessionId, abortController);
-  registerSseSink(sessionId, sse);
 
-  let stopReason: "end_turn" | "cancelled" | "error" = "end_turn";
   try {
-    const events = session.send(userText);
-    stopReason = await pumpEvents(events, session, {
+    let events;
+    if (toolResultBlock) {
+      if (!toolResultBlock.tool_use_id) {
+        res.json(rpcError(id, -32602, "tool_result block requires tool_use_id"));
+        return true;
+      }
+      events = session.send({
+        type: "tool_result",
+        toolUseId: toolResultBlock.tool_use_id,
+        output: toolResultBlock.content ?? "",
+        isError: toolResultBlock.is_error ?? false,
+      });
+    } else if (permissionBlock) {
+      if (!permissionBlock.tool_use_id || !permissionBlock.decision) {
+        res.json(rpcError(id, -32602, "permission_decision requires tool_use_id and decision"));
+        return true;
+      }
+      const outcome: ApprovalOutcome = permissionBlock.decision === "cancelled"
+        ? { outcome: "cancelled" }
+        : { outcome: "selected", optionId: permissionBlock.decision };
+      events = session.respondApproval({
+        toolUseId: permissionBlock.tool_use_id,
+        decision: outcomeToDecision(outcome),
+      });
+    } else {
+      const userText = promptBlocks
+        .filter((b) => b.type === "text" && typeof b.text === "string")
+        .map((b) => b.text!)
+        .join("");
+      events = session.send(userText);
+    }
+
+    const result = await pumpEvents(events, session, {
       sse,
       rpcId: id,
       acpSessionId: sessionId,
     });
+    let stopReason: StopReason = result.stopReason;
     if (abortController.signal.aborted) stopReason = "cancelled";
-    sseWrite(res, rpcResult(id, { stopReason }));
+    sseWrite(
+      res,
+      rpcResult(id, {
+        stopReason,
+        ...(result.pendingToolUse ? { pendingToolUse: result.pendingToolUse } : {}),
+        ...(result.pendingPermission ? { pendingPermission: result.pendingPermission } : {}),
+      }),
+    );
   } catch (err) {
     console.error("[ACP] session/prompt failed:", err);
     sseWrite(res, rpcError(id, -32000, String(err)));
   } finally {
     abortControllers.delete(sessionId);
-    unregisterSseSink(sessionId);
     sseDone(res);
   }
   return true;
@@ -406,23 +446,6 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
 
     if (!body || body.jsonrpc !== "2.0") {
       return res.status(400).json(rpcError(null, -32600, "Invalid JSON-RPC 2.0 request"));
-    }
-
-    // ── Reverse-RPC response (HITL): client → agent ─────────────────────
-    // No `method`, but has `result` or `error`, and `id` matches a pending.
-    if (!body.method && (body.result !== undefined || body.error !== undefined)) {
-      const idNum = typeof body.id === "number" ? body.id : Number(body.id);
-      const idStr = typeof body.id === "string" ? body.id : String(body.id);
-
-      // Check pending approvals (numeric negative ids from reverse-RPC)
-      if (Number.isFinite(idNum) && idNum < 0 && tryResolvePendingApproval(idNum, body)) {
-        return res.status(204).end();
-      }
-      // Check pending custom tool executions (string toolUseId)
-      if (tryResolvePendingCustomTool(idStr, body)) {
-        return res.status(204).end();
-      }
-      return res.status(400).json(rpcError(body.id ?? null, -32600, "No matching pending request"));
     }
 
     if (!body.method) {
