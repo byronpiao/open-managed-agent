@@ -77,8 +77,10 @@ export async function getOrCreateKernelSession(
     // brand-new acp session created before the kernel store existed).
     try {
       session = await agent.resumeSession(acpSessionId);
+      console.log(`[KernelAdapter] resumeSession OK for ${acpSessionId}`);
     } catch (err) {
-      console.warn(`[KernelAdapter] resumeSession failed (${err}); starting fresh`);
+      const msg = (err as Error)?.message ?? String(err);
+      console.warn(`[KernelAdapter] resumeSession FAILED: ${msg} — starting fresh`);
       session = await agent.startSession({ userId, conversationId: acpSessionId });
     }
   }
@@ -180,6 +182,8 @@ function tryParseClientToolPending(output: unknown): ClientToolPendingPayload | 
 
 interface SseSink {
   write: (frame: unknown) => void;
+  flush?: () => void;
+  getAll?: () => string;
 }
 
 interface StreamCtx {
@@ -392,6 +396,7 @@ export async function pumpEvents(
         break;
     }
   }
+  console.log(`[KernelAdapter] pumpEvents done: total=${eventCount} textChunks=${eventCount - (eventCount > 0 ? 1 : 0)}`);
   if (pendingClientTool) {
     return { stopReason: "tool_use", pendingToolUse: pendingClientTool };
   }
@@ -428,9 +433,23 @@ function buildApprovalOptions(
 // ── SSE sink helpers (used by acp-endpoint) ─────────────────────────────────
 
 export function makeSseSink(res: Response): SseSink {
+  // Buffer all SSE frames in memory and flush them all at once when the
+  // response ends. SCF web-function gateway buffers the HTTP response and
+  // only delivers the last `res.write()` to the client — so streaming
+  // individual frames would silently drop every frame except the last one.
+  // By collecting first and flushing in one `res.end()` call we ensure the
+  // gateway sees a complete, well-formed SSE body.
+  const frames: string[] = [];
   return {
     write: (frame) => {
-      res.write(`data: ${JSON.stringify(frame)}\n\n`);
+      frames.push(`data: ${JSON.stringify(frame)}\n\n`);
+    },
+    getAll: () => frames.join(""),
+    flush: () => {
+      if (frames.length > 0) {
+        res.write(frames.join(""));
+        frames.length = 0;
+      }
     },
   };
 }
