@@ -923,7 +923,23 @@ const COMMANDS = {
     if (system) config.system = system;
 
     const configB64 = Buffer.from(JSON.stringify(config)).toString("base64");
-    const envVars   = `CLOUDBASE_ENV_ID=${envId},AGENT_CONFIG_B64=${configB64}`;
+    // Build env string for `tcb agent create --env`. Same OAK_* defaults as
+    // buildCloudRunEnvParam: auto-disable sandbox when no TCB_API_KEY is set,
+    // fall back to memory store when no DB creds are available.
+    const scfEnvMap = {
+      CLOUDBASE_ENV_ID: envId,
+      AGENT_CONFIG_B64: configB64,
+    };
+    if (process.env.TCB_API_KEY) {
+      scfEnvMap.TCB_API_KEY = process.env.TCB_API_KEY;
+    } else {
+      scfEnvMap.OAK_DISABLE_SANDBOX = "1";
+    }
+    // SCF functions get DB creds via the built-in role (TENCENTCLOUD_SECRETID
+    // etc. auto-injected), so we don't need OAK_USE_MEMORY_STORE unless the
+    // operator explicitly requests it.
+    if (process.env.OAK_USE_MEMORY_STORE) scfEnvMap.OAK_USE_MEMORY_STORE = process.env.OAK_USE_MEMORY_STORE;
+    const envVars = Object.entries(scfEnvMap).map(([k, v]) => `${k}=${v}`).join(",");
 
     console.log(bold("Creating agent..."));
     console.log(dim(`  name:    ${config.name}`));
@@ -937,7 +953,8 @@ const COMMANDS = {
     try {
       execSync(`rm -rf "${deployDir}" && mkdir -p "${deployDir}"`, { encoding: "utf-8" });
 
-      const filesToCopy = ["dist", "package.json", "scf_bootstrap"];
+      const filesToCopy = ["dist", "package.json", "scf_bootstrap", "vendor"];
+      if (existsSync(resolve(code, "package-lock.json"))) filesToCopy.push("package-lock.json");
       if (existsSync(resolve(code, "agent.yaml"))) filesToCopy.push("agent.yaml");
       if (existsSync(resolve(code, "skills")))     filesToCopy.push("skills");
       for (const f of filesToCopy) {
@@ -949,6 +966,17 @@ const COMMANDS = {
       execSync("npm install --production --silent 2>/dev/null", {
         cwd: deployDir, encoding: "utf-8", timeout: 120000,
       });
+      // Force-install the linux-x64 Claude SDK binary: npm skips optional
+      // platform packages in --production mode, but the SDK needs the binary
+      // at runtime in the cloud function environment (linux/x64).
+      const sdkPkg = "@anthropic-ai/claude-agent-sdk";
+      const sdkVersion = JSON.parse(
+        readFileSync(resolve(deployDir, "node_modules", sdkPkg, "package.json"), "utf-8"),
+      ).version;
+      execSync(
+        `npm install --no-save --silent @anthropic-ai/claude-agent-sdk-linux-x64@${sdkVersion} 2>/dev/null`,
+        { cwd: deployDir, encoding: "utf-8", timeout: 120000 },
+      );
       console.log(green("OK"));
     } catch (err) {
       console.log(yellow(`  Warning: deploy prep failed, using code dir directly: ${err.message?.split("\n")[0]}`));
@@ -1252,9 +1280,19 @@ const COMMANDS = {
     // SCF (or unknown — fall through to legacy path). For SCF the config
     // is passed via env var directly; tcb agent update handles the deploy.
     const configBase64 = Buffer.from(configJson).toString("base64");
+    const scfUpdateEnv = {
+      CLOUDBASE_ENV_ID: envId,
+      AGENT_CONFIG_B64: configBase64,
+    };
+    if (process.env.TCB_API_KEY) {
+      scfUpdateEnv.TCB_API_KEY = process.env.TCB_API_KEY;
+    } else {
+      scfUpdateEnv.OAK_DISABLE_SANDBOX = "1";
+    }
+    if (process.env.OAK_USE_MEMORY_STORE) scfUpdateEnv.OAK_USE_MEMORY_STORE = process.env.OAK_USE_MEMORY_STORE;
+    const envStr = Object.entries(scfUpdateEnv).map(([k, v]) => `${k}=${v}`).join(",");
     process.stdout.write("Applying via tcb agent update... ");
     try {
-      const envStr = `CLOUDBASE_ENV_ID=${envId},AGENT_CONFIG_B64=${configBase64}`;
       const raw = runTcb(
         ["agent", "update", agentId, "--env", envStr, "-e", envId, "--json"],
         { timeout: 120000 },
