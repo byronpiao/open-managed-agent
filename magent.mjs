@@ -958,8 +958,10 @@ const COMMANDS = {
     try {
       execSync(`rm -rf "${deployDir}" && mkdir -p "${deployDir}"`, { encoding: "utf-8" });
       const filesToCopy = ["dist", "package.json", "package-lock.json", "scf_bootstrap", "vendor"];
+      // agent.yaml is optional — only bundled if the user explicitly created one
+      // (by copying agent.yaml.example). Without it, config is injected via AGENT_CONFIG_B64.
       if (existsSync(resolve(code, "agent.yaml"))) filesToCopy.push("agent.yaml");
-      if (existsSync(resolve(code, "skills")))     filesToCopy.push("skills");
+      if (existsSync(resolve(code, "skills"))) filesToCopy.push("skills");
       for (const f of filesToCopy) {
         const src = resolve(code, f);
         if (existsSync(src)) execSync(`cp -r "${src}" "${deployDir}/"`, { encoding: "utf-8" });

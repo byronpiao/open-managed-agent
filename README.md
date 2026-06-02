@@ -225,7 +225,7 @@ sessions_collection: acp_sessions   # Session 存储的集合名，启动时自�
 
 ---
 
-## 更新 Agent 配置（`magent agent:update`）
+## 更新 Agent 配置（`magent agent:update` / `magent agent:export`）
 
 **不需要重新部署代码。** 约 8 秒生效：
 
@@ -248,6 +248,21 @@ magent agent:update \
   --tools '[{"type":"agent_toolset","configs":[{"name":"bash","permission_policy":{"type":"always_ask"}}]}]'
 ```
 
+### 导出当前配置（`agent:export`）
+
+```bash
+# 导出到文件（可直接用于 agent:update -f，round-trip 安全）
+magent agent:export -i agent_xxx -e my-env-id -o ./agent.yaml
+
+# 打印到 stdout
+magent agent:export -i agent_xxx -e my-env-id
+
+# 典型工作流：导出 → 编辑 → 推回
+magent agent:export -i agent_xxx -e my-env-id -o ./agent.yaml
+# 编辑 agent.yaml ...
+magent agent:update -f ./agent.yaml -e my-env-id
+```
+
 ### 工作原理
 
 ```
@@ -259,15 +274,19 @@ magent agent:update --system "new prompt"
     └─ 4. 写入环境变量: tcb agent update <id> --env "..." (~8s)
 ```
 
+> **注意**：若 agent 携带了 `agent.yaml`，yaml 文件优先级最高，`agent:update` 通过环境变量注入的配置将被覆盖。
+
 ### 配置加载优先级（Runtime 内部）
 
 ```
-AGENT_CONFIG / AGENT_CONFIG_B64 环境变量    ← magent agent:update 写入
+agent.yaml 文件                             ← 用户主动放置时生效（最高优先级）
         ↓ fallback
-agent.yaml 文件                             ← 随代码部署
+AGENT_CONFIG / AGENT_CONFIG_B64 环境变量    ← magent agent:update 写入（默认云端路径）
         ↓ fallback
 AGENT_MODEL + AGENT_SYSTEM 环境变量         ← 向后兼容
 ```
+
+> **设计原则**：`agent.yaml.example` 作为配置模板随代码发布，默认**不包含** `agent.yaml`，因此普通部署通过 `AGENT_CONFIG_B64` 管理配置。用户如需固定配置（如 GitOps 或容器 mounting），只需 `cp agent.yaml.example agent.yaml` 即可接管优先级。
 
 ---
 
@@ -298,6 +317,7 @@ npm install -g open-managed-agent
 | `-s <id>` | `--session <id>` | Session ID |
 | `-f <path>` | `--file <path>` | 文件路径 |
 | `-n <name>` | `--name <name>` | 名称 |
+| `-o <path>` | `--output <path>` | 输出文件路径 |
 
 ### 环境变量
 
@@ -331,6 +351,9 @@ magent agent:update  [--id <id>] [options]   # 更新配置（~8s，不重新部
   --tools <json>          替换 tools 数组
   --mcp-servers <json>    替换 mcp_servers 数组
   --skills <json>         替换 skills 数组
+
+magent agent:export  [--id <id>] [-o <file>] # 导出当前运行配置为 YAML
+  -o, --output <path>     写入文件（省略则打印到 stdout）
 
 # ─── 对话 ─────────────────────────────────────────────────
 magent run   -a <id> -m "..."    # 一次性对话（自动创建/销毁 session）
@@ -554,10 +577,10 @@ cloudbase-managed-agent/
 │   └── agent-runtime/        # 服务端运行时（部署到 SCF）
 │       ├── src/
 │       │   ├── index.ts      # Express 服务入口
-│       │   ├── config.ts     # 配置加载（AGENT_CONFIG > YAML > env vars）
+│       │   ├── config.ts     # 配置加载（agent.yaml > AGENT_CONFIG env var > env vars）
 │       │   ├── acp-endpoint.ts # ACP JSON-RPC 处理
 │       │   └── hunyuan-agent.ts # AI Agent 核心逻辑
-│       ├── agent.yaml        # 默认配置模板
+│       ├── agent.yaml.example  # 配置模板（cp 为 agent.yaml 后生效，优先级最高）
 │       └── scf_bootstrap     # SCF 启动脚本
 ├── tests/
 │   ├── integration.ts        # SDK 集成测试（ACP 全流程）
