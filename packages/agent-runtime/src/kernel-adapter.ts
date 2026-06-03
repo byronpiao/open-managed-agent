@@ -179,12 +179,6 @@ function tryParseClientToolPending(output: unknown): ClientToolPendingPayload | 
   }
 }
 
-/** Strip 'mcp__<server>__' prefix added by kernel's MCP packaging. */
-function stripMcpPrefix(toolName: string): string {
-  const m = toolName.match(/^mcp__[^_]+__(.+)$/);
-  return m ? m[1] : toolName;
-}
-
 // ── Stream pump ──────────────────────────────────────────────────────────────
 
 interface SseSink {
@@ -298,14 +292,14 @@ export async function pumpEvents(
         // sentinel payload's own toolUseId is empty because the wrapping MCP
         // handler doesn't have access to ctx.toolUseId — this is fine; the
         // event's toolUseId is the canonical id the model emitted).
+        // toolName is forwarded as-is (e.g. 'mcp__custom__read_file') so the
+        // client sees the same prefixed namespace as sandbox / cloudbase
+        // tools — clients should match by prefix to know it's a custom tool.
         const sentinel = tryParseClientToolPending(e.output);
         if (sentinel) {
-          // Strip 'mcp__kernel__' prefix from toolName if present (when the
-          // user-defined tool was wrapped as an MCP server tool inside kernel).
-          const toolName = sentinel.toolName || stripMcpPrefix(e.toolName);
           pendingClientTool = {
             toolUseId: e.toolUseId,
-            toolName,
+            toolName: e.toolName,
             input: sentinel.input,
           };
           break;
