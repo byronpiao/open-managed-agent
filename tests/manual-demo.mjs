@@ -28,7 +28,7 @@ import ManagedAgents from "../packages/sdk/dist/index.js";
 
 // ── Defaults baked in for the stop-resume-demo agent ────────────────────────
 // Override any of these via process.argv or env vars below.
-const DEFAULT_AGENT_ID = "agent-stop-resume-demo-400a44d4b";
+const DEFAULT_AGENT_ID = "agent-stop-resume-demo-9c2611949";
 const DEFAULT_ENV_ID   = "test-6g2rfs50c69b7fb8";
 // CloudBase gateway Bearer token (long-lived API key issued for env above).
 const DEFAULT_ACCESS_KEY =
