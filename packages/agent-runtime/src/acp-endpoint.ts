@@ -357,26 +357,23 @@ async function handleSessionPrompt(
         res.json(rpcError(id, -32602, "tool_result block requires tool_use_id"));
         return true;
       }
-      // The SDK's transcript already contains a synthetic tool_result
-      // (is_error=true with our sentinel) recorded when the model called
-      // the client-side tool — pumpEvents intercepted the sentinel before
-      // surfacing it to the client, but the SDK still wrote one entry.
-      // Sending a second tool_result block with the same tool_use_id
-      // confuses Anthropic-compatible gateways (mimo, OpenRouter…) that
-      // see two results for the one tool_use call.
-      //
-      // Workaround: resume by sending the actual tool output as a normal
-      // user message, framed as authoritative ground truth for the prior
-      // tool call. The model treats it as a course-correction. Round-
-      // trips reliably across all proxies we've tested.
-      const content =
+      // PR #7.1: protocol-pure path. The kernel's PreToolUse hook stashed
+      // a pending entry when the model first called the client-side tool;
+      // we now feed the real result back via session.respondToolUse(). The
+      // kernel resumes the SDK with a prompt that tells the model to retry
+      // the call; the hook then ALLOWs and injects the result via
+      // updatedInput, so the SDK records a clean (non-error) tool_result
+      // in the transcript with the new tool_use_id. No duplicate
+      // tool_result blocks, no fake "user message" wrapping.
+      const output =
         typeof toolResultBlock.content === "string"
           ? toolResultBlock.content
           : JSON.stringify(toolResultBlock.content ?? "");
-      const wrapped = toolResultBlock.is_error
-        ? `[Tool error for tool_use_id=${toolResultBlock.tool_use_id}]\n${content}`
-        : `[Tool result for tool_use_id=${toolResultBlock.tool_use_id}]\nThe earlier tool result was a placeholder. Here is the actual output:\n${content}\n\nPlease use this content to answer the user's original question.`;
-      events = session.send(wrapped);
+      events = session.respondToolUse({
+        toolUseId: toolResultBlock.tool_use_id,
+        output,
+        isError: toolResultBlock.is_error ?? false,
+      });
     } else if (permissionBlock) {
       if (!permissionBlock.tool_use_id || !permissionBlock.decision) {
         res.json(rpcError(id, -32602, "permission_decision requires tool_use_id and decision"));
