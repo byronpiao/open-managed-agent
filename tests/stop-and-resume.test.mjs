@@ -71,38 +71,29 @@ test("plain message flow ends with end_turn", async () => {
   }
 });
 
-// ── 2. Client-side tool sentinel → stopReason='tool_use' ────────────────────
+// ── 2. Kernel emits tool_use_required → stopReason='tool_use' ───────────────
 
-test("client-side tool sentinel → stopReason=tool_use + pendingToolUse", async () => {
+test("tool_use_required → stopReason=tool_use + pendingToolUse + SSE frame", async () => {
   const { sink, frames } = makeFakeSse();
 
-  // Build a sentinel-bearing error message exactly the way our tool's
-  // execute() would throw it (the SDK relays the thrown error message into
-  // tool_result.output as text).
-  const payload = {
-    __OAK_CLIENT_TOOL_PENDING__: true,
-    toolUseId: "tu-abc",
-    toolName: "read_file",
-    input: { path: "/src/main.ts" },
-  };
-  const sentinelText = `__OAK_CLIENT_TOOL_PENDING__:${JSON.stringify(payload)}`;
-
+  // PR #7.1: kernel's PreToolUse hook denies a custom tool with the
+  // client-tool sentinel; event-translator turns that into a kernel
+  // 'tool_use_required' SessionEvent. Runtime pumpEvents must:
+  //   1. surface a 'tool_use_request' SSE frame
+  //   2. terminate the turn with stopReason='tool_use' and pendingToolUse
   const events = fromArray([
     {
       type: "tool_call",
       toolUseId: "tu-abc",
-      toolName: "read_file",
+      toolName: "mcp__custom__read_file",
       input: { path: "/src/main.ts" },
     },
     {
-      type: "tool_result",
+      type: "tool_use_required",
       toolUseId: "tu-abc",
       toolName: "read_file",
-      output: sentinelText,
-      isError: true,
+      input: { path: "/src/main.ts" },
     },
-    // SDK ended the turn after the synthetic error
-    { type: "session_idle", reason: "completed" },
   ]);
 
   const result = await pumpEvents(events, {}, {
@@ -117,34 +108,23 @@ test("client-side tool sentinel → stopReason=tool_use + pendingToolUse", async
     toolName: "read_file",
     input: { path: "/src/main.ts" },
   });
-  // Critically: the SSE stream got the tool_call frame but NOT a
-  // tool_call_update with a fake error (we suppressed it).
   const real = nonLogFrames(frames);
-  assert.equal(real.length, 1);
+  // Two frames: the original tool_call (in_progress) + tool_use_request hint.
+  assert.equal(real.length, 2);
   assert.equal(real[0].params.update.sessionUpdate, "tool_call");
-  assert.equal(real[0].params.update.toolCallId, "tu-abc");
+  assert.equal(real[1].params.update.sessionUpdate, "tool_use_request");
+  assert.equal(real[1].params.update.toolCallId, "tu-abc");
+  assert.equal(real[1].params.update.toolName, "read_file");
 });
 
-// ── 2b. Sentinel embedded in array-typed output (SDK sometimes wraps) ───────
+// ── 2b. tool_use_required event takes precedence over later events ──────────
 
-test("sentinel in array-shaped tool_result.output is detected", async () => {
+test("tool_use_required ends turn immediately (no further events processed)", async () => {
   const { sink } = makeFakeSse();
-  const payload = {
-    __OAK_CLIENT_TOOL_PENDING__: true,
-    toolUseId: "tu-xyz",
-    toolName: "fs_write",
-    input: { path: "/tmp/a", content: "hi" },
-  };
-  const text = `prefix __OAK_CLIENT_TOOL_PENDING__:${JSON.stringify(payload)}`;
   const events = fromArray([
-    { type: "tool_call", toolUseId: "tu-xyz", toolName: "fs_write", input: payload.input },
-    {
-      type: "tool_result",
-      toolUseId: "tu-xyz",
-      toolName: "fs_write",
-      output: [{ type: "text", text }],
-      isError: true,
-    },
+    { type: "tool_call", toolUseId: "tu-xyz", toolName: "mcp__custom__fs_write", input: { path: "/tmp/a", content: "hi" } },
+    { type: "tool_use_required", toolUseId: "tu-xyz", toolName: "fs_write", input: { path: "/tmp/a", content: "hi" } },
+    // pumpEvents should NOT see this — it returns at tool_use_required.
     { type: "session_idle", reason: "completed" },
   ]);
   const result = await pumpEvents(events, {}, {
@@ -231,7 +211,11 @@ test("non-sentinel tool_result emits tool_call_update completed", async () => {
 
 // ── 5. makeClientSideToolDefinition produces a sentinel-throwing tool ───────
 
-test("makeClientSideToolDefinition throws sentinel error from execute()", async () => {
+test("makeClientSideToolDefinition is a defensive stub (hook should preempt)", async () => {
+  // PR #7.1: with the new kernel hook in place, execute() never runs for
+  // client-side tools — the hook denies+sentinels at PreToolUse time. The
+  // wrapper now returns a clear error string if it does run (e.g. when a
+  // stale kernel without PR #7.1 is bundled), instead of throwing.
   const def = makeClientSideToolDefinition({
     name: "fetch_url",
     description: "Fetch a URL on behalf of the model.",
@@ -241,29 +225,19 @@ test("makeClientSideToolDefinition throws sentinel error from execute()", async 
   assert.equal(def.name, "fetch_url");
   assert.equal(def.description, "Fetch a URL on behalf of the model.");
   assert.equal(typeof def.execute, "function");
-  // parameters is a Zod schema
   assert.ok(def.parameters && typeof def.parameters.parse === "function");
 
-  let thrown;
-  try {
-    await def.execute({ url: "https://example.com" }, {
-      toolUseId: "tu-fetch-1",
-      conversationId: "sess-test",
-      userId: "u",
-      envId: "env-test",
-      signal: new AbortController().signal,
-    });
-    throw new Error("execute() should have thrown");
-  } catch (err) {
-    thrown = err;
-  }
-  assert.ok(thrown.message.includes("__OAK_CLIENT_TOOL_PENDING__"));
-  // Round-trip the JSON payload from the message
-  const idx = thrown.message.indexOf("{");
-  const payload = JSON.parse(thrown.message.slice(idx));
-  assert.equal(payload.toolUseId, "tu-fetch-1");
-  assert.equal(payload.toolName, "fetch_url");
-  assert.deepEqual(payload.input, { url: "https://example.com" });
+  const out = await def.execute({ url: "https://example.com" }, {
+    toolUseId: "tu-fetch-1",
+    conversationId: "sess-test",
+    userId: "u",
+    envId: "env-test",
+    signal: new AbortController().signal,
+  });
+  // Returns a clear error string mentioning the tool name.
+  assert.equal(typeof out, "string");
+  assert.ok(out.includes("fetch_url"));
+  assert.ok(out.includes("client-side"));
 });
 
 // ── 6. outcomeToDecision maps optionIds to ApprovalDecision ─────────────────

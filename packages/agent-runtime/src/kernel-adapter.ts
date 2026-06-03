@@ -126,59 +126,6 @@ export function outcomeToDecision(outcome: ApprovalOutcome): ApprovalDecision {
   }
 }
 
-// ── Client-side tool sentinel ───────────────────────────────────────────────
-//
-// When a client-side custom tool is invoked, our `execute()` throws a
-// well-known error. The kernel/SDK wraps that into a `tool_result` event with
-// isError=true and the error message as content. We embed a sentinel JSON in
-// the message so `pumpEvents` can recognise it and intercept the flow before
-// the model is allowed to keep reasoning over a fake error.
-
-const CLIENT_TOOL_SENTINEL = "__OAK_CLIENT_TOOL_PENDING__";
-
-interface ClientToolPendingPayload {
-  [CLIENT_TOOL_SENTINEL]: true;
-  toolUseId: string;
-  toolName: string;
-  input: unknown;
-}
-
-class ClientToolPendingError extends Error {
-  constructor(public readonly payload: ClientToolPendingPayload) {
-    super(`${CLIENT_TOOL_SENTINEL}:${JSON.stringify(payload)}`);
-    this.name = "ClientToolPendingError";
-  }
-}
-
-function tryParseClientToolPending(output: unknown): ClientToolPendingPayload | null {
-  // SDK content may be a string OR an array of {type:'text', text}. Extract
-  // the first text-like fragment we can find.
-  const text = typeof output === "string"
-    ? output
-    : Array.isArray(output)
-      ? output
-          .map((b) =>
-            b && typeof b === "object" && "text" in b && typeof (b as { text?: unknown }).text === "string"
-              ? (b as { text: string }).text
-              : "",
-          )
-          .join("")
-      : "";
-  if (!text || !text.includes(CLIENT_TOOL_SENTINEL)) return null;
-  // Extract `{ ... }` JSON after the sentinel marker.
-  const idx = text.indexOf(CLIENT_TOOL_SENTINEL);
-  const colon = text.indexOf(":", idx);
-  if (colon < 0) return null;
-  const jsonStart = text.indexOf("{", colon);
-  if (jsonStart < 0) return null;
-  try {
-    const parsed = JSON.parse(text.slice(jsonStart)) as ClientToolPendingPayload;
-    return parsed?.[CLIENT_TOOL_SENTINEL] ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 // ── Stream pump ──────────────────────────────────────────────────────────────
 
 interface SseSink {
@@ -234,7 +181,6 @@ export async function pumpEvents(
   _session: KernelSession,
   ctx: StreamCtx,
 ): Promise<PumpResult> {
-  let pendingClientTool: PendingToolUse | undefined;
   let eventCount = 0;
 
   for await (const e of events) {
@@ -286,24 +232,6 @@ export async function pumpEvents(
       }
 
       case "tool_result": {
-        // Intercept client-side tool sentinel — don't surface as failed; the
-        // turn will end with stopReason='tool_use' and a pendingToolUse hint.
-        // We use the SDK-supplied toolUseId from the event itself (the
-        // sentinel payload's own toolUseId is empty because the wrapping MCP
-        // handler doesn't have access to ctx.toolUseId — this is fine; the
-        // event's toolUseId is the canonical id the model emitted).
-        // toolName is forwarded as-is (e.g. 'mcp__custom__read_file') so the
-        // client sees the same prefixed namespace as sandbox / cloudbase
-        // tools — clients should match by prefix to know it's a custom tool.
-        const sentinel = tryParseClientToolPending(e.output);
-        if (sentinel) {
-          pendingClientTool = {
-            toolUseId: e.toolUseId,
-            toolName: e.toolName,
-            input: sentinel.input,
-          };
-          break;
-        }
         ctx.sse.write({
           jsonrpc: "2.0",
           method: "session/update",
@@ -352,18 +280,42 @@ export async function pumpEvents(
         };
       }
 
+      case "tool_use_required": {
+        // PR #7.1 client-side tool flow. Kernel's PreToolUse hook denied
+        // a custom tool with the client-tool sentinel; turn ends and the
+        // host (this runtime → SDK consumer) must execute the tool.
+        // We push a hint frame so the SSE consumer sees it inline, then
+        // end the turn with stopReason='tool_use' + pendingToolUse.
+        ctx.sse.write({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: ctx.acpSessionId,
+            update: {
+              sessionUpdate: "tool_use_request",
+              toolCallId: e.toolUseId,
+              toolName: e.toolName,
+              input: e.input,
+            },
+          },
+        });
+        return {
+          stopReason: "tool_use",
+          pendingToolUse: {
+            toolUseId: e.toolUseId,
+            toolName: e.toolName,
+            input: e.input,
+          },
+        };
+      }
+
       case "session_idle": {
-        // If we intercepted a client-tool sentinel earlier, the SDK has
-        // already finished the turn (it treats our throw as a tool error).
-        // Override with stopReason='tool_use' so the client can resume.
-        if (pendingClientTool) {
-          return { stopReason: "tool_use", pendingToolUse: pendingClientTool };
-        }
         if (e.reason === "completed") return { stopReason: "end_turn" };
         if (e.reason === "aborted") return { stopReason: "cancelled" };
         if (e.reason === "error") return { stopReason: "error" };
-        // 'requires_action' — the approval branch above already returned.
-        // Reaching here would be a kernel ordering anomaly; treat as cancelled.
+        // 'requires_action' — the approval / tool_use_required branches
+        // above already returned. Reaching here would be a kernel ordering
+        // anomaly; treat as cancelled.
         return { stopReason: "cancelled" };
       }
 
@@ -405,9 +357,6 @@ export async function pumpEvents(
     }
   }
   console.log(`[KernelAdapter] pumpEvents done: total=${eventCount}`);
-  if (pendingClientTool) {
-    return { stopReason: "tool_use", pendingToolUse: pendingClientTool };
-  }
   return { stopReason: "end_turn" };
 }
 
@@ -465,9 +414,19 @@ export function makeSseSink(res: Response): SseSink {
 // ── Client-side tool definition ──────────────────────────────────────────────
 //
 // All `type: custom` tools in agent.yaml are client-side: they have no
-// server-side implementation. When the model calls one, we throw a sentinel
-// error; pumpEvents intercepts it and ends the turn with stopReason='tool_use'
-// so the client can execute the tool and POST back a tool_result.
+// server-side implementation. The kernel's PreToolUse hook (PR #7.1) detects
+// these by name and intercepts the call before execute() runs:
+//   - turn 1: hook denies with the client-tool sentinel → SDK emits a
+//     synthetic tool_result(is_error) with the sentinel; event-translator
+//     swallows it and yields `tool_use_required` instead. execute() never runs.
+//   - turn 2 (after session.respondToolUse): hook allows + injects the host
+//     result via updatedInput.__oak_client_tool_result__; the wrapped MCP
+//     stub recognises the magic key and returns the result directly.
+//
+// The execute() body below is therefore only a defensive fallback for the
+// case where the hook isn't wired (kernel without PR #7.1, or misconfigured
+// runtime). It returns a clear error string instead of throwing, so the
+// model gets a useful failure message rather than an unhandled exception.
 
 export function makeClientSideToolDefinition(
   tool: { name: string; description: string; input_schema: Record<string, unknown> },
@@ -480,16 +439,13 @@ export function makeClientSideToolDefinition(
     name: tool.name,
     description: tool.description,
     parameters: inputSchema,
-    execute: async (input: Record<string, unknown>, ctx) => {
-      // Throwing here causes the SDK to emit a tool_result with isError=true.
-      // pumpEvents detects the sentinel in the result content and rewrites
-      // the final stopReason to 'tool_use'.
-      throw new ClientToolPendingError({
-        [CLIENT_TOOL_SENTINEL]: true,
-        toolUseId: ctx.toolUseId,
-        toolName: tool.name,
-        input,
-      });
+    execute: async (_input: Record<string, unknown>, _ctx) => {
+      return (
+        `[oak-runtime] Tool '${tool.name}' is declared as client-side in agent.yaml ` +
+        `but the kernel's PreToolUse hook did not intercept it before execute() ran. ` +
+        `This indicates a runtime / kernel version mismatch. Please ensure the kernel ` +
+        `vendor bundle includes PR #7.1 (client-side tool flow).`
+      );
     },
   };
 }
