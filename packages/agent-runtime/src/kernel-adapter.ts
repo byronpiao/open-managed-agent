@@ -40,14 +40,113 @@ import type { AgentConfig } from "./config.js";
 // ── Singletons ───────────────────────────────────────────────────────────────
 
 let _kernelAgent: KernelAgent | null = null;
+let _sessionStore: SessionStoreLike | null = null;
+
+/**
+ * Subset of CloudBaseSessionStore (declared via duck typing) we need at the
+ * ACP layer for synchronous index writes. Kernel exposes the store as
+ * `unknown` to avoid leaking SDK types into the public surface — we re-narrow
+ * it here only for the single ACP code path that needs it.
+ */
+export interface SessionStoreLike {
+  registerSession?: (args: {
+    projectKey: string;
+    sessionId: string;
+    userId: string;
+    title?: string;
+    metadata?: Record<string, unknown>;
+  }) => Promise<void>;
+}
 
 /** Build (or return cached) kernel Agent for this process. */
 export function getKernelAgent(config: AgentConfig): KernelAgent {
   if (_kernelAgent) return _kernelAgent;
   const customToolDefs = getCustomTools(config).map(makeClientSideToolDefinition);
-  _kernelAgent = createAgent(toKernelAgentConfig(config, { customToolDefs }));
+  const kernelConfig = toKernelAgentConfig(config, { customToolDefs });
+  // Stash the SessionStore reference so ACP can do synchronous index writes
+  // (kernel's own registerSession is fire-and-forget — see
+  // open-agent-kernel/src/public/create-agent.ts:332-346 — and gets dropped
+  // when SCF/cloudrun recycles the instance before the write lands).
+  _sessionStore = (kernelConfig.session?.store as SessionStoreLike | undefined) ?? null;
+  console.log(
+    `[KernelAdapter] sessionStore captured: type=${typeof _sessionStore}, ` +
+    `hasRegisterSession=${typeof _sessionStore?.registerSession === "function"}`,
+  );
+  _kernelAgent = createAgent(kernelConfig);
   console.log(`[KernelAdapter] kernel Agent created (id=${_kernelAgent.id})`);
   return _kernelAgent;
+}
+
+/** Diagnostic: report whether the fix landed and the store hookup is live. */
+export function getStoreDiag(): {
+  agentInitialized: boolean;
+  storeCaptured: boolean;
+  hasRegisterSession: boolean;
+  storeProto: string | null;
+  lastSyncRegister: { sessionId: string; ok: boolean; error?: string; ts: number } | null;
+} {
+  return {
+    agentInitialized: _kernelAgent !== null,
+    storeCaptured: _sessionStore !== null,
+    hasRegisterSession: typeof _sessionStore?.registerSession === "function",
+    storeProto: _sessionStore ? Object.getPrototypeOf(_sessionStore)?.constructor?.name ?? "Object" : null,
+    lastSyncRegister: _lastSyncRegister,
+  };
+}
+
+let _lastSyncRegister:
+  | { sessionId: string; ok: boolean; error?: string; ts: number }
+  | null = null;
+
+/**
+ * Block on writing the session index row (oak_sessions) for the given
+ * sessionId. Idempotent per the driver: where().limit(1).get() then update
+ * OR add. Safe to call after every kernel startSession to close the race
+ * against instance recycling on serverless.
+ *
+ * Returns false (and logs) when no store is configured or the store doesn't
+ * implement registerSession — the caller should treat this as "best-effort,
+ * not guaranteed visible in session/list yet".
+ */
+/**
+ * Block on writing the session index row (oak_sessions) for the given
+ * sessionId. Idempotent per the driver: where().limit(1).get() then update
+ * OR add. Safe to call after every kernel startSession to close the race
+ * against instance recycling on serverless.
+ *
+ * Returns false (and logs) when no store is configured or the store doesn't
+ * implement registerSession — the caller should treat this as "best-effort,
+ * not guaranteed visible in session/list yet".
+ *
+ * Outcome is recorded in `_lastSyncRegister` for the /healthz probe.
+ */
+export async function syncRegisterSession(
+  sessionId: string,
+  userId: string,
+): Promise<boolean> {
+  const ts = Date.now();
+  if (!_sessionStore?.registerSession) {
+    const reason =
+      `_sessionStore=${_sessionStore === null ? "null" : typeof _sessionStore}, ` +
+      `registerSession=${typeof _sessionStore?.registerSession}`;
+    console.warn(`[KernelAdapter] syncRegisterSession SKIP: ${reason}`);
+    _lastSyncRegister = { sessionId, ok: false, error: `skipped: ${reason}`, ts };
+    return false;
+  }
+  // projectKey passed in here is ignored when CloudBaseSessionStore was
+  // constructed with `projectKey: envId` (which we do — see config.ts:336-339).
+  // The store's mapProjectKey() returns the fixed value regardless. Passing ""
+  // is intentional and avoids re-reading env vars.
+  try {
+    await _sessionStore.registerSession({ projectKey: "", sessionId, userId });
+    _lastSyncRegister = { sessionId, ok: true, ts };
+    return true;
+  } catch (err) {
+    const msg = (err as Error)?.message ?? String(err);
+    console.error(`[KernelAdapter] syncRegisterSession FAIL sid=${sessionId}: ${msg}`);
+    _lastSyncRegister = { sessionId, ok: false, error: msg, ts };
+    throw err;
+  }
 }
 
 // ── Session pool ─────────────────────────────────────────────────────────────

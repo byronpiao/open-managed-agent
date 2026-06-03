@@ -1,0 +1,68 @@
+# Dockerfile.scf — SCF (Tencent Serverless Cloud Function) image-mode runtime.
+#
+# Why a separate image from the TCBR Dockerfile?
+#   - SCF web function image must listen on PORT=9000 (TCBR uses 8080).
+#   - SCF /tmp at runtime is owned root:root mode 0755 — uid=1001 cannot
+#     write to it via the standard "scf_bootstrap drops to uid=1001" path.
+#     So we pre-create the writable subdirs (/tmp/.claude /tmp/workspace
+#     /tmp/claude-cache) AT BUILD TIME and chown them to 1001, OR run
+#     directly as 1001 from the start (uid 1001 is set by USER directive).
+#   - We bake the linux-x64 native claude binary into the image so the SDK
+#     never has to extract or fetch it at runtime, and the optionalDeps
+#     platform-skip dance is gone.
+#
+# This image is meant to be deployed via `tcb fn deploy --deployMode image`
+# (or via the SCF imageConfig field in cloudbaserc.json).
+
+FROM node:20-bullseye-slim
+
+ENV TZ=Asia/Shanghai \
+    DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        tzdata \
+        bash \
+        git \
+ && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+ && echo $TZ > /etc/timezone \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --create-home --shell /bin/bash --uid 1001 agent \
+ && mkdir -p /app /tmp/.claude /tmp/workspace /tmp/claude-cache \
+ && chown -R agent:agent /app /tmp/.claude /tmp/workspace /tmp/claude-cache \
+ && chmod 0755 /tmp/.claude /tmp/workspace /tmp/claude-cache
+
+WORKDIR /app
+
+# Install deps as root, but with --os=linux --cpu=x64 forced so the SDK's
+# linux-x64 optional binary actually lands. We do this BEFORE switching to
+# the agent user so npm has full write access and any post-install scripts
+# can complete cleanly.
+COPY package*.json ./
+COPY vendor ./vendor
+
+RUN npm install --omit=dev --no-audit --no-fund \
+        --os=linux --cpu=x64 --include=optional --force \
+ && rm -f node_modules/.package-lock.json \
+ && npm install --omit=dev --no-audit --no-fund \
+        --os=linux --cpu=x64 --include=optional --force \
+ && test -x node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude \
+ || (echo "FATAL: claude-agent-sdk-linux-x64/claude binary missing" && exit 1)
+
+# Now copy the rest of the agent code and hand it to the agent user.
+COPY . .
+RUN chown -R agent:agent /app
+
+USER agent
+
+# SCF web function gateway probes this port. Don't change without also
+# updating cloudbaserc.json's imageConfig.imagePort.
+EXPOSE 9000
+
+ENV PORT=9000 \
+    HOME=/home/agent \
+    CLAUDE_CONFIG_DIR=/tmp/.claude \
+    OAK_SESSION_LOCAL_DIR=/tmp/.claude
+
+CMD ["node", "dist/index.js"]

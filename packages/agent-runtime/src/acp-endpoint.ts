@@ -43,6 +43,7 @@ import {
   outcomeToDecision,
   pumpEvents,
   registerKernelSession,
+  syncRegisterSession,
   type ApprovalOutcome,
   type StopReason,
 } from "./kernel-adapter.js";
@@ -211,21 +212,44 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
     const existing = await agent.sessions.get(reqSessionId);
     if (existing) return { sessionId: reqSessionId, hasHistory: true };
     await getOrCreateKernelSession(config, reqSessionId, { userId, isNew: true });
+    await syncRegisterSession(reqSessionId, userId);
     return { sessionId: reqSessionId, hasHistory: false };
   }
 
   // No id supplied — let kernel generate a UUID.
   const session = await agent.startSession({ userId });
   registerKernelSession(session.id, session);
+  await syncRegisterSession(session.id, userId);
   return { sessionId: session.id, hasHistory: false };
 }
 
 async function handleSessionList(_params: Record<string, unknown>, config: AgentConfig) {
   const agent = getKernelAgent(config);
   const summaries = await agent.sessions.list({ limit: 50 });
+  // De-duplicate by sessionId. The store can legitimately end up with two
+  // rows per session under a narrow race: kernel's own registerSession
+  // (fire-and-forget) and our syncRegisterSession both run within ~1ms, both
+  // hit `where().limit(1).get()` BEFORE either has flushed, both miss, both
+  // .add(). The driver's existence check isn't atomic, so we accept the
+  // occasional dup at write time and collapse here at read time. We keep the
+  // earliest createdAt (most stable identity) and the latest updatedAt.
+  const dedupedMap = new Map<string, typeof summaries[number]>();
+  for (const s of summaries) {
+    const prev = dedupedMap.get(s.conversationId);
+    if (!prev) {
+      dedupedMap.set(s.conversationId, s);
+    } else {
+      dedupedMap.set(s.conversationId, {
+        ...prev,
+        createdAt: Math.min(prev.createdAt ?? Infinity, s.createdAt ?? Infinity),
+        updatedAt: Math.max(prev.updatedAt ?? 0, s.updatedAt ?? 0),
+      });
+    }
+  }
+  const deduped = Array.from(dedupedMap.values());
   // Sort newest first
-  summaries.sort((a, b) => b.updatedAt - a.updatedAt);
-  const sessions = summaries.map((s) => ({
+  deduped.sort((a, b) => b.updatedAt - a.updatedAt);
+  const sessions = deduped.map((s) => ({
     sessionId: s.conversationId,
     title: s.title ?? "",
     updatedAt: s.updatedAt,
