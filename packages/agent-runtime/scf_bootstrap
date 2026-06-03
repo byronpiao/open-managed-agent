@@ -3,7 +3,13 @@
 #
 # SCF file system constraints:
 #   /var/user  — read-only (deployed code lives here)
-#   /tmp       — writable, up to 512MB
+#   /tmp       — writable for root only (mode 0755, owner root:root). Sub-dirs
+#                created here as root must be chowned to the runtime uid before
+#                uid-shim drops to 1001, otherwise the claude binary spawned
+#                by the SDK cannot write its session-mirror JSONL files. When
+#                the binary fails to write, the SDK iterator silently yields
+#                done with 0 messages — manifesting as `pumpEvents total=0`
+#                and an empty SSE response.
 #
 # Non-root execution: Claude Code's CLI refuses --dangerously-skip-permissions
 # when running as uid==0. uid-shim.mjs drops root via process.setuid(1001)
@@ -12,7 +18,15 @@
 export HOME=/tmp
 export CLAUDE_CONFIG_DIR=/tmp/.claude
 
-mkdir -p /tmp/.claude /tmp/workspace
+# Create dirs and hand them to uid 1001 BEFORE Node starts. uid-shim's
+# `chown -R agent:agent /tmp` runs as root (uid-shim runs before setuid),
+# but a stricter mount on /tmp itself can stop chown of the mount root —
+# only the children can be reliably chowned. So we explicitly create the
+# children we need and chown those.
+mkdir -p /tmp/.claude /tmp/workspace /tmp/claude-cache
+chown -R 1001:1001 /tmp/.claude /tmp/workspace /tmp/claude-cache 2>/dev/null || true
+chmod 0755 /tmp/.claude /tmp/workspace /tmp/claude-cache 2>/dev/null || true
+
 cd /tmp
 
 exec node --import /var/user/uid-shim.mjs /var/user/dist/index.js

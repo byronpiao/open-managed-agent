@@ -574,14 +574,15 @@ function buildCloudRunEnvParam({ envId, configB64 }) {
   // The operator can override by explicitly setting TCB_API_KEY before deploy.
   const hasTcbApiKey = !!(process.env.TCB_API_KEY);
   if (!hasTcbApiKey) envMap.OAK_DISABLE_SANDBOX = "1";
-  // OAK_USE_MEMORY_STORE: fall back to in-process session storage when there
-  // are no CloudBase DB credentials; avoids a MISSING_CREDENTIALS crash on
-  // session create. Overridden to "0" if TCB_SECRET_ID is available.
-  const hasDbCreds = !!(process.env.TCB_SECRET_ID && process.env.TCB_SECRET_KEY);
-  // Explicit shell overrides still take precedence.
-  if (process.env.OAK_DISABLE_SANDBOX !== undefined) envMap.OAK_DISABLE_SANDBOX = process.env.OAK_DISABLE_SANDBOX;
-  if (process.env.OAK_USE_MEMORY_STORE !== undefined) envMap.OAK_USE_MEMORY_STORE = process.env.OAK_USE_MEMORY_STORE;
-  else if (!hasDbCreds) envMap.OAK_USE_MEMORY_STORE = "1";
+
+  // Pull DB credentials BEFORE deciding the memory-store flag. Order matters:
+  // earlier we computed hasDbCreds from process.env alone, then injected
+  // OAK_USE_MEMORY_STORE=1, then forwarded STS creds from `tcb login` to the
+  // container. The flag stuck around forever even though valid creds were
+  // present, forcing the runtime onto InMemoryDriver — registerSession would
+  // succeed silently, listSessions would return empty (the driver writes to
+  // sessionMeta but reads from sessions; two separate Maps inside the kernel).
+  // Now we resolve creds first and treat STS as valid creds for this purpose.
   let credsSource = "";
   if (process.env.TCB_SECRET_ID && process.env.TCB_SECRET_KEY) {
     envMap.TCB_SECRET_ID = process.env.TCB_SECRET_ID;
@@ -597,6 +598,16 @@ function buildCloudRunEnvParam({ envId, configB64 }) {
       credsSource = "sts";
     }
   }
+
+  // OAK_USE_MEMORY_STORE: fall back to in-process session storage when there
+  // are no CloudBase DB credentials; avoids a MISSING_CREDENTIALS crash on
+  // session create. Now considers BOTH shell-provided AND STS-derived creds —
+  // anything that lands in envMap counts as "DB reachable from container".
+  const hasDbCreds = !!(envMap.TCB_SECRET_ID && envMap.TCB_SECRET_KEY);
+  // Explicit shell overrides still take precedence.
+  if (process.env.OAK_DISABLE_SANDBOX !== undefined) envMap.OAK_DISABLE_SANDBOX = process.env.OAK_DISABLE_SANDBOX;
+  if (process.env.OAK_USE_MEMORY_STORE !== undefined) envMap.OAK_USE_MEMORY_STORE = process.env.OAK_USE_MEMORY_STORE;
+  else if (!hasDbCreds) envMap.OAK_USE_MEMORY_STORE = "1";
   return { envMap, credsSource };
 }
 
@@ -809,6 +820,25 @@ function printSession(s) {
   console.log(`    created: ${dim(new Date(s.created_at * 1000).toLocaleString())}`);
 }
 
+// ACP session/list returns { sessionId, title, updatedAt, _meta: { status, createdAt } }
+// (see packages/agent-runtime/src/acp-endpoint.ts handleSessionList).
+// Timestamps are MILLISECONDS in the kernel (driver upserts mtime: Date.now()),
+// unlike the legacy REST shape which used seconds. Detect and pass through ms
+// directly; treat anything < 1e12 as seconds for back-compat with mocks/tests.
+function printAcpSession(s) {
+  const status = s._meta?.status ?? "idle";
+  const rawCreated = s._meta?.createdAt ?? s.updatedAt ?? 0;
+  const rawUpdated = s.updatedAt ?? rawCreated;
+  const toMs = (t) => (t > 1e12 ? t : t * 1000);
+  const createdAt = toMs(rawCreated);
+  const updatedAt = toMs(rawUpdated);
+  console.log(`  ${bold(s.sessionId)}`);
+  console.log(`    title  : ${s.title || dim("(untitled)")}`);
+  console.log(`    status : ${status === "idle" ? green(status) : status === "running" ? yellow(status) : dim(status)}`);
+  if (createdAt) console.log(`    created: ${dim(new Date(createdAt).toLocaleString())}`);
+  if (updatedAt && updatedAt !== createdAt) console.log(`    updated: ${dim(new Date(updatedAt).toLocaleString())}`);
+}
+
 function printEnv(e) {
   console.log(`  ${bold(e.id)}`);
   console.log(`    name   : ${e.name}`);
@@ -878,8 +908,8 @@ const COMMANDS = {
     const { name, model, system } = args;
     if (!name) throw new Error("-n / --name is required");
     const type = (args.type ?? "scf").toLowerCase();
-    if (type !== "scf" && type !== "tcbr") {
-      throw new Error(`--type must be 'scf' or 'tcbr' (got '${type}')`);
+    if (type !== "scf" && type !== "scf-image" && type !== "tcbr") {
+      throw new Error(`--type must be 'scf', 'scf-image', or 'tcbr' (got '${type}')`);
     }
 
     // Container-mode (TCBR cloudrun) — delegate to the cloudrun:create flow,
@@ -887,6 +917,18 @@ const COMMANDS = {
     // a CloudRun service, and registers it as a tcbr agent.
     if (type === "tcbr") {
       return COMMANDS["cloudrun:create"](args);
+    }
+
+    // SCF image-mode — bypass `tcb agent create` (which only does zip-mode
+    // CustomRuntime=Nodejs20.19) and directly deploy a container image to a
+    // SCF web function. Solves the chain of bugs that block plain SCF mode:
+    //   1. linux-x64 binary missing (built into the image)
+    //   2. /tmp not writable for uid=1001 (image pre-creates /tmp/.claude
+    //      and chowns it, USER agent runs as 1001 from container start)
+    //   3. CLAUDE_CONFIG_DIR=/tmp default (image sets ENV CLAUDE_CONFIG_DIR
+    //      and OAK_SESSION_LOCAL_DIR to /tmp/.claude)
+    if (type === "scf-image") {
+      return COMMANDS["scf-image:create"](args);
     }
 
     // SCF cloud function path (default).
@@ -930,6 +972,14 @@ const COMMANDS = {
     const scfEnvMap = {
       CLOUDBASE_ENV_ID: envId,
       AGENT_CONFIG_B64: configB64,
+      // SCF /tmp is owned root:root mode 0755 — uid=1001 (the runtime uid we
+      // drop to via uid-shim) cannot write to /tmp directly. Kernel passes
+      // CLAUDE_CONFIG_DIR=getSessionLocalDir() to the claude binary, which
+      // defaults to /tmp; the binary then fails to write its session-mirror
+      // JSONL and exits silently with code 0 + no stdout — manifesting as
+      // `pumpEvents total=0` on the client. Pin OAK_SESSION_LOCAL_DIR to
+      // /tmp/.claude (chowned to 1001 by scf_bootstrap) instead.
+      OAK_SESSION_LOCAL_DIR: "/tmp/.claude",
     };
     if (process.env.TCB_API_KEY) {
       scfEnvMap.TCB_API_KEY = process.env.TCB_API_KEY;
@@ -955,7 +1005,12 @@ const COMMANDS = {
     // on cold start. The key pain point: claude-agent-sdk ships the native
     // claude binary as an optional platform package (linux-x64). npm skips
     // optionals on non-matching platforms, so we force-install it afterward.
-    const deployDir = resolve(code, ".deploy");
+    // SCF deploy bundle. Stage outside the monorepo so npm doesn't reuse
+    // hoisted host-platform optional deps from a parent node_modules — when
+    // staging inside `packages/agent-runtime/.deploy`, npm sees the monorepo
+    // root already has e.g. claude-agent-sdk-darwin-arm64 and silently skips
+    // installing claude-agent-sdk-linux-x64 even with --os=linux.
+    const deployDir = resolve("/tmp", `magent-scf-${name}-${Date.now()}`);
     let actualCode = code;
     try {
       execSync(`rm -rf "${deployDir}" && mkdir -p "${deployDir}"`, { encoding: "utf-8" });
@@ -975,17 +1030,33 @@ const COMMANDS = {
         if (existsSync(src)) execSync(`cp -r "${src}" "${deployDir}/"`, { encoding: "utf-8" });
       }
       process.stdout.write(dim("  Installing dependencies... "));
-      execSync("npm install --production --silent 2>/dev/null", {
-        cwd: deployDir, encoding: "utf-8", timeout: 120000,
-      });
-      // Force-install the linux-x64 Claude SDK binary. npm refuses to install
-      // cross-platform optional deps without --force on arm64/darwin.
-      const sdkPkgPath = resolve(deployDir, "node_modules", "@anthropic-ai", "claude-agent-sdk", "package.json");
-      const sdkVersion = JSON.parse(readFileSync(sdkPkgPath, "utf-8")).version;
+      // Two-pass install. The first pass installs the bulk of deps from the
+      // lockfile and skips host-platform-mismatched optionalDependencies (npm
+      // v11 ignores --os/--cpu hints when installing from a lock-derived tree).
+      // Removing node_modules/.package-lock.json forces npm's second pass to
+      // re-resolve missing optionals, this time honoring --os=linux --cpu=x64
+      // and dropping the linux-x64 native binary into place. Without this,
+      // SCF errors with "Native CLI binary for linux-x64 not found" — which
+      // the kernel async-generator swallows, surfacing as `pumpEvents done:
+      // total=0` and an empty SSE response on the client.
       execSync(
-        `npm install --no-save --force --silent @anthropic-ai/claude-agent-sdk-linux-x64@${sdkVersion} 2>/dev/null`,
-        { cwd: deployDir, encoding: "utf-8", timeout: 120000 },
+        "npm install --production --os=linux --cpu=x64 --include=optional --force --no-audit --no-fund 2>&1 | tail -2",
+        { cwd: deployDir, encoding: "utf-8", timeout: 180000 },
       );
+      try { execSync(`rm -f "${deployDir}/node_modules/.package-lock.json"`, { encoding: "utf-8" }); } catch {}
+      execSync(
+        "npm install --production --os=linux --cpu=x64 --include=optional --force --no-audit --no-fund 2>&1 | tail -2",
+        { cwd: deployDir, encoding: "utf-8", timeout: 180000 },
+      );
+      // Verify the linux-x64 platform package's binary actually landed.
+      const linuxPkg = resolve(deployDir, "node_modules", "@anthropic-ai", "claude-agent-sdk-linux-x64", "claude");
+      if (!existsSync(linuxPkg)) {
+        const present = existsSync(resolve(deployDir, "node_modules", "@anthropic-ai"))
+          ? execSync("ls node_modules/@anthropic-ai/", { cwd: deployDir, encoding: "utf-8" }).trim()
+          : "(no @anthropic-ai dir)";
+        throw new Error(`linux-x64 binary missing at ${linuxPkg}; @anthropic-ai contains: ${present}`);
+      }
+
       console.log(green("OK"));
       actualCode = deployDir;
     } catch (err) {
@@ -1101,6 +1172,43 @@ const COMMANDS = {
     const { agentType, serviceId } = await lookupAgent(envId, agentId);
     if (!agentType) {
       console.log(yellow(`⚠️  could not look up agent metadata; proceeding with registration delete only.`));
+    }
+
+    // Phase 1.5: cascade-delete sessions while the ACP endpoint is still
+    // reachable. Sessions live in CloudBase NoSQL collections (oak_sessions /
+    // oak_session_entries / oak_session_summaries / oak_session_messages,
+    // keyed by projectKey=envId + sessionId). The agent registration delete
+    // and cloudrun/scf delete in later phases do NOT touch those rows, so
+    // skipping this step leaves the data orphaned under the env (and visible
+    // to any future agent redeployed under the same envId).
+    //
+    // Failures are non-fatal: if ACP is already down or the kernel store is
+    // unreachable we still want phases 2/3 to run, otherwise the agent
+    // registration would be stuck forever.
+    if (agentType !== "baas") {
+      try {
+        const acpUrl = getAcpUrl({ ...args, agent: agentId });
+        const { sessions = [] } = await acpCall(acpUrl, "session/list", {});
+        if (sessions.length === 0) {
+          console.log(dim("(no sessions to clean up)"));
+        } else {
+          process.stdout.write(dim(`Deleting ${sessions.length} session(s)... `));
+          let ok = 0, failed = 0;
+          for (const s of sessions) {
+            try {
+              await acpCall(acpUrl, "session/delete", { sessionId: s.sessionId });
+              ok++;
+            } catch {
+              failed++;
+            }
+          }
+          if (failed === 0) console.log(green(`OK (${ok})`));
+          else console.log(yellow(`OK ${ok}, FAILED ${failed}`));
+        }
+      } catch (e) {
+        console.log(yellow(`⚠️  could not cascade-delete sessions: ${e.message}`));
+        console.log(dim(`    (sessions may remain orphaned in env ${envId} oak_* collections)`));
+      }
     }
 
     // Phase 2: remove the agent registration
@@ -1387,6 +1495,191 @@ const COMMANDS = {
   //      `agent-<slug>-<rand>` ID, addressable via the same gateway path
   //      magent run uses for SCF agents.
 
+  // ── SCF image-mode deploy ─────────────────────────────────────────────────
+  // Deploys a custom-built container image to an SCF Web Function (rather
+  // than uploading code as a zip + Nodejs20.19 runtime). This sidesteps the
+  // chain of bugs that plain SCF mode hits:
+  //   - linux-x64 binary missing (image bakes it in)
+  //   - /tmp owner=root mode=0755, uid=1001 can't write (image pre-chowns
+  //     /tmp/.claude to 1001 and runs as USER agent from container start)
+  //   - CLAUDE_CONFIG_DIR / OAK_SESSION_LOCAL_DIR default to unwritable /tmp
+  //     (image ENV pins them to /tmp/.claude)
+  //
+  // Flow:
+  //   1. Local docker build (linux/amd64 — SCF requires it)
+  //   2. Push to Tencent Container Registry (CCR) under a personal namespace
+  //   3. Stage cloudbaserc.json + empty function dir, deploy via tcb fn deploy
+  //      with --deployMode image
+  //   4. Create HTTP access service so the function is addressable
+
+  "scf-image:create": async (args) => {
+    const { name, model, system } = args;
+    if (!name) throw new Error("-n / --name is required");
+    const envId = requireEnvId(args);
+    const code  = args.code ?? "./packages/agent-runtime";
+    const dockerfile = args.dockerfile ?? "Dockerfile.scf";
+    const namespace = args.namespace ?? process.env.CCR_NAMESPACE;
+    if (!namespace) {
+      throw new Error("--namespace <ccr-namespace> is required (or set CCR_NAMESPACE). " +
+        "This is the Tencent Container Registry namespace under ccr.ccs.tencentyun.com/<namespace>/.");
+    }
+
+    // ── Compose agent config (same flow as agent:create) ─────────────────
+    const config = {
+      name,
+      model:  model  ?? "hunyuan-t1-latest",
+      system: system ?? "You are a helpful assistant.",
+    };
+    if (args.file) {
+      try {
+        const content = readFileSync(args.file, "utf-8");
+        const fileConfig = content.trim().startsWith("{")
+          ? JSON.parse(content)
+          : (await import("yaml")).parse(content);
+        Object.assign(config, fileConfig);
+      } catch (err) {
+        throw new Error(`Failed to load config file: ${err.message}`);
+      }
+    }
+    if (name)   config.name   = name;
+    if (model)  config.model  = model;
+    if (system) config.system = system;
+    const configB64 = Buffer.from(JSON.stringify(config)).toString("base64");
+
+    const slug = toAlias(name);
+    const tag = args.tag ?? `${Date.now()}`;
+    const imageUri = `ccr.ccs.tencentyun.com/${namespace}/${slug}:${tag}`;
+    const fnName = args.function ?? slug;
+
+    console.log(bold("Creating SCF image-mode agent..."));
+    console.log(dim(`  name:        ${config.name}`));
+    console.log(dim(`  model:       ${typeof config.model === "string" ? config.model : `${config.model?.id ?? "?"}${config.model?.apiBaseUrl ? ` @ ${config.model.apiBaseUrl}` : ""}`}`));
+    console.log(dim(`  function:    ${fnName}`));
+    console.log(dim(`  image:       ${imageUri}`));
+    console.log(dim(`  envId:       ${envId}`));
+    console.log();
+
+    // ── Phase 1: docker build ────────────────────────────────────────────
+    process.stdout.write(dim("Phase 1/4: docker build linux/amd64... "));
+    try {
+      const dfPath = resolve(code, dockerfile);
+      if (!existsSync(dfPath)) {
+        throw new Error(`Dockerfile not found at ${dfPath}`);
+      }
+      execSync(
+        `docker build --platform linux/amd64 -f "${dfPath}" -t "${imageUri}" .`,
+        { cwd: code, encoding: "utf-8", stdio: "pipe", timeout: 600000 },
+      );
+      console.log(green("OK"));
+    } catch (err) {
+      throw new Error(`docker build failed: ${err.message?.split("\n").slice(-3).join(" | ")}\n` +
+        `Hint: SCF requires linux/amd64 images; on arm64 macs, use colima with --arch x86_64 ` +
+        `(brew install qemu lima-additional-guestagents; colima delete --force; colima start --arch x86_64).`);
+    }
+
+    // ── Phase 2: docker push ─────────────────────────────────────────────
+    process.stdout.write(dim("Phase 2/4: docker push to CCR... "));
+    try {
+      execSync(`docker push "${imageUri}"`, {
+        encoding: "utf-8", stdio: "pipe", timeout: 600000,
+      });
+      console.log(green("OK"));
+    } catch (err) {
+      throw new Error(`docker push failed: ${err.message?.split("\n").slice(-3).join(" | ")}\n` +
+        `Hint: ensure you have docker login to ccr.ccs.tencentyun.com and push permission ` +
+        `for namespace '${namespace}'.`);
+    }
+
+    // ── Phase 3: tcb fn deploy --deployMode image ────────────────────────
+    process.stdout.write(dim("Phase 3/4: tcb fn deploy (image mode)... "));
+    const deployDir = resolve("/tmp", `magent-scf-image-${slug}-${Date.now()}`);
+    try {
+      execSync(`mkdir -p "${deployDir}/functions/${fnName}"`, { encoding: "utf-8" });
+      const cloudbaserc = {
+        $schema: "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+        envId,
+        version: "2.0",
+        functionRoot: "./functions",
+        functions: [{
+          name: fnName,
+          type: "HTTP",
+          runtime: "CustomRuntime",
+          timeout: 900,
+          memorySize: Number(args["memory-size"] ?? 512),
+          envVariables: {
+            CLOUDBASE_ENV_ID: envId,
+            AGENT_CONFIG_B64: configB64,
+            // OAK_DISABLE_SANDBOX: when no TCB_API_KEY, sandbox would crash.
+            ...(process.env.TCB_API_KEY
+              ? { TCB_API_KEY: process.env.TCB_API_KEY }
+              : { OAK_DISABLE_SANDBOX: "1" }),
+          },
+          imageConfig: {
+            imageType: "personal",
+            imageUri,
+            imagePort: 9000,
+          },
+        }],
+      };
+      writeFileSync(resolve(deployDir, "cloudbaserc.json"), JSON.stringify(cloudbaserc, null, 2));
+      const out = spawnSync(getNodeExecutable(), [
+        getTcbScript(), "fn", "deploy", fnName,
+        "--httpFn", "--deployMode", "image",
+        "-e", envId, "--force",
+      ], { cwd: deployDir, encoding: "utf-8", env: process.env });
+      if (out.status !== 0) {
+        const errText = (out.stdout ?? "") + (out.stderr ?? "");
+        throw new Error(errText.split("\n").filter(Boolean).slice(-5).join(" | "));
+      }
+      console.log(green("OK"));
+    } catch (err) {
+      try { execSync(`rm -rf "${deployDir}"`, { encoding: "utf-8" }); } catch {}
+      throw new Error(`tcb fn deploy failed: ${err.message}`);
+    }
+    try { execSync(`rm -rf "${deployDir}"`, { encoding: "utf-8" }); } catch {}
+
+    // ── Phase 4: HTTP access service ─────────────────────────────────────
+    process.stdout.write(dim("Phase 4/4: creating HTTP access path... "));
+    let httpUrl = "";
+    try {
+      const out = spawnSync(getNodeExecutable(), [
+        getTcbScript(), "service", "create",
+        "-p", `/${fnName}`, "-f", fnName, "-e", envId,
+      ], { encoding: "utf-8", env: process.env });
+      const text = (out.stdout ?? "") + (out.stderr ?? "");
+      const m = text.match(/(https:\/\/[^\s]+)/);
+      if (m) httpUrl = m[1];
+      // Path may already exist; treat that as success.
+      if (out.status !== 0 && !text.includes("HTTP access service created")) {
+        // Try to extract URL even on conflict.
+        if (!httpUrl) httpUrl = `https://${envId}.app.tcloudbase.com/${fnName}`;
+        console.log(yellow(`(path may already exist, using ${httpUrl})`));
+      } else {
+        console.log(green("OK"));
+      }
+    } catch (err) {
+      console.log(yellow(`Warning: ${err.message}`));
+    }
+
+    console.log();
+    console.log(green(`✅ SCF image agent deployed: ${fnName}`));
+    if (httpUrl) {
+      console.log(dim(`  HTTP endpoint: ${httpUrl}`));
+      console.log(dim(`  ACP endpoint:  ${httpUrl}/acp`));
+    }
+    console.log();
+    console.log("Test with:");
+    if (httpUrl) {
+      console.log(dim(`  curl -X POST ${httpUrl}/healthz`));
+      console.log(dim(`  curl -X POST -H 'Content-Type: application/json' \\`));
+      console.log(dim(`    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \\`));
+      console.log(dim(`    ${httpUrl}/acp`));
+    }
+    console.log();
+    console.log("Logs:");
+    console.log(dim(`  tcb fn log ${fnName} -e ${envId}`));
+  },
+
   "cloudrun:create": async (args) => {
     const { name, model, system } = args;
     if (!name) throw new Error("-n / --name is required");
@@ -1637,35 +1930,60 @@ const COMMANDS = {
   },
 
   // ─── Session ──────────────────────────────────────────────────────────────
+  // All session commands talk to the agent's ACP endpoint via JSON-RPC 2.0
+  // (POST <baseURL>/acp). The agent is identified by -a/--agent (or
+  // CLOUDBASE_AGENT_ID); -e/--env (or CLOUDBASE_ENV_ID) selects the gateway.
 
   "session:create": async (args) => {
-    if (!args.agent) throw new Error("-a / --agent is required");
-    const session = await post("/sessions", {
-      agent:          args.agent,
-      environment_id: args.env ?? undefined,
-      title:          args.title ?? "",
+    if (!args.agent && !process.env.CLOUDBASE_AGENT_ID) {
+      throw new Error("-a / --agent is required (or set CLOUDBASE_AGENT_ID)");
+    }
+    const acpUrl = getAcpUrl(args);
+    const { sessionId, hasHistory } = await acpCall(acpUrl, "session/new", {
+      cwd: "/", mcpServers: [],
     });
     console.log(green("✅ Session created:"));
-    printSession(session);
+    printAcpSession({
+      sessionId,
+      title: args.title ?? "",
+      _meta: { status: "idle", createdAt: Math.floor(Date.now() / 1000) },
+    });
+    if (hasHistory) console.log(dim("  (resumed existing session — has history)"));
   },
 
-  "session:list": async () => {
-    const { data } = await get("/sessions");
-    if (!data.length) return console.log(dim("No sessions found."));
-    console.log(bold(`Sessions (${data.length}):`));
-    data.forEach(printSession);
+  "session:list": async (args) => {
+    if (!args.agent && !process.env.CLOUDBASE_AGENT_ID) {
+      throw new Error("-a / --agent is required (or set CLOUDBASE_AGENT_ID)");
+    }
+    const acpUrl = getAcpUrl(args);
+    const { sessions } = await acpCall(acpUrl, "session/list", {});
+    if (!sessions?.length) return console.log(dim("No sessions found."));
+    console.log(bold(`Sessions (${sessions.length}):`));
+    sessions.forEach(printAcpSession);
   },
 
   "session:get": async (args) => {
     if (!args.id) throw new Error("-i / --id is required");
-    const session = await get(`/sessions/${args.id}`);
-    printSession(session);
+    if (!args.agent && !process.env.CLOUDBASE_AGENT_ID) {
+      throw new Error("-a / --agent is required (or set CLOUDBASE_AGENT_ID)");
+    }
+    const acpUrl = getAcpUrl(args);
+    // session/load with replay=false returns just { sessionId } (or 404s if missing).
+    const result = await acpCall(acpUrl, "session/load", {
+      sessionId: args.id, cwd: "/", mcpServers: [], replay: false,
+    });
+    printAcpSession({ sessionId: result.sessionId, title: "" });
   },
 
   "session:delete": async (args) => {
     if (!args.id) throw new Error("-i / --id is required");
-    await del(`/sessions/${args.id}`);
-    console.log(green(`✅ Session ${args.id} deleted.`));
+    if (!args.agent && !process.env.CLOUDBASE_AGENT_ID) {
+      throw new Error("-a / --agent is required (or set CLOUDBASE_AGENT_ID)");
+    }
+    const acpUrl = getAcpUrl(args);
+    const { deleted } = await acpCall(acpUrl, "session/delete", { sessionId: args.id });
+    if (deleted) console.log(green(`✅ Session ${args.id} deleted.`));
+    else console.log(dim(`(session ${args.id} was already gone)`));
   },
 
   // ─── Chat (send message to existing session, stream response) ─────────────

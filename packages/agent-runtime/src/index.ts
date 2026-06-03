@@ -19,6 +19,7 @@ import express from "express";
 import cors from "cors";
 import { mountAcpEndpoint } from "./acp-endpoint.js";
 import { loadAgentConfig, resolveSkills } from "./config.js";
+import { getKernelAgent, getStoreDiag } from "./kernel-adapter.js";
 
 const port = Number(process.env.PORT ?? 9000);
 
@@ -32,10 +33,24 @@ async function main() {
   console.log(`[Agent] MCP Servers: ${config.mcp_servers?.length ?? 0} configured`);
   console.log(`[Agent] Skills: ${config.skills?.length ?? 0} configured`);
 
+  // Eagerly build the kernel agent so getStoreDiag() reflects real state on
+  // the very first /healthz probe — otherwise tests that hit /healthz before
+  // any session/* call see "uninitialized" and can't tell whether the fix
+  // landed in this build.
+  try { getKernelAgent(config); } catch (e) {
+    console.warn("[Agent] eager getKernelAgent failed:", (e as Error)?.message);
+  }
+
   const app = express();
   app.use(cors());
   app.get("/healthz", (_req, res) => {
-    res.json({ ok: true, name: config.name, model: config.model });
+    res.json({
+      ok: true,
+      name: config.name,
+      model: config.model,
+      buildMarker: "syncRegisterSession-v3",   // bump when shipping a fix; client probes this
+      store: getStoreDiag(),
+    });
   });
 
   mountAcpEndpoint(app, config);
