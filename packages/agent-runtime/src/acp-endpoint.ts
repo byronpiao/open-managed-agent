@@ -36,6 +36,7 @@ import expressLib from "express";
 import type { AgentConfig } from "./config.js";
 import type { MessageRecord } from "@cloudbase/open-agent-kernel";
 import {
+  abortKernelSession,
   dropKernelSession,
   getKernelAgent,
   getOrCreateKernelSession,
@@ -419,10 +420,8 @@ async function handleSessionCancel(params: Record<string, unknown>) {
     ctrl.abort();
     abortControllers.delete(sessionId);
   }
-  // Best-effort: tell the kernel to abort.
-  // (kernel session.abort() returns Promise<void>; ignore errors)
-  // Note: we don't have a sync handle here without a per-session lookup map,
-  // so we leave the kernel side to react via session.abort caller below if any.
+  // Tell the kernel to abort the session (best-effort).
+  await abortKernelSession(sessionId);
 }
 
 async function handleSessionDelete(params: Record<string, unknown>, config: AgentConfig) {

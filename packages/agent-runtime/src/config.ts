@@ -333,8 +333,12 @@ export function toKernelAgentConfig(
     });
   } else {
     const credentials = resolveCloudBaseCredentials(envId);
+    const driverOpts: Record<string, unknown> = credentials ? { credentials } : {};
+    if (config.sessions_collection) {
+      driverOpts.collectionPrefix = config.sessions_collection;
+    }
     sessionStore = new CloudBaseSessionStore({
-      driver: new CloudBaseDbDriver(credentials ? { credentials } : undefined),
+      driver: new CloudBaseDbDriver(driverOpts),
       projectKey: envId,
     });
   }

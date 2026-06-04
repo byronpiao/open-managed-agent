@@ -347,17 +347,28 @@ export class AcpClient {
     });
   }
 
-  // ── REST convenience (GET /acp/sessions) ─────────────────────────────────
+  // ── Session detail & delete (JSON-RPC) ─────────────────────────────────
 
   async getSession(sessionId: string): Promise<AcpSessionDetail> {
-    const res = await fetch(`${this.baseURL}/acp/sessions/${sessionId}`, { headers: this.headers });
-    if (!res.ok) throw new Error(`Session not found: ${sessionId}`);
-    return res.json() as Promise<AcpSessionDetail>;
+    // session/list returns basic info; session/load streams history
+    const sessions = await this.sessionList();
+    const info = sessions.find((s) => s.sessionId === sessionId);
+    if (!info) throw new Error(`Session not found: ${sessionId}`);
+
+    // Collect history messages from session/load stream
+    const messages: AcpSessionDetail["messages"] = [];
+    for await (const ev of this.sessionLoad(sessionId)) {
+      if ((ev as any).type === "history_page") {
+        const page = ev as any;
+        for (const msg of page.messages ?? []) {
+          messages.push(msg);
+        }
+      }
+    }
+    return { ...info, model: "", system: "", messages };
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    await fetch(`${this.baseURL}/acp/sessions/${sessionId}`, {
-      method: "DELETE", headers: this.headers,
-    });
+    await this.rpc("session/delete", { sessionId });
   }
 }
