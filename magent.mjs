@@ -57,8 +57,8 @@ if (existsSync(envFile)) {
 
 const SHORT_FLAGS = {
   e: "env",
-  a: "agent",    // unified: agent ID (replaces old -i for agent commands)
-  i: "id",       // kept for session ID and backward compat
+  a: "agent",    // agent ID for all agent commands
+  i: "id",       // session ID for session:get/delete
   m: "message",
   s: "session",
   f: "file",
@@ -239,16 +239,6 @@ async function main() {
   // code (including tcb commands) picks up the override automatically.
   if (args.env) {
     process.env.CLOUDBASE_ENV_ID = args.env;
-  }
-
-  // Backward compat: -i/--id also accepted as agent ID for agent commands
-  // (maps to args.agent so the unified resolveAgentId picks it up)
-  if (args.id && !args.agent) {
-    // Only alias for agent commands, not session commands
-    const agentCmds = ["agent:get", "agent:update", "agent:delete", "agent:export"];
-    if (agentCmds.includes(cmd)) {
-      args.agent = args.id;
-    }
   }
 
   const handler = COMMANDS[cmd];

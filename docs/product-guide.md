@@ -144,9 +144,9 @@ Creating agent...
   runtime: Nodejs20.19
 
 Next steps:
-  1. Wait for ready: magent agent:get --id agent-my-agent-65abf85e
-  2. Update config:  magent agent:update --id agent-my-agent-65abf85e --file agent.yaml
-  3. Start chatting: magent run --agent agent-my-agent-65abf85e --message "Hello"
+  1. Wait for ready: magent agent:get -a agent-my-agent-65abf85e
+  2. Update config:  magent agent:update -a agent-my-agent-65abf85e -f agent.yaml
+  3. Start chatting: magent run -a agent-my-agent-65abf85e -m "Hello"
 ```
 
 > **想部署成容器型（TCBR 云托管）？** 在 `agent:create` 上加 `--type tcbr`：
@@ -163,7 +163,7 @@ Next steps:
 ### Step 3: 等待就绪
 
 ```bash
-$ magent agent:get --id agent-my-agent-65abf85e
+$ magent agent:get -a agent-my-agent-65abf85e
 ```
 
 等待输出显示 `Ready: ✅ 已就绪，可以调用`（通常需要 60-90s）。
@@ -293,7 +293,7 @@ Agent: 我支持以下能力：
 ### Step 7: 删除 Agent
 
 ```bash
-$ magent agent:delete --id agent-my-agent-65abf85e
+$ magent agent:delete -a agent-my-agent-65abf85e
 
 Deleting agent registration... OK
 Deleting cloud function 'agent-my-agent-65abf85e'... OK
@@ -401,8 +401,8 @@ metadata:                         # 自定义元数据（可选）
 ### 环境变量
 
 ```ini
-CLOUDBASE_ENV_ID=xxx        # CloudBase 环境 ID
-CLOUDBASE_AGENT_ID=xxx      # 默认 Agent ID（可省略 --id）
+CLOUDBASE_ENV_ID=xxx        # CloudBase 环境 ID（未设置时自动从 tcb 检测）
+CLOUDBASE_AGENT_ID=xxx      # 默认 Agent ID（可省略 -a）
 CLOUDBASE_API_KEY=xxx       # JWT Token
 ```
 
@@ -413,13 +413,13 @@ CLOUDBASE_API_KEY=xxx       # JWT Token
 magent agent:create --name <name> [--system <prompt>] [--model <model>] [--file <yaml>] [--code <path>]
 
 # 更新配置（不重新部署，约 8s）
-magent agent:update [--id <id>] [--system <prompt>] [--model <model>] [--file <yaml>]
+magent agent:update [-a <id>] [--system <prompt>] [--model <model>] [--file <yaml>]
 magent agent:update --tools '[...]' --mcp-servers '[...]' --skills '[...]'
 
 # 查看 / 列出 / 删除
-magent agent:get [--id <id>]
+magent agent:get [-a <id>]
 magent agent:list
-magent agent:delete [--id <id>]    # 同步清理底层 SCF 函数或 TCBR 云托管
+magent agent:delete [-a <id>]    # 同步清理底层 SCF 函数或 TCBR 云托管
 ```
 
 ### 对话
@@ -453,10 +453,10 @@ Hello! How can I help you today? I can assist you with coding tasks, file operat
 ### Session 管理
 
 ```bash
-magent session:create --agent <id>
-magent session:list
-magent session:get --id <id>
-magent session:delete --id <id>
+magent session:create -a <agent-id> [--title <title>]
+magent session:list   -a <agent-id>
+magent session:get    -i <session-id> -a <agent-id>
+magent session:delete -i <session-id> -a <agent-id>
 ```
 
 ---
