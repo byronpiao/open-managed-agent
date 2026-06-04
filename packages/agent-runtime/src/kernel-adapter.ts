@@ -192,6 +192,17 @@ export function dropKernelSession(acpSessionId: string): void {
   sessionPool.delete(acpSessionId);
 }
 
+export async function abortKernelSession(acpSessionId: string): Promise<boolean> {
+  const session = sessionPool.get(acpSessionId);
+  if (session && typeof session.abort === "function") {
+    try {
+      await session.abort();
+      return true;
+    } catch { /* best-effort */ }
+  }
+  return false;
+}
+
 /** Pre-populate the pool with a kernel session created externally. */
 export function registerKernelSession(
   acpSessionId: string,
@@ -280,21 +291,7 @@ export async function pumpEvents(
   _session: KernelSession,
   ctx: StreamCtx,
 ): Promise<PumpResult> {
-  let eventCount = 0;
-
   for await (const e of events) {
-    eventCount++;
-    // Write diagnostic log as SSE event so it's visible in magent run output.
-    if (e.type !== "message_delta") {
-      ctx.sse.write({
-        jsonrpc: "2.0",
-        method: "session/update",
-        params: {
-          sessionId: ctx.acpSessionId,
-          update: { sessionUpdate: "log", level: "debug", message: `[pumpEvents] #${eventCount} type=${e.type}`, timestamp: Date.now() },
-        },
-      });
-    }
     switch (e.type) {
       case "message_delta": {
         ctx.sse.write({
@@ -455,7 +452,6 @@ export async function pumpEvents(
         break;
     }
   }
-  console.log(`[KernelAdapter] pumpEvents done: total=${eventCount}`);
   return { stopReason: "end_turn" };
 }
 

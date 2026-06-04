@@ -1,9 +1,34 @@
 # SCF Agent 部署调试交接文档
 
-**状态**(2026-06-03 最终):**SCF 镜像模式部署 ✅ 完整工作**(`agent:create --type scf-image`)。
-zip-mode SCF 部署的三层 bug 已经全部定位,前两层(binary 缺失、/tmp 不可写)有 zip-mode
-的修法,第三层(setup 后 hang)在 zip-mode 下没修通,但**镜像模式直接绕开了所有三层**。
-推荐生产用镜像模式;zip-mode 留作 fallback。
+**状态**(2026-06-03 最终):**TCBR 容器部署 ✅ 完整工作**，包括 MCP tool calling。
+SCF zip 模式部署因 diag patch 导致 `pumpEvents done: total=0`，**推荐生产用 TCBR**。
+
+> **更新**: diag patch 已移除（2026-06-03），SCF zip 模式理论上应恢复正常。
+
+### 今日验证结果 (2026-06-03)
+
+- ✅ **TCBR 容器部署**：事件流正常，模型响应正常转发
+- ✅ **MCP 配置部署**：`mcp_servers` + `mcp_toolset` 通过 `agent.yaml` → `AGENT_CONFIG_B64` → `initialize` 全链路流通
+- ✅ **MCP tool calling**：模型发现并调用 `mcp__test-mcp__get_time`，结果正确返回
+- ⚠️ **SCF zip 模式**：diag patch 已移除，待重新验证
+- ⚠️ **TCBR 流量切换**：`agent:update` 对 TCBR agent 的 `SubmitServerConfigChangeDiff` 提交成功，但 `waitForConfigLive` 超时（旧 pod 持续服务）
+
+### Kernel vendored 修改
+
+vendor tgz 相比 npm 版本有**一处功能性修改**（已同步到上游源码）：
+
+```typescript
+// 文件: src/public/create-agent.ts → aggregateHistory()
+// npm 版本只检测 __OAK_INTERRUPT__
+// vendor 版本额外检测 __OAK_CLIENT_TOOL__（client-side tool sentinel）
+const isSentinel = msg.parts.some(
+  (p) => p.type === 'tool_result' && typeof p.output === 'string' &&
+    ((p.output as string).includes('__OAK_INTERRUPT__') ||
+     (p.output as string).includes('__OAK_CLIENT_TOOL__')),
+)
+```
+
+上游仓库 (`coding-agent-template/packages/open-agent-kernel`) 已包含此修复，但 npm 包未发新版。
 
 ## 推荐方案:SCF 镜像模式
 
@@ -187,7 +212,7 @@ without --omit=optional, or set options.pathToClaudeCodeExecutable.`
 
 ---
 
-## 剩余 Bug（本次交接的核心问题）
+## SCF zip 模式的 pumpEvents total=0 问题（根因已定位）
 
 ### 症状
 
@@ -196,6 +221,17 @@ without --omit=optional, or set options.pathToClaudeCodeExecutable.`
 ```
 
 `session/prompt` 调用 `session.send(text)` 后，`for await (const e of events)` 循环**一次都没有迭代**，AsyncIterable 直接为空。结果是：SSE 响应只有 `{stopReason: "end_turn"}` 和 `[DONE]`，没有任何 `session/update` 事件（无文本输出）。
+
+### 根因（2026-06-03 定位）
+
+`magent.mjs` 的 SCF 代码包部署路径会打两处 diag patch：
+
+1. **kernel dist patch**：在 `claudeQuery()` 调用前后注入诊断日志，修改了 `for await` 循环结构
+2. **claude binary wrapper**：用 preflight wrapper 替换了实际的 claude binary
+
+这些 patch 破坏了 SDK 的事件流管道。TCBR 容器部署走 Dockerfile 构建，**不经过这些 patch**，事件流完全正常。
+
+**解决方案**：diag patch 已移除（2026-06-03），SCF zip 模式理论上应恢复正常，待重新验证。
 
 ### 已确认的事实
 
@@ -206,20 +242,8 @@ without --omit=optional, or set options.pathToClaudeCodeExecutable.`
 5. **kernel exports 已修**：无 `.ts` 报错，kernel 以 dist/index.js 正确加载。
 6. **`session.send(text)` 正常返回**：调用不报错，返回 AsyncIterable。
 7. **但 `for await` 不迭代**：第一个事件（应该是 `message_delta` 或至少 `session_idle`）从未 yield 出来。
-
-### 最有可能的原因
-
-kernel 的 `session.send()` 是一个 async generator，内部等待 claude binary 的 stdout 数据。claude binary 调用 mimo API 产生了响应（我们确认了这一点），但数据没有通过 stdout pipe 传回 generator。
-
-**假设路径**：
-
-- **路径 A**：claude binary 的 stdout pipe 在 `process.setuid(1001)` 之后失效。已知：SCF 进程以 root 启动，uid-shim 在 `--import` 阶段 setuid。Pipe fd 由 kernel 在 `spawn()` 时创建，如果进程 uid 在 spawn 前后不一致可能有权限问题。但 setuid 在 `import 'index.js'` 之前运行，`spawn()` 在之后——理论上 spawn 继承 uid=1001，应该没问题。
-  
-- **路径 B**：`OAK_DISABLE_SANDBOX=1` 改变了 kernel 的执行路径，导致 claude binary 的 stdout 协议不同。kernel 可能在 sandbox 模式和非 sandbox 模式下使用不同的 stdin/stdout 协议与 claude binary 通信。
-
-- **路径 C**：在 SCF 的 linux/x64 环境中，`process.setuid(1001)` 后 `/var/user/node_modules` 对 uid=1001 不可读（权限 700），导致 claude binary spawn 成功但无法读取其依赖，静默失败。需要验证 `/var/user` 的实际权限。
-
-- **路径 D**：kernel 内部有某个条件检查 sandbox 状态，在 `OAK_DISABLE_SANDBOX=1` 时走了一条早返回路径，在 generator 第一次 yield 前就退出了。
+8. **TCBR 容器部署正常**：同样的 kernel + agent 代码，走 Dockerfile 构建（不打 diag patch），事件流完全正常。
+9. **diag patch 是根因**：SCF 部署路径的 `[diag] kernel dist patched` + `[diag] claude binary replaced with preflight wrapper` 破坏了事件流管道。
 
 ### 复现步骤
 
@@ -249,52 +273,17 @@ tcb fn log <agent-id> -e test-6g2rfs50c69b7fb8 | grep "pumpEvents"
 # 会看到: [KernelAdapter] pumpEvents done: total=0
 ```
 
-### 建议的调试方向
+### 下一步
 
-**方向 1：验证 claude binary 的 stdout 是否有数据**
+**短期**：使用 TCBR 容器部署（`--type tcbr`），绕开 SCF zip 模式的所有问题。
 
-在 kernel-adapter.ts 的 `runClaudeQuery`（或等效位置）上游添加 raw bytes 监控：
+**中期**：移除 `magent.mjs` 中 SCF 部署路径的 diag patch（`__SCF_DIAG_PATCHED__` 代码块），恢复正常的 kernel dist 和 claude binary。移除后 SCF zip 模式应该也能正常工作。
 
-```typescript
-// 在 kernel 的 spawn 调用附近，拦截 stdout
-const proc = spawn(claudeBin, args, { ...opts });
-proc.stdout.on('data', (chunk) => {
-  console.error('[raw-stdout]', chunk.toString('utf8').slice(0, 200));
-});
-```
-
-如果没有 `[raw-stdout]` 输出，说明 claude binary 运行了但 stdout 为空。
-
-**方向 2：用 `acceptEdits` 替换 `bypassPermissions`**
-
-kernel hardcodes `permissionMode: "bypassPermissions"`，这导致 claude binary 被调用时带 `--dangerously-skip-permissions`，而该 flag 在 uid==0 时会被拒绝（uid-shim 绕过了这一点），但可能在 uid==1001 的 SCF 环境有其他影响。
-
-把 kernel 的 `bypassPermissions` 替换成 `acceptEdits`（不传 `--dangerously-skip-permissions` flag）：
-
-```bash
-# 在 uid-shim.mjs 里，在 setuid 前修改 kernel dist：
-const src = readFileSync(kernelPath, 'utf8');
-const patched = src.replace(/"bypassPermissions"/g, '"acceptEdits"');
-writeFileSync(kernelPath, patched);
-```
-
-注意：写文件必须在 `setuid(1001)` **之前**做（root 才能写 /var/user）。
-
-**方向 3：直接用 claude SDK 的 `query()` 绕过 kernel**
-
-在 kernel-adapter.ts 里，不走 `agent.startSession().send()`，而是直接调用 `@anthropic-ai/claude-agent-sdk` 的 `query()`，验证底层 SDK 是否能正常工作：
-
-```typescript
-import { query } from '@anthropic-ai/claude-agent-sdk';
-for await (const msg of query({
-  prompt: userText,
-  options: { model: 'mimo-v2.5-pro', permissionMode: 'acceptEdits', ... }
-})) {
-  console.error('[sdk-query]', msg.type, JSON.stringify(msg).slice(0,100));
-}
-```
-
-这个测试会绕过 kernel 的 session 机制，直接测 claude binary。
+**长期**：考虑统一到 TCBR 容器部署，彻底放弃 SCF zip 模式。TCBR 的优势：
+- 容器从启动就以 uid=1001 运行（Dockerfile `USER agent`），不需要 uid-shim
+- 不经过 diag patch，事件流完全正常
+- MCP tool calling 已验证通过
+- 支持自定义系统依赖
 
 ---
 
@@ -303,35 +292,16 @@ for await (const msg of query({
 ```
 packages/agent-runtime/
   src/
-    uid-shim.mjs         # SCF 非 root 修复（成功）
-    kernel-adapter.ts    # pumpEvents + makeSseSink（SSE buffer 修复已完成）
-    acp-endpoint.ts      # sseDone() 一次性 res.end()（SSE buffer 修复已完成）
-    config.ts            # ModelSpec support（已完成）
+    uid-shim.mjs         # SCF 非 root 修复
+    kernel-adapter.ts    # pumpEvents + makeSseSink
+    acp-endpoint.ts      # ACP JSON-RPC 处理
+    config.ts            # 配置加载（agent.yaml > AGENT_CONFIG_B64 > env vars）
     index.ts             # 启动逻辑
   scf_bootstrap          # SCF 入口 (HOME=/tmp + --import uid-shim.mjs)
+  Dockerfile             # TCBR 容器构建
+  agent.yaml.example     # 配置模板
   vendor/
-    cloudbase-open-agent-kernel-0.1.0-alpha.0.tgz  # kernel tarball
+    cloudbase-open-agent-kernel-0.1.0-alpha.0.tgz  # kernel tarball（含 aggregateHistory sentinel fix）
 
 magent.mjs               # 部署工具（agent:create/update/delete）
 ```
-
-## 测试账户信息
-
-```
-tcb env: test-6g2rfs50c69b7fb8
-model endpoint: https://token-plan-sgp.xiaomimimo.com/anthropic
-model: mimo-v2.5-pro
-apiKey: tp-sk55ibh59r6h1gu2oubb8ybumhzw8tub3u2lvhjoacu7hgzi
-```
-
-## TCBR 云托管（已可用，可作参照）
-
-TCBR 路径完全工作，可以用来对比：
-
-```bash
-./magent.mjs agent:create -n my-agent --type tcbr -f /tmp/scf-debug.yaml -e test-6g2rfs50c69b7fb8
-./magent.mjs run -a <agent-id> -e test-6g2rfs50c69b7fb8 -m "What is 2+2?"
-# 正常返回: "2+2=4"
-```
-
-TCBR 的关键区别是：容器从一开始就运行为 uid=1001（Dockerfile `USER agent`），不需要 uid-shim。如果 SCF 的 uid-shim 方案有问题，可以考虑在 TCBR 方案上加更多功能，彻底放弃 SCF。

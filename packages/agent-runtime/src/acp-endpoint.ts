@@ -223,9 +223,11 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
   return { sessionId: session.id, hasHistory: false };
 }
 
-async function handleSessionList(_params: Record<string, unknown>, config: AgentConfig) {
+async function handleSessionList(params: Record<string, unknown>, config: AgentConfig) {
   const agent = getKernelAgent(config);
-  const summaries = await agent.sessions.list({ limit: 50 });
+  const limit = Math.min(Math.max(Number(params.limit) || 50, 1), 200);
+  const offset = Math.max(Number(params.offset) || 0, 0);
+  const summaries = await agent.sessions.list({ limit: 200 });
   // De-duplicate by sessionId. The store can legitimately end up with two
   // rows per session under a narrow race: kernel's own registerSession
   // (fire-and-forget) and our syncRegisterSession both run within ~1ms, both
@@ -249,7 +251,7 @@ async function handleSessionList(_params: Record<string, unknown>, config: Agent
   const deduped = Array.from(dedupedMap.values());
   // Sort newest first
   deduped.sort((a, b) => b.updatedAt - a.updatedAt);
-  const sessions = deduped.map((s) => ({
+  const mapped = deduped.map((s) => ({
     sessionId: s.conversationId,
     title: s.title ?? "",
     updatedAt: s.updatedAt,
@@ -258,7 +260,9 @@ async function handleSessionList(_params: Record<string, unknown>, config: Agent
       createdAt: s.createdAt,
     },
   }));
-  return { sessions, nextCursor: null };
+  const sessions = mapped.slice(offset, offset + limit);
+  const nextOffset = offset + limit < mapped.length ? offset + limit : null;
+  return { sessions, nextCursor: nextOffset !== null ? String(nextOffset) : null };
 }
 
 async function handleSessionLoad(
@@ -336,39 +340,6 @@ async function handleSessionPrompt(
 
   const session = await getOrCreateKernelSession(config, sessionId);
 
-  // SCF diagnostic: test streaming model API to verify connectivity and format.
-  const model = config.model;
-  if (typeof model === "object" && model.apiBaseUrl && model.apiKey) {
-    try {
-      const testRes = await fetch(`${model.apiBaseUrl}/v1/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": model.apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": "interleaved-thinking-2025-05-14",
-        },
-        body: JSON.stringify({
-          model: model.id,
-          max_tokens: 16000,
-          thinking: { type: "enabled", budget_tokens: 5000 },
-          stream: true,
-          messages: [{ role: "user", content: "hi" }],
-        }),
-      });
-      const streamText = await testRes.text();
-      // Count delta types
-      const textDeltaCount = (streamText.match(/"type":"text_delta"/g) || []).length;
-      const thinkingDeltaCount = (streamText.match(/"type":"thinking_delta"/g) || []).length;
-      console.error(`[direct-stream] status=${testRes.status} len=${streamText.length} text_deltas=${textDeltaCount} thinking_deltas=${thinkingDeltaCount}`);
-      if (textDeltaCount === 0) {
-        console.error(`[direct-stream] NO TEXT DELTAS! first500: ${streamText.slice(0, 500)}`);
-      }
-    } catch (e) {
-      console.error(`[direct-stream] FAILED: ${(e as Error).message}`);
-    }
-  }
-
   sseStart(res);
   const sse = makeSseSink(res);
   const abortController = new AbortController();
@@ -415,11 +386,7 @@ async function handleSessionPrompt(
         .filter((b) => b.type === "text" && typeof b.text === "string")
         .map((b) => b.text!)
         .join("");
-      console.log(`[ACP] session.send text="${userText.slice(0,20)}" uid=${process.getuid?.()}`);
-      sse.write({ _diag: "before_send", textLen: userText.length, sessionId });
       events = session.send(userText);
-      console.log(`[ACP] session.send returned`);
-      sse.write({ _diag: "after_send", eventsType: typeof events });
     }
 
     const result = await pumpEvents(events, session, {
@@ -477,6 +444,17 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
   await agent.sessions.delete(sessionId);
   dropKernelSession(sessionId);
   return { sessionId, deleted: true };
+}
+
+async function handleSessionResume(params: Record<string, unknown>, config: AgentConfig) {
+  const sessionId = String(params.sessionId ?? "");
+  if (!sessionId) throw new Error("sessionId is required");
+
+  const agent = getKernelAgent(config);
+  const session = await agent.resumeSession(sessionId);
+  registerKernelSession(sessionId, session);
+  console.log(`[ACP] session.resume sessionId=${sessionId}`);
+  return { sessionId };
 }
 
 // ── Mount function ──────────────────────────────────────────────────────────
@@ -554,6 +532,9 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
 
         case "session/delete":
           return res.json(rpcResult(id, await handleSessionDelete(params, agentConfig)));
+
+        case "session/resume":
+          return res.json(rpcResult(id, await handleSessionResume(params, agentConfig)));
 
         default:
           if (isNotification) return res.status(200).end();

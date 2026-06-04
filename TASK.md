@@ -71,25 +71,38 @@ cloudbase-managed-agent/
 │   │   │   ├── agents.ts        # client.beta.agents.*
 │   │   │   ├── environments.ts  # client.beta.environments.*
 │   │   │   ├── sessions.ts      # client.beta.sessions.*
-│   │   │   └── events.ts        # event streaming (SSE client)
+│   │   │   └── types.ts         # type definitions
 │   │   ├── package.json
 │   │   └── tsconfig.json
-│   └── agent-runtime/    # CloudBase SCF backend (deployed as cloud function)
+│   └── agent-runtime/    # CloudBase backend (deployed as SCF or TCBR)
 │       ├── src/
 │       │   ├── index.ts         # Express server entry
 │       │   ├── config.ts        # Config loading (AGENT_CONFIG > YAML > env vars)
 │       │   ├── acp-endpoint.ts  # ACP JSON-RPC handler
-│       │   └── hunyuan-agent.ts # AI agent core logic
-│       ├── agent.yaml           # Default config template
+│       │   └── kernel-adapter.ts # kernel integration + event streaming
+│       ├── Dockerfile           # TCBR container build
+│       ├── agent.yaml.example   # Config template
 │       ├── package.json
 │       └── scf_bootstrap
-├── examples/
-│   └── fibonacci/        # Example mirroring the Claude quickstart
-│       └── index.ts
+├── lib/                  # CLI modules (magent.mjs split)
+│   ├── ui.mjs
+│   ├── tcb.mjs
+│   ├── credentials.mjs
+│   ├── api.mjs
+│   ├── acp.mjs
+│   ├── cloudrun.mjs
+│   ├── env.mjs
+│   ├── alias.mjs
+│   └── commands/
+│       ├── agent.mjs
+│       ├── session.mjs
+│       ├── chat.mjs
+│       ├── env.mjs
+│       └── cloudrun.mjs
 ├── tests/
-│   ├── e2e.mjs           # E2E test (create → chat → update → verify → delete)
-│   └── integration.ts    # SDK integration tests (ACP full flow)
-├── magent.mjs            # CLI tool
+│   ├── integration.ts    # SDK integration tests (ACP full flow)
+│   └── agui-integration.ts # AG-UI protocol tests
+├── magent.mjs            # CLI entry (~270 lines)
 └── README.md
 ```
 

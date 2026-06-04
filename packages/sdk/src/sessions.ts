@@ -187,33 +187,4 @@ export class SessionsResource {
     await this.ensureInit();
     yield* this.acp.sessionLoad(sessionId);
   }
-
-  // ── Legacy events shim (backward compat) ─────────────────────────────────
-  // Keeps old client.sessions.events.stream() + events.send() working.
-
-  readonly events = {
-    stream: (sessionId: string) => {
-      console.warn(
-        "[ManagedAgents] sessions.events.stream() is deprecated. Use sessions.prompt() instead."
-      );
-      // Return a no-op async iterable — send() will do the actual streaming
-      return {
-        [Symbol.asyncIterator]: async function* () { /* noop */ },
-        _sessionId: sessionId,
-      };
-    },
-    send: (sessionId: string, params: { events: Array<{ type: string; content?: Array<{ type: string; text?: string }> }> }) => {
-      console.warn(
-        "[ManagedAgents] sessions.events.send() is deprecated. Use sessions.prompt() instead."
-      );
-      // Extract text and delegate to prompt — but can't stream here, just fire-and-forget
-      const text = params.events
-        .filter((e) => e.type === "user.message")
-        .flatMap((e) => e.content ?? [])
-        .filter((b) => b.type === "text")
-        .map((b) => b.text ?? "")
-        .join("");
-      return Promise.resolve({ ok: true, _text: text });
-    },
-  };
 }
