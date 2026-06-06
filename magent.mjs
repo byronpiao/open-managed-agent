@@ -36,6 +36,12 @@ import { createRequire } from "module";
 
 const _require = createRequire(import.meta.url);
 
+import {
+  normalizeAgentRuntime,
+  applyHarnessRuntimeEnv,
+  DEFAULT_HARNESS_SANDBOX_IMAGE,
+} from "open-managed-agent-runtime/harness";
+
 // ── Load .env file ──────────────────────────────────────────────────────────
 const envFile = new URL(".env", import.meta.url).pathname;
 if (existsSync(envFile)) {
@@ -559,7 +565,7 @@ async function lookupAgent(envId, agentId) {
 //
 // Model credentials (apiKey/apiBaseUrl) belong in agent.yaml's `model`
 // ModelSpec — they ride inside AGENT_CONFIG_B64 and don't need separate env.
-function buildCloudRunEnvParam({ envId, configB64 }) {
+function buildCloudRunEnvParam({ envId, configB64, config = null }) {
   const envMap = {
     CLOUDBASE_ENV_ID: envId,
     AGENT_CONFIG_B64: configB64,
@@ -572,8 +578,9 @@ function buildCloudRunEnvParam({ envId, configB64 }) {
   // crash on first prompt ("AgsStatefulSandbox requires TCB_API_KEY"). Auto-
   // disable sandbox so the agent is reachable without a TokenHub key.
   // The operator can override by explicitly setting TCB_API_KEY before deploy.
+  const isHarness = config?.runtime === "harness";
   const hasTcbApiKey = !!(process.env.TCB_API_KEY);
-  if (!hasTcbApiKey) envMap.OAK_DISABLE_SANDBOX = "1";
+  if (!hasTcbApiKey && !isHarness) envMap.OAK_DISABLE_SANDBOX = "1";
 
   // Pull DB credentials BEFORE deciding the memory-store flag. Order matters:
   // earlier we computed hasDbCreds from process.env alone, then injected
@@ -608,6 +615,16 @@ function buildCloudRunEnvParam({ envId, configB64 }) {
   if (process.env.OAK_DISABLE_SANDBOX !== undefined) envMap.OAK_DISABLE_SANDBOX = process.env.OAK_DISABLE_SANDBOX;
   if (process.env.OAK_USE_MEMORY_STORE !== undefined) envMap.OAK_USE_MEMORY_STORE = process.env.OAK_USE_MEMORY_STORE;
   else if (!hasDbCreds) envMap.OAK_USE_MEMORY_STORE = "1";
+
+  if (isHarness) {
+    const callbackBase = process.env.CLOUDBASE_SERVER_URL ?? "";
+    applyHarnessRuntimeEnv(envMap, config, {
+      sandboxImage: process.env.HARNESS_SANDBOX_IMAGE ?? DEFAULT_HARNESS_SANDBOX_IMAGE,
+      harnessToolId: process.env.HARNESS_TOOL_ID,
+      clientToolCallbackBase: callbackBase,
+    });
+  }
+
   return { envMap, credsSource };
 }
 
@@ -933,8 +950,12 @@ const COMMANDS = {
 
     // SCF cloud function path (default).
     const envId   = requireEnvId(args);
-    const code    = args.code    ?? "./packages/agent-runtime";
-    const runtime = args.runtime ?? "Nodejs20.19";
+    const code = args.code ?? "./packages/agent-runtime";
+    const scfRuntime =
+      args["scf-runtime"] ??
+      (args.runtime && !["managed", "harness"].includes(String(args.runtime))
+        ? args.runtime
+        : "Nodejs20.19");
 
     // Build initial config
     const config = {
@@ -964,6 +985,7 @@ const COMMANDS = {
     if (name)   config.name   = name;
     if (model)  config.model  = model;
     if (system) config.system = system;
+    normalizeAgentRuntime(config, args);
 
     const configB64 = Buffer.from(JSON.stringify(config)).toString("base64");
     // Build env string for `tcb agent create --env`. Same OAK_* defaults as
@@ -983,8 +1005,16 @@ const COMMANDS = {
     };
     if (process.env.TCB_API_KEY) {
       scfEnvMap.TCB_API_KEY = process.env.TCB_API_KEY;
-    } else {
+    } else if (config.runtime !== "harness") {
       scfEnvMap.OAK_DISABLE_SANDBOX = "1";
+    }
+    if (config.runtime === "harness") {
+      const callbackBase = process.env.CLOUDBASE_SERVER_URL ?? "";
+      applyHarnessRuntimeEnv(scfEnvMap, config, {
+        sandboxImage: process.env.HARNESS_SANDBOX_IMAGE ?? DEFAULT_HARNESS_SANDBOX_IMAGE,
+        harnessToolId: process.env.HARNESS_TOOL_ID,
+        clientToolCallbackBase: callbackBase,
+      });
     }
     // SCF is stateless (each invocation may be a fresh process). Sessions must
     // be persisted in CloudBase NoSQL so session/new and session/prompt can
@@ -1069,7 +1099,7 @@ const COMMANDS = {
       const tcbArgs = [
         "agent", "create",
         "--name",        alias,
-        "--runtime",     runtime,
+        "--runtime",     scfRuntime,
         "--code",        actualCode,
         "--ignore",      ".git,node_modules,.DS_Store,.deploy,.deploy-cloudrun,logs",
         "--timeout",     "7200",
@@ -1318,6 +1348,8 @@ const COMMANDS = {
     if (args.model)           updates.model       = args.model;
     if (args.system)          updates.system      = args.system;
     if (args.description)     updates.description = args.description;
+    if (args.runtime)         updates.runtime     = args.runtime;
+    if (args.engine)          updates.engine      = args.engine;
     if (args.tools)           updates.tools       = JSON.parse(args.tools);
     if (args["mcp-servers"])  updates.mcp_servers = JSON.parse(args["mcp-servers"]);
     if (args.skills)          updates.skills      = JSON.parse(args.skills);
@@ -1347,6 +1379,7 @@ const COMMANDS = {
     // current config, the caller has to supply a full one via --file, or
     // the partial update will be missing required fields.
     const merged = { ...(currentConfig ?? {}), ...updates };
+    normalizeAgentRuntime(merged, args);
     const requireFullConfig = !currentConfig;
     if (requireFullConfig) {
       const missing = [];
@@ -1706,6 +1739,7 @@ const COMMANDS = {
     if (name)   config.name   = name;
     if (model)  config.model  = model;
     if (system) config.system = system;
+    normalizeAgentRuntime(config, args);
 
     const configB64 = Buffer.from(JSON.stringify(config)).toString("base64");
 
@@ -1791,7 +1825,7 @@ const COMMANDS = {
     // call. The runtime listens on :80 (CloudBase's default container port).
     process.stdout.write(dim("Phase 2/3: creating cloudrun service... "));
     try {
-      const { envMap, credsSource } = buildCloudRunEnvParam({ envId, configB64 });
+      const { envMap, credsSource } = buildCloudRunEnvParam({ envId, configB64, config });
       if (!credsSource) {
         console.log();
         console.log(yellow("⚠️  no TCB_SECRET_* found in shell or tcb login — agent may fail with MISSING_CREDENTIALS"));
@@ -2170,6 +2204,10 @@ ${bold("AGENT COMMANDS")}
                                          system libs)
         --model <model>         Model (default: hunyuan-t1-latest)
         --system <prompt>       System prompt
+        --runtime <managed|harness>  managed=托管运行时；harness=沙箱 Agent（Harness 运行时）
+        --agent-runtime <managed|harness>  Same as --runtime
+        --scf-runtime <Nodejs20.19>  SCF-only Node runtime (agent:create zip mode)
+        --engine <opencode|claude|codebuddy>  箱内引擎（ACP 服务端），仅 runtime=harness
     -f, --file <path>           Load config from YAML/JSON file
         --code <path>           Code directory (default: ./packages/agent-runtime)
         --runtime <rt>          [scf only] Runtime (default: Nodejs20.19)
@@ -2181,6 +2219,8 @@ ${bold("AGENT COMMANDS")}
                                                tcbr: ~60-90s rolling redeploy)
         --system <prompt>       Update system prompt
         --model <model>         Update model
+        --runtime <managed|harness>   沙箱 Agent 见 harness
+        --engine <opencode|claude|codebuddy>  箱内引擎（ACP 服务端）
     -n, --name <name>           Update agent name
         --tools <json>          Replace tools array (JSON)
         --mcp-servers <json>    Replace mcp_servers array (JSON)

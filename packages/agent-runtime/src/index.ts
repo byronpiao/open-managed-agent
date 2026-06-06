@@ -18,8 +18,13 @@
 import express from "express";
 import cors from "cors";
 import { mountAcpEndpoint } from "./acp-endpoint.js";
-import { loadAgentConfig, resolveSkills } from "./config.js";
+import { loadAgentConfig, resolveRuntime, resolveSkills } from "./config.js";
 import { getKernelAgent, getStoreDiag } from "./kernel-adapter.js";
+import {
+  initHarnessLogging,
+  mountHarnessMcpGateway,
+  harnessLog,
+} from "./harness/index.js";
 
 const port = Number(process.env.PORT ?? 9000);
 
@@ -27,39 +32,67 @@ async function main() {
   const rawConfig = await loadAgentConfig();
   const config = await resolveSkills(rawConfig);
 
-  console.log(`[Agent] Name: ${config.name}`);
-  console.log(`[Agent] Model: ${config.model}`);
-  console.log(`[Agent] Tools: ${config.tools?.length ?? 0} configured`);
-  console.log(`[Agent] MCP Servers: ${config.mcp_servers?.length ?? 0} configured`);
-  console.log(`[Agent] Skills: ${config.skills?.length ?? 0} configured`);
+  const { runtime, engine } = resolveRuntime(config);
+  if (runtime === "harness") {
+    initHarnessLogging();
+    harnessLog({
+      lane: "runtime",
+      operation: "boot",
+      name: config.name,
+      engine,
+      toolCount: config.tools?.length ?? 0,
+      mcpServerCount: config.mcp_servers?.length ?? 0,
+      skillCount: config.skills?.length ?? 0,
+    }).emit({ status: "ok" });
+  } else {
+    console.log(`[Agent] Name: ${config.name}`);
+    console.log(`[Agent] Runtime: ${runtime}`);
+    console.log(`[Agent] Model: ${config.model}`);
+    console.log(`[Agent] Tools: ${config.tools?.length ?? 0} configured`);
+    console.log(`[Agent] MCP Servers: ${config.mcp_servers?.length ?? 0} configured`);
+    console.log(`[Agent] Skills: ${config.skills?.length ?? 0} configured`);
+  }
 
-  // Eagerly build the kernel agent so getStoreDiag() reflects real state on
-  // the very first /healthz probe — otherwise tests that hit /healthz before
-  // any session/* call see "uninitialized" and can't tell whether the fix
-  // landed in this build.
-  try { getKernelAgent(config); } catch (e) {
-    console.warn("[Agent] eager getKernelAgent failed:", (e as Error)?.message);
+  // Eagerly build the kernel agent (managed only) so /healthz reflects store state.
+  if (runtime === "managed") {
+    try {
+      getKernelAgent(config);
+    } catch (e) {
+      console.warn("[Agent] eager getKernelAgent failed:", (e as Error)?.message);
+    }
   }
 
   const app = express();
   app.use(cors());
+  app.use("/internal/harness/mcp", express.json({ limit: "2mb" }));
   app.get("/healthz", (_req, res) => {
     res.json({
       ok: true,
       name: config.name,
       model: config.model,
-      buildMarker: "syncRegisterSession-v3",   // bump when shipping a fix; client probes this
+      buildMarker: "harness-runtime-v1",
+      runtime,
+      engine: runtime === "harness" ? engine : undefined,
       store: getStoreDiag(),
     });
   });
 
   mountAcpEndpoint(app, config);
+  if (runtime === "harness") {
+    mountHarnessMcpGateway(app, config);
+  }
 
   app.listen(port, () => {
-    console.log(`OpenManagedAgent Runtime listening on :${port}`);
-    console.log(`  ACP   : POST /acp, POST /v1/aibot/bots/:botId/acp`);
-    console.log(`  Health: GET  /healthz`);
-    console.log(`  Model : ${typeof config.model === "string" ? config.model : config.model?.id}`);
+    if (runtime === "harness") {
+      harnessLog({ lane: "runtime", operation: "listen", port, runtime, engine }).emit({
+        status: "ok",
+      });
+    } else {
+      console.log(`OpenManagedAgent Runtime listening on :${port}`);
+      console.log(`  ACP   : POST /acp, POST /v1/aibot/bots/:botId/acp`);
+      console.log(`  Health: GET  /healthz`);
+      console.log(`  Model : ${typeof config.model === "string" ? config.model : config.model?.id}`);
+    }
   });
 }
 

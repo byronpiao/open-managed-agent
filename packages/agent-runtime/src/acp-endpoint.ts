@@ -34,6 +34,17 @@
 import type { Express, Request, Response } from "express";
 import expressLib from "express";
 import type { AgentConfig } from "./config.js";
+import { resolveRuntime } from "./config.js";
+import { mountHarnessAcpEndpoint } from "./harness/acp-endpoint.js";
+import {
+  isAcpUuid,
+  rpcError,
+  rpcResult,
+  sseDone,
+  sseSessionUpdate,
+  sseStart,
+  sseWrite,
+} from "./acp-shared.js";
 import type { MessageRecord } from "@cloudbase/open-agent-kernel";
 import {
   dropKernelSession,
@@ -48,56 +59,7 @@ import {
   type StopReason,
 } from "./kernel-adapter.js";
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function isUuid(s: string): boolean {
-  return UUID_RE.test(s);
-}
-
 const abortControllers = new Map<string, AbortController>();
-
-// ── JSON-RPC helpers ─────────────────────────────────────────────────────────
-
-function rpcResult(id: unknown, result: unknown) {
-  return { jsonrpc: "2.0", id, result };
-}
-
-function rpcError(id: unknown, code: number, message: string, data?: unknown) {
-  return { jsonrpc: "2.0", id, error: { code, message, ...(data ? { data } : {}) } };
-}
-
-// ── SSE helpers ──────────────────────────────────────────────────────────────
-
-function sseStart(res: Response) {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders?.();
-}
-
-function sseWrite(res: Response, payload: unknown) {
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
-}
-
-function sseDone(res: Response, sse?: { getAll?: () => string }) {
-  // SCF web-function: only res.end() content reaches the client.
-  // All intermediate res.write() are dropped by the gateway.
-  // Deliver the entire SSE body — buffered frames + [DONE] — in one call.
-  const all = sse?.getAll?.() ?? "";
-  res.end(`${all}data: [DONE]\n\n`);
-}
-
-function sseSessionUpdate(res: Response, sessionId: string, update: unknown) {
-  sseWrite(res, {
-    jsonrpc: "2.0",
-    method: "session/update",
-    params: { sessionId, update },
-  });
-}
 
 // ── Translate kernel MessageRecord[] → ACP history messages ─────────────────
 
@@ -199,7 +161,7 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
   // conversation id — non-UUID ids crash the SDK child process. So we enforce
   // UUID at the wire boundary: clients must use UUIDs (e.g. crypto.randomUUID()).
   if (reqSessionId) {
-    if (!isUuid(reqSessionId)) {
+    if (!isAcpUuid(reqSessionId)) {
       throw Object.assign(
         new Error(
           `Invalid sessionId: must be a UUID (got "${reqSessionId.slice(0, 64)}"). ` +
@@ -479,12 +441,9 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
   return { sessionId, deleted: true };
 }
 
-// ── Mount function ──────────────────────────────────────────────────────────
+// ── Mount (managed / OAK) ───────────────────────────────────────────────────
 
-export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
-  app.use("/acp", expressLib.json({ limit: "10mb" }));
-  app.use("/v1/aibot/bots", expressLib.json({ limit: "10mb" }));
-
+function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   // CORS — let chat-playground (cross-origin) talk to us.
   const corsHandler = (req: Request, res: Response, next: () => void) => {
     const origin = req.headers.origin as string | undefined;
@@ -572,5 +531,19 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   app.post("/acp", acpHandler);
   app.post("/v1/aibot/bots/:botId/acp", acpHandler);
 
-  console.log("[ACP] Endpoints mounted: POST /acp (+ gateway /v1/aibot/bots/:botId/acp)");
+  console.log("[ACP] Managed endpoints mounted: POST /acp (+ gateway /v1/aibot/bots/:botId/acp)");
+}
+
+/** Routes POST /acp by agent.runtime (managed vs harness). */
+export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
+  app.use("/acp", expressLib.json({ limit: "10mb" }));
+  app.use("/v1/aibot/bots", expressLib.json({ limit: "10mb" }));
+
+  const { runtime, engine } = resolveRuntime(agentConfig);
+  if (runtime === "harness") {
+    mountHarnessAcpEndpoint(app, agentConfig);
+    return;
+  }
+  console.log(`[ACP] runtime=managed (engine field ignored, yaml engine=${engine})`);
+  mountManagedAcpEndpoint(app, agentConfig);
 }

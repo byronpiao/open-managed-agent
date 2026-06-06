@@ -260,6 +260,7 @@ export class AcpClient {
           toolCall?: { id: string; name: string; status: string; result?: string };
           toolCallId?: string;
           toolName?: string;
+          input?: unknown;
           args?: unknown;
           options?: Array<{ optionId: string; name: string; kind: string }>;
           hints?: unknown;
@@ -304,6 +305,14 @@ export class AcpClient {
               args: update.args,
               options: update.options ?? [],
               hints: update.hints,
+            };
+            break;
+          case "tool_use_request":
+            yield {
+              type: "tool_use_request",
+              toolUseId: update.toolCallId ?? "",
+              toolName: update.toolName ?? "",
+              input: update.input,
             };
             break;
           case "error":
