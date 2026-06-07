@@ -7,17 +7,23 @@
  * 3. SDK code path tests (constructor, type checks)
  *
  * Usage:
+ *   cp .env.example .env && fill CLOUDBASE_* / TCB_API_KEY
  *   tsx tests/integration.ts
  */
 
+import { loadEnv } from "../scripts/load-env.mjs";
 import ManagedAgents, { AcpClient } from "../packages/sdk/src/index.js";
 import type { ManagedAgentsConfig, Session, ListResponse } from "../packages/sdk/src/index.js";
 
-// ── Configuration ─────────────────────────────────────────────────────────────
+loadEnv();
 
-const ENV_ID = "test-6g2rfs50c69b7fb8";
-const AGENT_ID = "agent-managed-agent-test-60ab640";
-const ACCESS_KEY = "";
+// ── Configuration (from .env — never hardcode tokens) ───────────────────────────
+
+const ENV_ID = process.env.CLOUDBASE_ENV_ID?.trim() ?? "";
+const AGENT_ID = process.env.CLOUDBASE_AGENT_ID?.trim() ?? "agent-managed-agent-test-60ab640";
+const ACCESS_KEY =
+  process.env.CLOUDBASE_ACCESS_KEY?.trim() || process.env.TCB_API_KEY?.trim() || "";
+const hasNetworkCreds = Boolean(ENV_ID && AGENT_ID && ACCESS_KEY);
 
 // No fetch monkey-patching needed - the standard /v1/aibot/bots/{id}/acp path works directly
 
@@ -60,7 +66,14 @@ function assert(condition: boolean, message: string) {
 
 async function main() {
   console.log("\n\x1b[1m OpenManagedAgent SDK - Integration Tests\x1b[0m");
-  console.log(`  Env: ${ENV_ID}, Agent: ${AGENT_ID}`);
+  console.log(
+    `  Env: ${ENV_ID || "(unset)"}, Agent: ${AGENT_ID}, API key: ${ACCESS_KEY ? "(set)" : "(unset)"}`,
+  );
+  if (!hasNetworkCreds) {
+    console.log(
+      "  \x1b[33mNetwork tests need CLOUDBASE_ENV_ID, CLOUDBASE_AGENT_ID, CLOUDBASE_ACCESS_KEY (or TCB_API_KEY) in .env\x1b[0m",
+    );
+  }
   console.log();
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -156,7 +169,9 @@ async function main() {
 
   let acpAvailable = false;
 
-  await runTest("B1. ACP endpoint reachability check", async () => {
+  if (!hasNetworkCreds) {
+    skipTest("B1. ACP endpoint reachability check", "missing .env credentials");
+  } else await runTest("B1. ACP endpoint reachability check", async () => {
     try {
       const res = await fetch(`https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}/acp`, {
         method: "POST",

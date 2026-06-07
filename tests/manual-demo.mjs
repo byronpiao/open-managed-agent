@@ -18,31 +18,29 @@
  *   node tests/manual-demo.mjs <agentId>                           (override agent)
  *   node tests/manual-demo.mjs <agentId> <envId> [path]            (override all)
  *
- * Defaults are baked in below for the stop-resume-demo agent. Override via
- * argv or env vars (CLOUDBASE_AGENT_ID, CLOUDBASE_ENV_ID, CLOUDBASE_ACCESS_KEY).
+ * Requires .env with CLOUDBASE_ENV_ID, CLOUDBASE_AGENT_ID, CLOUDBASE_ACCESS_KEY
+ * (or pass agentId / envId via argv).
  */
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadEnv } from "../scripts/load-env.mjs";
 import ManagedAgents from "../packages/sdk/dist/index.js";
 
-// ── Defaults baked in for the stop-resume-demo agent ────────────────────────
-// Override any of these via process.argv or env vars below.
-const DEFAULT_AGENT_ID = "agent-stop-resume-demo-9c2611949";
-const DEFAULT_ENV_ID   = "test-6g2rfs50c69b7fb8";
-// CloudBase gateway Bearer token (long-lived API key issued for env above).
-const DEFAULT_ACCESS_KEY =
-  "eyJhbGciOiJSUzI1NiIsImtpZCI6IjlkMWRjMzFlLWI0ZDAtNDQ4Yi1hNzZmLWIwY2M2M2Q4MTQ5OCJ9." +
-  "eyJhdWQiOiJ0ZXN0LTZnMnJmczUwYzY5YjdmYjgiLCJleHAiOjI1MzQwMjMwMDc5OSwiaWF0IjoxNzc4MTQ3OTQzLCJhdF9oYXNoIjoic0xBTGRZTXFSNGVSMGRCa2xlY2VXdyIsInByb2plY3RfaWQiOiJ0ZXN0LTZnMnJmczUwYzY5YjdmYjgiLCJtZXRhIjp7InBsYXRmb3JtIjoiQXBpS2V5In0sImFkbWluaXN0cmF0b3JfaWQiOiIxODkyNzc2NjkzMzM2Njg2NTk0IiwidXNlcl90eXBlIjoiIiwiY2xpZW50X3R5cGUiOiJjbGllbnRfc2VydmVyIiwiaXNfc3lzdGVtX2FkbWluIjp0cnVlfQ." +
-  "EMw1mDROkqNHN-7HXUz2uWy7MqtKNsdsJoV5cdh1ElDNC6l9acbIeenwT5SdPPFM3M7E0BwbyszTWHmkq_nhPKXyqIXqI3854jYQEqC-cpE6FjPCbdCp4kxIafruoakKsCVPHcYkeSBxUdzdhG4Pvqwm3_t9ljqSY3Uaq6m7zaNZOa0MXLCa9uT9G-eaP9qHdEJ65LsuAits05iLlkBluQw5NNWT-IjzdsJnBM--hZKyyOgCoBHux6uJ5b4Q6kO01AQ2D_zQBH-BdbafnccRFAJIYs8Bk8BVDAFt7Gr4LI2LE_ZuV2KlGjVs97ICw-EOvL28GAxj2NxhbAy6-oUK1g";
+loadEnv();
 
-const agentId   = process.argv[2] || process.env.CLOUDBASE_AGENT_ID  || DEFAULT_AGENT_ID;
-const envId     = process.argv[3] || process.env.CLOUDBASE_ENV_ID    || DEFAULT_ENV_ID;
-const target    = process.argv[4] || "/etc/hostname";
-const accessKey = process.env.CLOUDBASE_ACCESS_KEY || DEFAULT_ACCESS_KEY;
+const DEFAULT_AGENT_ID = "agent-stop-resume-demo-9c2611949";
+
+const agentId = process.argv[2] || process.env.CLOUDBASE_AGENT_ID || DEFAULT_AGENT_ID;
+const envId = process.argv[3] || process.env.CLOUDBASE_ENV_ID || "";
+const target = process.argv[4] || "/etc/hostname";
+const accessKey =
+  process.env.CLOUDBASE_ACCESS_KEY?.trim() || process.env.TCB_API_KEY?.trim() || "";
 
 if (!agentId || !envId || !accessKey) {
-  console.error("Missing config. Set agentId, envId, and CLOUDBASE_ACCESS_KEY.");
+  console.error(
+    "Missing config. cp .env.example .env — need CLOUDBASE_ENV_ID, CLOUDBASE_ACCESS_KEY (or TCB_API_KEY).",
+  );
   process.exit(1);
 }
 

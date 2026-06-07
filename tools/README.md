@@ -22,5 +22,9 @@ which atomically rolls out a new deploy version reusing the same image.
 
     node tools/cloudrun-set-env.mjs <serviceName>
 
-Edit the file to change the env vars it pushes (kept hard-coded so the
-deployed agent isn't accidentally updated by a stray invocation).
+Reads from `.env` / `.env.harness` via `scripts/load-env.mjs`:
+
+- `CLOUDBASE_ENV_ID`
+- `ANTHROPIC_AUTH_TOKEN` or `LLM_API_KEY`
+- `ANTHROPIC_BASE_URL`
+- `LLM_MODEL` (optional)

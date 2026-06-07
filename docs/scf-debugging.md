@@ -224,28 +224,30 @@ kernel 的 `session.send()` 是一个 async generator，内部等待 claude bina
 ### 复现步骤
 
 ```bash
-# 1. 准备配置
-cat > /tmp/scf-debug.yaml << 'EOF'
+# 0. 凭证从 .env / .env.harness 加载（勿写进 yaml 提交）
+set -a && source .env && source .env.harness 2>/dev/null; set +a
+
+# 1. 准备配置（apiKey 从环境变量注入）
+cat > /tmp/scf-debug.yaml << EOF
 name: scf-debug
 model:
-  id: mimo-v2.5-pro
-  apiKey: 
-  apiBaseUrl: https://token-plan-sgp.xiaomimimo.com/anthropic
+  id: ${LLM_MODEL:-mimo-v2.5-pro}
+  apiKey: ${LLM_API_KEY:?set LLM_API_KEY in .env.harness}
+  apiBaseUrl: ${ANTHROPIC_BASE_URL:?set ANTHROPIC_BASE_URL}
 system: You are a helpful assistant.
 EOF
 
 # 2. 部署
-cd /Users/yang/git/open-managed-agent
-./magent.mjs agent:create -n scf-debug --type scf -f /tmp/scf-debug.yaml -e test-6g2rfs50c69b7fb8
+./magent.mjs agent:create -n scf-debug --type scf -f /tmp/scf-debug.yaml -e "${CLOUDBASE_ENV_ID:?set CLOUDBASE_ENV_ID}"
 
 # 3. 等待就绪后测试
 sleep 90
-./magent.mjs run -a <agent-id> -e test-6g2rfs50c69b7fb8 -m "What is 2+2?"
+./magent.mjs run -a <agent-id> -e "$CLOUDBASE_ENV_ID" -m "What is 2+2?"
 # 期望: "2+2=4"
 # 实际: 空（end_turn 但无文本）
 
 # 4. 检查关键日志
-tcb fn log <agent-id> -e test-6g2rfs50c69b7fb8 | grep "pumpEvents"
+tcb fn log <agent-id> -e "$CLOUDBASE_ENV_ID" | grep "pumpEvents"
 # 会看到: [KernelAdapter] pumpEvents done: total=0
 ```
 
@@ -317,20 +319,22 @@ magent.mjs               # 部署工具（agent:create/update/delete）
 
 ## 测试账户信息
 
-```
-tcb env: test-6g2rfs50c69b7fb8
-model endpoint: https://token-plan-sgp.xiaomimimo.com/anthropic
-model: mimo-v2.5-pro
-apiKey: 
-```
+从仓库根 `.env` + `.env.harness` 读取（`node scripts/load-env.mjs --check` 校验）：
+
+| 变量 | 用途 |
+|------|------|
+| `CLOUDBASE_ENV_ID` | TCB 环境 |
+| `LLM_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | Mimo / Anthropic-compatible key |
+| `ANTHROPIC_BASE_URL` | 模型 endpoint |
+| `LLM_MODEL` | 如 `mimo-v2.5-pro` |
 
 ## TCBR 云托管（已可用，可作参照）
 
 TCBR 路径完全工作，可以用来对比：
 
 ```bash
-./magent.mjs agent:create -n my-agent --type tcbr -f /tmp/scf-debug.yaml -e test-6g2rfs50c69b7fb8
-./magent.mjs run -a <agent-id> -e test-6g2rfs50c69b7fb8 -m "What is 2+2?"
+./magent.mjs agent:create -n my-agent --type tcbr -f /tmp/scf-debug.yaml -e "$CLOUDBASE_ENV_ID"
+./magent.mjs run -a <agent-id> -e "$CLOUDBASE_ENV_ID" -m "What is 2+2?"
 # 正常返回: "2+2=4"
 ```
 
