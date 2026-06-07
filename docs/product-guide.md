@@ -58,7 +58,7 @@ Agent runtime 需要能访问到 LLM。**推荐用 ModelSpec 在配置里直接�
 ```yaml
 model:
   id: mimo-v2.5-pro                                        # 模型 ID
-  apiKey: tp-xxxxxxxxxxxxxxxxxxxxxxxx                       # 自带的 API key
+  apiKey: <your-api-key>                                   # 自带的 API key
   apiBaseUrl: https://your-proxy.example.com/anthropic     # 自带 endpoint
   options:                                                  # 可选，透传到底层 provider
     max_tokens: 4096

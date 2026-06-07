@@ -39,8 +39,9 @@ async function callTcbr(action, payload) {
 
 const envId = process.env.CLOUDBASE_ENV_ID?.trim();
 const serviceName = process.argv[2] || "magtest-v2";
+// .env.harness overlays .env — prefer LLM_API_KEY so token matches ANTHROPIC_BASE_URL.
 const anthropicToken =
-  process.env.ANTHROPIC_AUTH_TOKEN?.trim() || process.env.LLM_API_KEY?.trim();
+  process.env.LLM_API_KEY?.trim() || process.env.ANTHROPIC_AUTH_TOKEN?.trim();
 const anthropicBase = process.env.ANTHROPIC_BASE_URL?.trim();
 const model = process.env.LLM_MODEL?.trim() || process.env.AGENT_MODEL?.trim() || "mimo-v2.5-pro";
 
