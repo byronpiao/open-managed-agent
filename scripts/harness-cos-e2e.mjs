@@ -7,6 +7,7 @@
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadEnv } from "./load-env.mjs";
+import { COS_POST_WRITE_SETTLE_MS, postWorkspaceSnapshot } from "./harness-cos-lib.mjs";
 
 loadEnv();
 
@@ -72,16 +73,12 @@ async function main() {
     }
     console.log("write ok:", proofPath);
 
-    await sleep(2000);
-    const snapRes = await handleA.request("/api/workspace/snapshot", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const snapText = await snapRes.text();
-    console.log("snapshot A:", snapRes.status, snapText.slice(0, 300));
-    if (snapRes.status !== 200) {
-      throw new Error(`snapshot expected 200, got ${snapRes.status}`);
+    console.log(`waiting ${COS_POST_WRITE_SETTLE_MS}ms after write (TRW debounced sync window)…`);
+    await sleep(COS_POST_WRITE_SETTLE_MS);
+    const snapA = await postWorkspaceSnapshot(handleA);
+    console.log("snapshot A:", snapA.status, snapA.text.slice(0, 300), `(attempt ${snapA.attempt ?? "?"})`);
+    if (!snapA.ok) {
+      throw new Error(`snapshot expected 200, got ${snapA.status}: ${snapA.text.slice(0, 200)}`);
     }
   } finally {
     if (handleA) {

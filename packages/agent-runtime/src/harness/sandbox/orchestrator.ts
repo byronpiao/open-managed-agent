@@ -477,7 +477,14 @@ async function waitForReady(args: {
         headers,
         signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
       });
-      if (res.ok) return;
+      if (res.ok) {
+        try {
+          const body = (await res.json()) as { ok?: boolean; status?: string };
+          if (body.ok === true && body.status === "ok") return;
+        } catch {
+          return;
+        }
+      }
     } catch {
       // retry
     }

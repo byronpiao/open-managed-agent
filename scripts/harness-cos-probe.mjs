@@ -5,6 +5,7 @@
  */
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadEnv, assertHarnessCreds } from "./load-env.mjs";
+import { COS_POST_WRITE_SETTLE_MS, postWorkspaceSnapshot } from "./harness-cos-lib.mjs";
 
 loadEnv();
 assertHarnessCreds();
@@ -62,28 +63,19 @@ async function main() {
         console.error("COS probe write failed");
         process.exit(1);
       }
-      await sleep(2500);
+      console.log(`waiting ${COS_POST_WRITE_SETTLE_MS}ms after write (TRW debounced sync window)…`);
+      await sleep(COS_POST_WRITE_SETTLE_MS);
     }
 
-    let snapRes;
-    let snapText = "";
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      snapRes = await handle.request("/api/workspace/snapshot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      });
-      snapText = await snapRes.text();
-      if (snapRes.status === 200) break;
-      if (process.env.HARNESS_COS_ENABLED === "1" && /in progress/i.test(snapText)) {
-        await sleep(4000);
-        continue;
-      }
-      break;
-    }
-    console.log("POST /api/workspace/snapshot:", snapRes.status, snapText.slice(0, 500));
+    const snap = await postWorkspaceSnapshot(handle);
+    console.log(
+      "POST /api/workspace/snapshot:",
+      snap.status,
+      snap.text.slice(0, 500),
+      snap.attempt ? `(attempt ${snap.attempt})` : "",
+    );
 
-    if (snapRes.status !== 200) {
+    if (!snap.ok) {
       if (process.env.HARNESS_COS_ENABLED === "1") {
         console.error("\nCOS enabled but snapshot failed — see 一条龙 §5 / npm run harness -- cos");
         process.exit(1);
