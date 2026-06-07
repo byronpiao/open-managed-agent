@@ -73,8 +73,10 @@ async function main() {
     }
     console.log("write ok:", proofPath);
 
-    console.log(`waiting ${COS_POST_WRITE_SETTLE_MS}ms after write (TRW debounced sync window)…`);
-    await sleep(COS_POST_WRITE_SETTLE_MS);
+    if (COS_POST_WRITE_SETTLE_MS > 0) {
+      console.log(`waiting ${COS_POST_WRITE_SETTLE_MS}ms after write…`);
+      await sleep(COS_POST_WRITE_SETTLE_MS);
+    }
     const snapA = await postWorkspaceSnapshot(handleA);
     console.log("snapshot A:", snapA.status, snapA.text.slice(0, 300), `(attempt ${snapA.attempt ?? "?"})`);
     if (!snapA.ok) {

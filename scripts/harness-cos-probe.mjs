@@ -63,8 +63,10 @@ async function main() {
         console.error("COS probe write failed");
         process.exit(1);
       }
-      console.log(`waiting ${COS_POST_WRITE_SETTLE_MS}ms after write (TRW debounced sync window)…`);
-      await sleep(COS_POST_WRITE_SETTLE_MS);
+      if (COS_POST_WRITE_SETTLE_MS > 0) {
+        console.log(`waiting ${COS_POST_WRITE_SETTLE_MS}ms after write…`);
+        await sleep(COS_POST_WRITE_SETTLE_MS);
+      }
     }
 
     const snap = await postWorkspaceSnapshot(handle);

@@ -1,11 +1,12 @@
 /**
- * COS harness helpers — avoid racing TRW debounced sync (DEBOUNCE_MS=2s).
- * See tcb-remote-workspace/src/cos-sync.ts.
+ * COS harness helpers — manual snapshot (TRW snapshotNow) cancels debounced
+ * sync and waits for in-flight idle; optional short settle for virtiofs only.
+ * See tcb-remote-workspace/src/cos-sync.ts prepareForManualSnapshot.
  */
 import { setTimeout as sleep } from "node:timers/promises";
 
-/** After workspace write, wait past debounce + typical first sync before manual snapshot. */
-export const COS_POST_WRITE_SETTLE_MS = 8_000;
+/** Optional post-write delay before POST /api/workspace/snapshot (0 = rely on TRW idle wait + retry). */
+export const COS_POST_WRITE_SETTLE_MS = 0;
 
 export async function postWorkspaceSnapshot(handle, opts = {}) {
   const maxAttempts = opts.maxAttempts ?? 8;
