@@ -78,7 +78,7 @@ async function main() {
       { encoding: "utf-8", cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
     );
     console.log(createOut);
-    const created = createOut.match(/Agent created:\s*(agent-[a-z0-9]+)/i);
+    const created = createOut.match(/Agent created:\s*(agent-[a-z0-9-]+)/i);
     agentId = created?.[1];
   }
 
