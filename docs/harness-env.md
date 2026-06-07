@@ -87,7 +87,7 @@ node scripts/load-env.mjs --check
 
 | 变量 | 说明 |
 |------|------|
-| `HARNESS_SANDBOX_IMAGE` | 覆盖内置 `HARNESS_PUBLIC_MAGENT_IMAGE`（`:magent`） |
+| `HARNESS_SANDBOX_IMAGE` | 覆盖内置 `HARNESS_PUBLIC_MAGENT_IMAGE`（见 `harness-env.ts`） |
 | `HARNESS_SANDBOX_IMAGE_REGISTRY_TYPE` | 私有仓库类型 |
 | `HARNESS_TOOL_ROLE_ARN` | **仅**未设 `HARNESS_TOOL_ID`、需 `CreateSandboxTool` 时必填；**不回写** `.env`，一次性控制台填 |
 | `HARNESS_TOOL_ID` | 固定复用已有 Sandbox Tool（推荐 COS 时 pin `sdt-*`）；设了可省略 RoleArn |

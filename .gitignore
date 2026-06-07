@@ -11,3 +11,4 @@ dist/
 # (it overrides AGENT_CONFIG_B64 and breaks cloud deploys)
 packages/agent-runtime/agent.yaml
 packages/agent-runtime/agent.yml
+packages/agent-runtime/agent.harness.yaml

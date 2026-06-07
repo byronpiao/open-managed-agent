@@ -315,6 +315,30 @@ export function normalizeAgentRuntime(
   return config;
 }
 
+/** Host env forwarded into cloud runtime container for orchestrator / LLM / COS. */
+const HARNESS_DEPLOY_ENV_KEYS = [
+  "TCB_REGION",
+  "LLM_API_KEY",
+  "LLM_MODEL",
+  "OPENAI_BASE_URL",
+  "ANTHROPIC_BASE_URL",
+  "HARNESS_COS_ENABLED",
+  "HARNESS_COS_BUCKET",
+  "HARNESS_COS_BUCKET_PATH",
+  "HARNESS_COS_ENDPOINT",
+  "HARNESS_COS_REGION",
+  "HARNESS_COS_MOUNT_NAME",
+  "HARNESS_COS_MOUNT_DIR",
+  "HARNESS_SANDBOX_IMAGE_REGISTRY_TYPE",
+] as const;
+
+function forwardHarnessDeployEnv(envMap: Record<string, string>): void {
+  for (const key of HARNESS_DEPLOY_ENV_KEYS) {
+    const value = process.env[key]?.trim();
+    if (value) envMap[key] = value;
+  }
+}
+
 /** magent agent:create/update — merge harness env into SCF / CloudRun env map. */
 export function applyHarnessRuntimeEnv(
   envMap: Record<string, string>,
@@ -337,5 +361,6 @@ export function applyHarnessRuntimeEnv(
   if (Object.keys(mcporter.mcpServers).length) {
     envMap.MCPORTER_CONFIG_CONTENT = JSON.stringify(mcporter);
   }
+  forwardHarnessDeployEnv(envMap);
   return envMap;
 }
