@@ -21,7 +21,13 @@ const ALIASES = [
   ["TENCENTCLOUD_SECRETKEY", "TCB_SECRET_KEY"],
 ];
 
-const REQUIRED_FOR_AGS = ["CLOUDBASE_ENV_ID", "TCB_API_KEY", "TCB_SECRET_ID", "TCB_SECRET_KEY"];
+const REQUIRED_FOR_AGS = [
+  "CLOUDBASE_ENV_ID",
+  "TCB_API_KEY",
+  "TCB_SECRET_ID",
+  "TCB_SECRET_KEY",
+  "TCB_REGION",
+];
 
 function parseEnvLine(line) {
   const trimmed = line.trim();
@@ -79,15 +85,24 @@ if (isCli) {
   loadEnv();
   const missing = missingHarnessCreds();
   if (process.argv.includes("--check")) {
+    const runCheck = async () => {
     if (missing.length) {
       console.error(`Missing env: ${missing.join(", ")}`);
       process.exit(1);
     }
     console.log("OK: CloudBase credentials present");
     console.log(`  CLOUDBASE_ENV_ID=${process.env.CLOUDBASE_ENV_ID}`);
-    console.log(
-      `  HARNESS_SANDBOX_IMAGE=${process.env.HARNESS_SANDBOX_IMAGE ?? "(default public magent)"}`,
-    );
+    console.log(`  TCB_REGION=${process.env.TCB_REGION}`);
+    const { HARNESS_PUBLIC_MAGENT_IMAGE, missingHarnessLlmEnv, missingHarnessCosEnv } =
+      await import("../packages/agent-runtime/dist/harness/harness-env.js");
+    const image = process.env.HARNESS_SANDBOX_IMAGE?.trim() || HARNESS_PUBLIC_MAGENT_IMAGE;
+    console.log(`  HARNESS_SANDBOX_IMAGE=${image}`);
+    const llmMissing = missingHarnessLlmEnv();
+    console.log(`  LLM=${llmMissing.length ? `missing ${llmMissing.join(",")}` : "ok"}`);
+    const cosMissing = missingHarnessCosEnv();
+    if (process.env.HARNESS_COS_ENABLED === "1") {
+      console.log(`  COS=${cosMissing.length ? `missing ${cosMissing.join(",")}` : "ok"}`);
+    }
     console.log(
       `  HARNESS_TOOL_ID=${process.env.HARNESS_TOOL_ID ?? "(unset — auto harness-{CLOUDBASE_ENV_ID})"}`,
     );
@@ -95,6 +110,15 @@ if (isCli) {
     console.log(`  LLM_MODEL=${process.env.LLM_MODEL ?? "(unset)"}`);
     console.log(`  OPENAI_BASE_URL=${process.env.OPENAI_BASE_URL ? "(set)" : "(unset)"}`);
     console.log(`  ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL ? "(set)" : "(unset)"}`);
+    console.log(`  HARNESS_COS_ENABLED=${process.env.HARNESS_COS_ENABLED ?? "(unset)"}`);
+    console.log(
+      `  HARNESS_TOOL_ROLE_ARN=${process.env.HARNESS_TOOL_ROLE_ARN ? "(set)" : "(unset — required only when auto-creating tool)"}`,
+    );
     process.exit(0);
+    };
+    runCheck().catch((err) => {
+      console.error(err.message ?? err);
+      process.exit(1);
+    });
   }
 }

@@ -89,6 +89,10 @@ export type HarnessEngine = "opencode" | "claude" | "codebuddy";
 /** TRW route segment: POST /api/agents/{slug}/acp */
 export type DataPlaneEngineSlug = "opencode" | "claudecode" | "codebuddy";
 
+/**
+ * Shared by managed (OAK loop on gateway) and harness (loop in AGS sandbox).
+ * Fields like tools / mcp_servers / skills are interpreted per runtime in deploy.ts.
+ */
 export interface AgentConfig {
   name: string;
   /** Model can be a bare ID string (CloudBase-hosted model) or a ModelSpec
@@ -165,7 +169,7 @@ export function buildHarnessInstanceEnv(
     push("ENABLE_AGENT_CODEBUDDY_ACP", "true");
   }
 
-  push("SECRET_MASTER_KEY", process.env.SECRET_MASTER_KEY);
+  // SECRET_MASTER_KEY: injected per harness session (harness_sessions.secretMasterKey), not from host env.
   push("INTEGRATION_IDE", engine === "codebuddy" ? "codebuddy" : engine === "claude" ? "claude" : "opencode");
   push("WORKSPACE_FOLDER_PATHS", "/home/user");
 

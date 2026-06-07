@@ -112,7 +112,7 @@ class CloudBaseHarnessSyncEventStore implements HarnessSyncEventStore {
           secretId: this.credentials.secretId,
           secretKey: this.credentials.secretKey,
           sessionToken: this.credentials.sessionToken,
-          region: this.credentials.region ?? "ap-shanghai",
+          region: this.credentials.region,
         });
         return app.database() as CloudBaseDatabase;
       })();
@@ -187,13 +187,14 @@ function resolveCloudBaseCredentials(envId: string): CloudBaseCredentials | null
     process.env.TCB_SECRET_KEY ?? process.env.TENCENTCLOUD_SECRETKEY ?? "";
   const sessionToken =
     process.env.TCB_TOKEN ?? process.env.TENCENTCLOUD_SESSIONTOKEN ?? undefined;
-  if (!secretId || !secretKey) return null;
+  const region = process.env.TCB_REGION?.trim();
+  if (!secretId || !secretKey || !region) return null;
   return {
     envId,
     secretId,
     secretKey,
     sessionToken,
-    region: process.env.TCB_REGION ?? "ap-shanghai",
+    region,
   };
 }
 

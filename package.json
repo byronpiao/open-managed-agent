@@ -37,11 +37,8 @@
     "build:sdk": "npm run build --workspace=packages/sdk",
     "build:runtime": "npm run build --workspace=packages/agent-runtime",
     "test": "npm run build:runtime && node tests/stop-and-resume.test.mjs && node tests/harness/unit.test.mjs",
-    "test:full": "npm test && npm run harness:e2e && npm run harness:full",
-    "harness:unit": "npm run build:runtime && node tests/harness/unit.test.mjs",
-    "harness:e2e": "npm run build:runtime && node tests/harness/e2e.test.mjs",
-    "harness:full": "npm run build:runtime && node tests/harness/e2e.test.mjs --full",
-    "harness:teardown": "npm run build:runtime && node scripts/harness-ags-teardown.mjs"
+    "test:full": "npm test && npm run harness -- all",
+    "harness": "npm run build:runtime && node scripts/harness.mjs"
   },
   "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

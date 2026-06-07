@@ -25,6 +25,7 @@ import {
   mountHarnessMcpGateway,
   harnessLog,
 } from "./harness/index.js";
+import { getHarnessStoreDiag } from "./harness/sandbox/session-store.js";
 
 const port = Number(process.env.PORT ?? 9000);
 
@@ -65,16 +66,25 @@ async function main() {
   const app = express();
   app.use(cors());
   app.use("/internal/harness/mcp", express.json({ limit: "2mb" }));
-  app.get("/healthz", (_req, res) => {
-    res.json({
+  app.get("/healthz", async (_req, res) => {
+    const base = {
       ok: true,
       name: config.name,
       model: config.model,
       buildMarker: "harness-runtime-v1",
       runtime,
       engine: runtime === "harness" ? engine : undefined,
-      store: getStoreDiag(),
-    });
+    };
+    if (runtime === "harness") {
+      const envId =
+        process.env.CLOUDBASE_ENV_ID?.trim() ??
+        process.env.TCB_ENV_ID?.trim() ??
+        "default";
+      const harnessStore = await getHarnessStoreDiag(envId);
+      res.json({ ...base, harnessStore });
+      return;
+    }
+    res.json({ ...base, store: getStoreDiag() });
   });
 
   mountAcpEndpoint(app, config);

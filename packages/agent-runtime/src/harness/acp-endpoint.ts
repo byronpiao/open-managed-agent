@@ -1,5 +1,6 @@
 /**
- * 沙箱 Agent（Harness 运行时）网关 ACP — 转发至箱内引擎（ACP 服务端）。见 harness/README.md。
+ * Harness runtime ACP gateway — forwards to in-sandbox engine ACP server.
+ * Reuses acp-shared wire helpers; session index is harness_sessions (not oak_*).
  */
 
 import type { Express, Request, Response } from "express";
@@ -93,9 +94,12 @@ async function ensureSandboxForSession(
   const envId = envIdFromConfig();
   const { engine } = resolveRuntime(config);
   const store = getHarnessSessionStore(envId);
-  const record = await store.get(acpSessionId);
+  let record = await store.get(acpSessionId);
   if (!record) {
     throw Object.assign(new Error(`Session not found: ${acpSessionId}`), { rpcCode: -32602 });
+  }
+  if (!record.secretMasterKey) {
+    record = await store.ensureSecretMasterKey(acpSessionId);
   }
 
   let handle = getCachedSandboxHandle(acpSessionId);
@@ -103,7 +107,7 @@ async function ensureSandboxForSession(
     const callbackBase = harnessCallbackBase();
     const staleInstanceId = record.instanceId;
 
-    if (staleInstanceId && record.toolId && !isE2eStubSandboxEnabled()) {
+    if (staleInstanceId && record.toolId && !isE2eStubSandboxEnabled(config)) {
       try {
         await getSandboxOrchestrator().stopInstanceForEnv(staleInstanceId, envId);
       } catch (err) {
@@ -117,7 +121,7 @@ async function ensureSandboxForSession(
       await store.clearInstanceBinding(acpSessionId);
     }
 
-    if (isE2eStubSandboxEnabled()) {
+    if (isE2eStubSandboxEnabled(config)) {
       handle = createE2eStubSandboxHandle(acpSessionId);
     } else {
       const orchestrator = getSandboxOrchestrator();
@@ -131,6 +135,7 @@ async function ensureSandboxForSession(
           engine: record.engine,
           clientToolCallbackBase: callbackBase,
           acpSessionId,
+          secretMasterKey: record.secretMasterKey,
         }),
       });
       if (record.engine === "opencode" && record.engineSessionId) {
@@ -142,7 +147,7 @@ async function ensureSandboxForSession(
         });
       }
     }
-    if (!isE2eStubSandboxEnabled()) {
+    if (!isE2eStubSandboxEnabled(config)) {
       await store.bindInstance(acpSessionId, {
         instanceId: handle.instanceId,
         toolId: handle.toolId,
@@ -433,7 +438,7 @@ async function maybeExportOpencodeSync(
   config: AgentConfig,
 ): Promise<void> {
   const { engine } = resolveRuntime(config);
-  if (engine !== "opencode" || isE2eStubSandboxEnabled()) return;
+  if (engine !== "opencode" || isE2eStubSandboxEnabled(config)) return;
   const envId = envIdFromConfig();
   const store = getHarnessSessionStore(envId);
   const row = await store.get(acpSessionId);
@@ -670,7 +675,7 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
   const handle = getCachedSandboxHandle(sessionId);
   if (handle) {
     try {
-      if (row.engine === "opencode" && row.engineSessionId && !isE2eStubSandboxEnabled()) {
+      if (row.engine === "opencode" && row.engineSessionId && !isE2eStubSandboxEnabled(config)) {
         await exportOpencodeSyncEvents({
           handle,
           syncStore: getHarnessSyncEventStore(envId),

@@ -1,6 +1,6 @@
 /**
  * Shared ACP wire helpers (JSON-RPC + SSE).
- * Used by 托管运行时（managed）and 沙箱 Agent（harness）handlers.
+ * Used by managed gateway handlers and harness acp-endpoint (forwards to sandbox engine).
  */
 
 import type { Response } from "express";

@@ -12,7 +12,18 @@ import {
   engineToDataPlaneSlug,
   type DataPlaneEngineSlug,
 } from "../../config.js";
+import { resolveHarnessSandboxImage, resolveHarnessToolRoleArn } from "../harness-env.js";
+import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 import { harnessTrace, harnessLog } from "../logging.js";
+import {
+  buildCosMountOptions,
+  buildCosStorageMounts,
+  ensureCosSubPath,
+  harnessCosToolNameForEnv,
+  mergeCosInstanceEnv,
+  resolveHarnessCosConfig,
+  type HarnessCosConfig,
+} from "./cos-mount.js";
 
 const TRW_SERVICE_PORT = 9000;
 const READY_TIMEOUT_MS = 120_000;
@@ -20,18 +31,6 @@ const READY_POLL_INTERVAL_MS = 3000;
 const TOOL_WARMUP_POLL_MS = 10_000;
 const TOOL_WARMUP_POLL_MAX = 6;
 const HEALTH_TIMEOUT_MS = 5000;
-
-const FALLBACK_SANDBOX_IMAGE =
-  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260526-1008-vibecoding";
-
-function resolveDefaultSandboxImage(): string {
-  return (
-    process.env.HARNESS_SANDBOX_IMAGE ??
-    FALLBACK_SANDBOX_IMAGE
-  );
-}
-
-const DEFAULT_TOOL_ROLE_ARN = "qcs::cam::uin/691612481:roleName/agent-sandbox";
 
 export class SandboxOrchestratorError extends Error {
   constructor(message: string, cause?: unknown) {
@@ -124,8 +123,8 @@ function resolveCredentials(opts: OrchestratorOptions): ResolvedCredentials {
     secretId,
     secretKey,
     sessionToken,
-    image: opts.image ?? resolveDefaultSandboxImage(),
-    toolRoleArn: opts.toolRoleArn ?? DEFAULT_TOOL_ROLE_ARN,
+    image: opts.image ?? resolveHarnessSandboxImage(),
+    toolRoleArn: opts.toolRoleArn ?? process.env.HARNESS_TOOL_ROLE_ARN?.trim() ?? "",
     defaultTimeout: opts.defaultTimeout ?? "30m",
     gatewayBaseUrl: opts.gatewayBaseUrl,
     harnessToolId: opts.harnessToolId ?? process.env.HARNESS_TOOL_ID,
@@ -239,13 +238,15 @@ async function createHarnessTool(
   envId: string,
   toolName: string,
   cred: ResolvedCredentials,
+  storageMounts?: Array<Record<string, unknown>>,
 ): Promise<string> {
+  const roleArn = cred.toolRoleArn || resolveHarnessToolRoleArn();
   const resp = await callAgsApi(
     "CreateSandboxTool",
     {
       ToolName: toolName,
       ToolType: "custom",
-      RoleArn: cred.toolRoleArn,
+      RoleArn: roleArn,
       CustomConfiguration: {
         Image: cred.image,
         ImageRegistryType: resolveImageRegistryType(cred.image),
@@ -266,7 +267,10 @@ async function createHarnessTool(
       },
       NetworkConfiguration: { NetworkMode: "PUBLIC" },
       DefaultTimeout: cred.defaultTimeout,
-      Description: `open-managed-agent harness tool for env ${envId}`,
+      Description: storageMounts?.length
+        ? `open-managed-agent harness COS tool for env ${envId}`
+        : `open-managed-agent harness tool for env ${envId}`,
+      ...(storageMounts?.length ? { StorageMounts: storageMounts } : {}),
     },
     cred,
     envId,
@@ -305,13 +309,15 @@ async function updateHarnessToolImage(
 async function ensureHarnessTool(
   envId: string,
   cred: ResolvedCredentials,
+  cos: HarnessCosConfig | null,
   onProgress?: (msg: { phase: string; message: string }) => void,
 ): Promise<{ toolId: string; justCreated: boolean }> {
   if (cred.harnessToolId) {
     return { toolId: cred.harnessToolId, justCreated: false };
   }
 
-  const toolName = harnessToolNameForEnv(envId);
+  const toolName = cos ? harnessCosToolNameForEnv(envId) : harnessToolNameForEnv(envId);
+  const storageMounts = cos ? buildCosStorageMounts(cos) : undefined;
   const existing = await findToolByName(toolName, cred, envId);
   if (existing) {
     try {
@@ -329,7 +335,7 @@ async function ensureHarnessTool(
     phase: "tool_create",
     message: `creating harness tool ${toolName} (first run, ~30s)`,
   });
-  const toolId = await createHarnessTool(envId, toolName, cred);
+  const toolId = await createHarnessTool(envId, toolName, cred, storageMounts);
   return { toolId, justCreated: true };
 }
 
@@ -343,6 +349,7 @@ async function startInstance(
   cred: ResolvedCredentials,
   envId: string,
   instanceEnv: HarnessEnvVar[],
+  cos: HarnessCosConfig | null,
 ): Promise<string> {
   const customConfiguration = pickStartCustomConfiguration(instanceEnv);
   const resp = await callAgsApi(
@@ -350,6 +357,7 @@ async function startInstance(
     {
       ToolId: toolId,
       Timeout: cred.defaultTimeout,
+      ...(cos ? { MountOptions: buildCosMountOptions(cos) } : {}),
       ...(Object.keys(customConfiguration).length
         ? { CustomConfiguration: customConfiguration }
         : {}),
@@ -384,12 +392,19 @@ async function startInstanceWithRetry(args: {
   cred: ResolvedCredentials;
   envId: string;
   instanceEnv: HarnessEnvVar[];
+  cos: HarnessCosConfig | null;
   onProgress?: (msg: { phase: string; message: string }) => void;
 }): Promise<string> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= TOOL_WARMUP_POLL_MAX; attempt++) {
     try {
-      return await startInstance(args.toolId, args.cred, args.envId, args.instanceEnv);
+      return await startInstance(
+        args.toolId,
+        args.cred,
+        args.envId,
+        args.instanceEnv,
+        args.cos,
+      );
     } catch (err) {
       lastErr = err;
       if (!isAgsRetryableError(err) || attempt >= TOOL_WARMUP_POLL_MAX) throw err;
@@ -510,8 +525,21 @@ export class AgsStatefulSandboxOrchestrator {
       harnessToolId: cred.harnessToolId,
     });
     const baseUrl = resolveGatewayUrl(args.envId, cred.gatewayBaseUrl);
-    const instanceEnv =
+    let instanceEnv =
       args.instanceEnv ?? buildHarnessInstanceEnv(args.agentConfig, args.engine);
+    const secretMasterKey =
+      instanceEnv.find((e) => e.Name === "SECRET_MASTER_KEY")?.Value ??
+      generateHarnessSecretMasterKey();
+    if (!instanceEnv.some((e) => e.Name === "SECRET_MASTER_KEY")) {
+      instanceEnv = [...instanceEnv, { Name: "SECRET_MASTER_KEY", Value: secretMasterKey }];
+    }
+    const cos = resolveHarnessCosConfig({
+      acpSessionId: args.acpSessionId,
+      secretMasterKey,
+    });
+    if (cos) {
+      instanceEnv = mergeCosInstanceEnv(instanceEnv, cos);
+    }
 
     const onProgress = (msg: { phase: string; message: string }) => {
       wl.phase(msg.phase, { detail: msg.message });
@@ -524,9 +552,24 @@ export class AgsStatefulSandboxOrchestrator {
 
     try {
       wl.phase("tool.ensure");
-      const ensured = await ensureHarnessTool(args.envId, cred, onProgress);
+      const ensured = await ensureHarnessTool(args.envId, cred, cos, onProgress);
       toolId = ensured.toolId;
-      wl.set({ toolId, toolJustCreated: ensured.justCreated });
+      wl.set({
+        toolId,
+        toolJustCreated: ensured.justCreated,
+        ...(cos ? { cosSubPath: cos.subPath, cosMount: cos.mountName } : {}),
+      });
+
+      if (cos) {
+        onProgress({
+          phase: "cos.ensure_subpath",
+          message: `COS subpath ${cos.subPath} under ${cos.bucketPath}`,
+        });
+        await ensureCosSubPath(cos, {
+          secretId: cred.secretId,
+          secretKey: cred.secretKey,
+        });
+      }
 
       if (ensured.justCreated) {
         for (let round = 1; round <= TOOL_WARMUP_POLL_MAX; round++) {
@@ -544,6 +587,7 @@ export class AgsStatefulSandboxOrchestrator {
         cred,
         envId: args.envId,
         instanceEnv,
+        cos,
         onProgress,
       });
       wl.set({ instanceId });

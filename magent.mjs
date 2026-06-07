@@ -39,7 +39,7 @@ const _require = createRequire(import.meta.url);
 import {
   normalizeAgentRuntime,
   applyHarnessRuntimeEnv,
-  DEFAULT_HARNESS_SANDBOX_IMAGE,
+  resolveHarnessSandboxImage,
 } from "open-managed-agent-runtime/harness";
 
 // ── Load .env file ──────────────────────────────────────────────────────────
@@ -619,7 +619,7 @@ function buildCloudRunEnvParam({ envId, configB64, config = null }) {
   if (isHarness) {
     const callbackBase = process.env.CLOUDBASE_SERVER_URL ?? "";
     applyHarnessRuntimeEnv(envMap, config, {
-      sandboxImage: process.env.HARNESS_SANDBOX_IMAGE ?? DEFAULT_HARNESS_SANDBOX_IMAGE,
+      sandboxImage: resolveHarnessSandboxImage(),
       harnessToolId: process.env.HARNESS_TOOL_ID,
       clientToolCallbackBase: callbackBase,
     });
@@ -1011,7 +1011,7 @@ const COMMANDS = {
     if (config.runtime === "harness") {
       const callbackBase = process.env.CLOUDBASE_SERVER_URL ?? "";
       applyHarnessRuntimeEnv(scfEnvMap, config, {
-        sandboxImage: process.env.HARNESS_SANDBOX_IMAGE ?? DEFAULT_HARNESS_SANDBOX_IMAGE,
+        sandboxImage: resolveHarnessSandboxImage(),
         harnessToolId: process.env.HARNESS_TOOL_ID,
         clientToolCallbackBase: callbackBase,
       });

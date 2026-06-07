@@ -758,7 +758,7 @@ cors@^2.8.5:
     object-assign "^4"
     vary "^1"
 
-cos-nodejs-sdk-v5@^2.14.0:
+cos-nodejs-sdk-v5@^2.14.0, cos-nodejs-sdk-v5@^2.15.4:
   version "2.15.4"
   resolved "https://registry.npmjs.org/cos-nodejs-sdk-v5/-/cos-nodejs-sdk-v5-2.15.4.tgz"
   integrity sha512-TP/iYTvKKKhRK89on9SRfSMGEw/9SFAAU8EC1kdT5Fmpx7dAwaCNM2+R2H1TSYoQt+03rwOs8QEfNkX8GOHjHQ==

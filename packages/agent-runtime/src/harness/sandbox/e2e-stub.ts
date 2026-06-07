@@ -1,6 +1,6 @@
 /**
- * In-process stub sandbox for harness e2e (HARNESS_E2E_STUB_SANDBOX=1).
- * Keeps session/prompt SSE open so client-tool MCP bridge can be tested without AGS.
+ * In-process stub sandbox for harness e2e.
+ * Enabled when AgentConfig.metadata.harnessE2eStub === "1" (e2e child only).
  */
 
 import type { HarnessSandboxHandle } from "./orchestrator.js";
@@ -9,8 +9,12 @@ const openPrompts = new Map<string, ReadableStreamDefaultController<Uint8Array>>
 const HITL_MARKER = "HITL_E2E";
 const HITL_TOOL_CALL_ID = "tu-hitl-stub-1";
 
-export function isE2eStubSandboxEnabled(): boolean {
-  return process.env.HARNESS_E2E_STUB_SANDBOX === "1";
+export const HARNESS_E2E_STUB_METADATA_KEY = "harnessE2eStub";
+
+export function isE2eStubSandboxEnabled(config?: {
+  metadata?: Record<string, string>;
+}): boolean {
+  return config?.metadata?.[HARNESS_E2E_STUB_METADATA_KEY] === "1";
 }
 
 function sseData(enc: TextEncoder, payload: Record<string, unknown>): Uint8Array {

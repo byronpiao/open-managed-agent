@@ -26,7 +26,7 @@ export function shouldRunSandboxMcpPump(
   config: AgentConfig,
   callbackBase: string,
 ): boolean {
-  if (isE2eStubSandboxEnabled()) return false;
+  if (isE2eStubSandboxEnabled(config)) return false;
   if (!isLoopbackHarnessCallback(callbackBase)) return false;
   return getCustomTools(config).length > 0;
 }

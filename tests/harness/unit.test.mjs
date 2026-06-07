@@ -1,6 +1,6 @@
 /**
  * Harness runtime unit tests (no network).
- * Run: npm run harness:unit
+ * Run: npm test
  */
 
 import { strict as assert } from "node:assert";
@@ -24,7 +24,7 @@ import {
   buildSkillsManifestEnv,
   normalizeAgentRuntime,
   applyHarnessRuntimeEnv,
-  DEFAULT_HARNESS_SANDBOX_IMAGE,
+  HARNESS_PUBLIC_MAGENT_IMAGE,
   deliverClientToolResult,
   invokeClientToolFromSandbox,
   registerActivePrompt,
@@ -34,6 +34,13 @@ import {
   exportOpencodeSyncEvents,
   hydrateOpencodeSyncEvents,
 } from "../../packages/agent-runtime/dist/harness/index.js";
+import {
+  buildCosMountOptions,
+  buildCosStorageMounts,
+  cosObjectKeyForSubPath,
+  harnessCosToolNameForEnv,
+  resolveHarnessCosConfig,
+} from "../../packages/agent-runtime/dist/harness/sandbox/cos-mount.js";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -227,10 +234,10 @@ test("applyHarnessRuntimeEnv writes mcporter for custom tools", () => {
         },
       ],
     },
-    { clientToolCallbackBase: "https://gw.example.com", sandboxImage: DEFAULT_HARNESS_SANDBOX_IMAGE },
+    { clientToolCallbackBase: "https://gw.example.com", sandboxImage: HARNESS_PUBLIC_MAGENT_IMAGE },
   );
   assert.ok(env.MCPORTER_CONFIG_CONTENT);
-  assert.equal(env.HARNESS_SANDBOX_IMAGE, DEFAULT_HARNESS_SANDBOX_IMAGE);
+  assert.equal(env.HARNESS_SANDBOX_IMAGE, HARNESS_PUBLIC_MAGENT_IMAGE);
 });
 
 test("buildMcporterConfig adds managed-agent-client for custom tools", () => {
@@ -493,6 +500,47 @@ test("harness sync event store append + hydrate round-trip", async () => {
   assert.ok(calls.some((c) => c.path.endsWith("/sync/replay")));
   delete process.env.OAK_USE_MEMORY_STORE;
   resetHarnessSyncEventStoreForTests();
+});
+
+test("harnessCosToolNameForEnv prefix", () => {
+  assert.equal(harnessCosToolNameForEnv("test-6g2rfs50c69b7fb8"), "harness-cos-test-6g2rfs50c69b7fb8");
+});
+
+test("resolveHarnessCosConfig returns null when disabled", () => {
+  const prev = process.env.HARNESS_COS_ENABLED;
+  delete process.env.HARNESS_COS_ENABLED;
+  assert.equal(resolveHarnessCosConfig(), null);
+  if (prev) process.env.HARNESS_COS_ENABLED = prev;
+});
+
+test("buildCosStorageMounts and mount options", () => {
+  process.env.HARNESS_COS_ENABLED = "1";
+  process.env.HARNESS_COS_BUCKET = "b";
+  process.env.HARNESS_COS_BUCKET_PATH = "/test-sync-out";
+  process.env.HARNESS_COS_ENDPOINT = "b.cos.ap-shanghai.myqcloud.com";
+  process.env.HARNESS_COS_REGION = "ap-shanghai";
+  process.env.HARNESS_COS_MOUNT_NAME = "cos-mount";
+  process.env.HARNESS_COS_MOUNT_DIR = "/mnt/workspace";
+  const cos = resolveHarnessCosConfig({
+    subPathOverride: "inst-1",
+    secretMasterKey: "test-secret",
+  });
+  assert.ok(cos);
+  const mounts = buildCosStorageMounts(cos);
+  assert.equal(mounts[0].Name, "cos-mount");
+  assert.deepEqual(buildCosMountOptions(cos), [{ Name: "cos-mount", SubPath: "inst-1" }]);
+  assert.equal(cosObjectKeyForSubPath(cos), "test-sync-out/inst-1/.keep");
+  for (const k of [
+    "HARNESS_COS_ENABLED",
+    "HARNESS_COS_BUCKET",
+    "HARNESS_COS_BUCKET_PATH",
+    "HARNESS_COS_ENDPOINT",
+    "HARNESS_COS_REGION",
+    "HARNESS_COS_MOUNT_NAME",
+    "HARNESS_COS_MOUNT_DIR",
+  ]) {
+    delete process.env[k];
+  }
 });
 
 let failed = 0;

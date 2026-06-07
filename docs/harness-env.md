@@ -58,12 +58,15 @@ node scripts/load-env.mjs --check
 | 变量 | 必填（真 AGS） | 说明 |
 |------|----------------|------|
 | `CLOUDBASE_ENV_ID` | ✓ | 环境 ID |
+| `TCB_REGION` | ✓（真 AGS / CloudBase DB） | 如 `ap-shanghai` |
 | `TCB_API_KEY` | ✓ | AGS / SDK JWT |
 | `TCB_SECRET_ID` / `TCB_SECRET_KEY` | ✓ | 腾讯云密钥 |
 | `CLOUDBASE_ACCESS_KEY` | 部署/网关 | API Key JWT |
 | `CLOUDBASE_AGENT_ID` | 可选 | 默认 Agent |
 
-**不要**在 harness 分支往 `.env.example` 加：`PORT`、`TCB_REGION`、`CLOUDBASE_SERVER_URL`（本地 runtime 有默认）、各类 `HARNESS_*` 镜像项。
+**`.env.example` 已含 `TCB_REGION`**（与 master 对齐）：真 AGS / CloudBase `harness_sessions` / `harness_sync_events` / COS SDK **都读 region**。本地纯 stub e2e（`OAK_USE_MEMORY_STORE=1`）可不填，但 `node scripts/load-env.mjs --check` 与 `harness -- full` 会要求。
+
+**不要**往 example 加：`PORT`、`CLOUDBASE_SERVER_URL`（本地 runtime 有默认）、各类 `HARNESS_*` 镜像/COS 细项（放 `.env.harness`）。
 
 ---
 
@@ -84,10 +87,13 @@ node scripts/load-env.mjs --check
 
 | 变量 | 说明 |
 |------|------|
-| `HARNESS_SANDBOX_IMAGE` | 覆盖内置默认公开 magent 镜像 |
+| `HARNESS_SANDBOX_IMAGE` | 覆盖内置 `HARNESS_PUBLIC_MAGENT_IMAGE`（`:magent`） |
 | `HARNESS_SANDBOX_IMAGE_REGISTRY_TYPE` | 私有仓库类型 |
-| `HARNESS_TOOL_ID` | **非必选**（example 里注释）：固定复用已有 Sandbox Tool |
-| `SECRET_MASTER_KEY` | full e2e 真沙箱时 TRW 侧车需要 |
+| `HARNESS_TOOL_ROLE_ARN` | **仅**未设 `HARNESS_TOOL_ID`、需 `CreateSandboxTool` 时必填；**不回写** `.env`，一次性控制台填 |
+| `HARNESS_TOOL_ID` | 固定复用已有 Sandbox Tool（推荐 COS 时 pin `sdt-*`）；设了可省略 RoleArn |
+| `HARNESS_COS_*` | `HARNESS_COS_ENABLED=1` 时 bucket/endpoint/mount 等**全部**必填 |
+
+校验逻辑：`packages/agent-runtime/src/harness/harness-env.ts`；`node scripts/load-env.mjs --check`。
 
 ### 示例（TokenHub 类网关）
 
@@ -108,7 +114,8 @@ ANTHROPIC_BASE_URL=https://tokenhub.example.com/anthropic
 | `CLOUDBASE_SERVER_URL` | 测试/部署注入 | 网关对外 base；**推导**沙箱回调，替代已删除的 `HARNESS_RUNTIME_CALLBACK_URL` 配置项 |
 | `AGENT_CONFIG` | JSON | 单测 / smoke 注入 agent 配置 |
 | `LOG_LEVEL` / `DEBUG` | 可选 | harness 日志；**非** `HARNESS_LOG_*` |
-| `HARNESS_E2E_STUB_SANDBOX` | 仅 e2e child | `1` 时用进程内 stub，不走 AGS |
+| `OAK_USE_MEMORY_STORE` | 测试 / 本地 | `1` 时 harness 会话与 sync 走内存；**真 AGS full 勿设**（与 managed 共用开关，有意复用） |
+| `metadata.harnessE2eStub` | 仅 e2e child `AGENT_CONFIG` | `"1"` 进程内 stub 沙箱，非用户 env |
 
 回调推导（`acp-endpoint.ts`）：
 
@@ -206,15 +213,22 @@ TRW 文档：[tcb-remote-workspace/docs/agents/codebuddy.md](https://github.com/
 |----|------|
 | `ENABLE_AGENT_OPENCODE` / `_ACP` 等 | 按 `engine` |
 | `INTEGRATION_IDE` / `WORKSPACE_FOLDER_PATHS` | OMA 固定 |
-| `SECRET_MASTER_KEY` | `.env.harness` |
+| `SECRET_MASTER_KEY` | `harness_sessions.secretMasterKey`（`session/new` 随机生成，起箱注入；换箱同会话不变） |
 | `HARNESS_RUNTIME_CALLBACK_URL` | OMA 从 `CLOUDBASE_SERVER_URL` 推导 |
 | `HARNESS_ACP_SESSION_ID` | 运行时 session |
 | `HARNESS_CLIENT_TOOLS_JSON` | custom tools schema |
 | `HARNESS_SKILLS_JSON` | skills 打包 |
 | `MCPORTER_CONFIG_CONTENT` | MCP / managed-agent-client |
-| CloudBase 四件套 | `buildHarnessInitCredEnv()` |
+| CloudBase 四件套 | `buildHarnessInitCredEnv()`（**故意打进箱**，供 TRW `workspace/init` 与箱内 CloudBase MCP） |
 
 `workspace/init`：CloudBase 凭证 + `body.skills`；见 TRW [docs/workspace-env.md](https://github.com/TencentCloudBase/tcb-remote-workspace/blob/master/docs/workspace-env.md)。
+
+### `/healthz`
+
+| `runtime` | `store` 字段 |
+|-----------|----------------|
+| `managed` | OAK kernel `getStoreDiag()` |
+| `harness` | **`harnessStore`**（`harness_sessions` driver + active 计数），**不是** OAK store |
 
 ---
 
@@ -267,7 +281,8 @@ OMA 引用 TRW 路径：`TRW_ROOT` 默认 `code_sandbox/tcb-remote-workspace`（
 
 ## 相关文档
 
-- 一条龙命令：`packages/agent-runtime/src/harness/README.md`
+- 一条龙验收：`.plan/harness-一条龙.md`（本地 SoT）；COS 对齐 `code_sandbox/一条龙.md` §5
+- 索引：`packages/agent-runtime/src/harness/README.md`
 - TRW 双通道 env：[workspace-env.md](https://github.com/TencentCloudBase/tcb-remote-workspace/blob/master/docs/workspace-env.md)
 - 加载脚本：`scripts/load-env.mjs`
 - Example：`.env.example`、`.env.harness.example`

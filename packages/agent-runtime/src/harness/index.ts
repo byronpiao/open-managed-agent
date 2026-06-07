@@ -8,7 +8,7 @@ export {
   SANDBOX_TRW_MCP_RELAY_PATH,
   SANDBOX_TRW_MCP_POLL_PATH,
   SANDBOX_TRW_MCP_COMPLETE_PATH,
-  DEFAULT_HARNESS_SANDBOX_IMAGE,
+  HARNESS_PUBLIC_MAGENT_IMAGE,
   resolveHarnessSandboxImage,
   buildHarnessOpencodeConfigContent,
   buildManagedAgentClientTools,
@@ -50,6 +50,17 @@ export {
   getHarnessSyncEventStore,
   resetHarnessSyncEventStoreForTests,
 } from "./sync-event-store.js";
+
+export {
+  assertHarnessAgsRuntimeEnv,
+  assertHarnessCloudCreds,
+  assertHarnessCosEnv,
+  assertHarnessLlmEnv,
+  missingHarnessCosEnv,
+  missingHarnessLlmEnv,
+  resolveHarnessToolRoleArn,
+  resolveTcbRegion,
+} from "./harness-env.js";
 
 export {
   OPENCODE_SYNC_DIRECTORY,

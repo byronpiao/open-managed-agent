@@ -4,6 +4,7 @@
  */
 
 import type { HarnessEngine } from "../../config.js";
+import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 import { harnessTrace, harnessLog } from "../logging.js";
 
 export const HARNESS_SESSIONS_COLLECTION = "harness_sessions";
@@ -15,6 +16,8 @@ export interface HarnessSessionRecord {
   userId: string;
   engine: HarnessEngine;
   status: HarnessSessionStatus;
+  /** TRW secrets vault key; generated at session/new, stable across sandbox re-acquire. */
+  secretMasterKey?: string;
   instanceId?: string;
   toolId?: string;
   engineSessionId?: string;
@@ -38,6 +41,8 @@ export interface HarnessSessionStore {
   setStatus(acpSessionId: string, status: HarnessSessionStatus): Promise<void>;
   /** Drop sandbox binding after stop/delete; keeps engineSessionId for sync replay. */
   clearInstanceBinding(acpSessionId: string): Promise<void>;
+  /** Backfill secretMasterKey for rows created before session-bound secrets. */
+  ensureSecretMasterKey(acpSessionId: string): Promise<HarnessSessionRecord>;
   remove(acpSessionId: string): Promise<void>;
 }
 
@@ -55,11 +60,25 @@ class InMemoryHarnessSessionStore implements HarnessSessionStore {
       userId: args.userId,
       engine: args.engine,
       status: "pending",
+      secretMasterKey: generateHarnessSecretMasterKey(),
       createdAt: now,
       updatedAt: now,
     };
     this.rows.set(args.acpSessionId, row);
     return row;
+  }
+
+  async ensureSecretMasterKey(acpSessionId: string): Promise<HarnessSessionRecord> {
+    const row = this.rows.get(acpSessionId);
+    if (!row) throw new Error(`harness session not found: ${acpSessionId}`);
+    if (row.secretMasterKey) return row;
+    const updated = {
+      ...row,
+      secretMasterKey: generateHarnessSecretMasterKey(),
+      updatedAt: Date.now(),
+    };
+    this.rows.set(acpSessionId, updated);
+    return updated;
   }
 
   async get(acpSessionId: string): Promise<HarnessSessionRecord | null> {
@@ -151,7 +170,7 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
           secretId: this.credentials.secretId,
           secretKey: this.credentials.secretKey,
           sessionToken: this.credentials.sessionToken,
-          region: this.credentials.region ?? "ap-shanghai",
+          region: this.credentials.region,
         });
         return app.database() as CloudBaseDatabase;
       })();
@@ -190,6 +209,7 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
       userId: args.userId,
       engine: args.engine,
       status: "pending",
+      secretMasterKey: generateHarnessSecretMasterKey(),
       createdAt: now,
       updatedAt: now,
     };
@@ -292,6 +312,17 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
     harnessTrace("session_store.clear_instance_binding", { acpSessionId });
   }
 
+  async ensureSecretMasterKey(acpSessionId: string): Promise<HarnessSessionRecord> {
+    const row = await this.get(acpSessionId);
+    if (!row) throw new Error(`harness session not found: ${acpSessionId}`);
+    if (row.secretMasterKey) return row;
+    const secretMasterKey = generateHarnessSecretMasterKey();
+    const updatedAt = Date.now();
+    const collection = await this.col();
+    await collection.doc(acpSessionId).update({ secretMasterKey, updatedAt });
+    return { ...row, secretMasterKey, updatedAt };
+  }
+
   async remove(acpSessionId: string): Promise<void> {
     const collection = await this.col();
     await collection.doc(acpSessionId).remove();
@@ -328,13 +359,14 @@ function resolveCloudBaseCredentials(envId: string): CloudBaseCredentials | null
     process.env.TCB_SECRET_KEY ?? process.env.TENCENTCLOUD_SECRETKEY ?? "";
   const sessionToken =
     process.env.TCB_TOKEN ?? process.env.TENCENTCLOUD_SESSIONTOKEN ?? undefined;
-  if (!secretId || !secretKey) return null;
+  const region = process.env.TCB_REGION?.trim();
+  if (!secretId || !secretKey || !region) return null;
   return {
     envId,
     secretId,
     secretKey,
     sessionToken,
-    region: process.env.TCB_REGION ?? "ap-shanghai",
+    region,
   };
 }
 
@@ -360,6 +392,23 @@ export function getHarnessSessionStore(projectKey: string): HarnessSessionStore 
     collection: HARNESS_SESSIONS_COLLECTION,
   }).emit({ status: "ok" });
   return _store;
+}
+
+/** Harness /healthz — session index driver, not OAK kernel store. */
+export async function getHarnessStoreDiag(projectKey: string): Promise<{
+  driver: "memory" | "cloudbase";
+  collection: string;
+  activeSessions: number;
+}> {
+  const useMemory =
+    process.env.OAK_USE_MEMORY_STORE === "1" || !resolveCloudBaseCredentials(projectKey);
+  const store = getHarnessSessionStore(projectKey);
+  const sessions = await store.list({ limit: 100 });
+  return {
+    driver: useMemory ? "memory" : "cloudbase",
+    collection: HARNESS_SESSIONS_COLLECTION,
+    activeSessions: sessions.length,
+  };
 }
 
 /** Test-only reset */

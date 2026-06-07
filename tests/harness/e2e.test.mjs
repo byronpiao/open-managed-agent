@@ -1,8 +1,8 @@
 /**
  * Harness runtime e2e — agent-in-sandbox chain (local stub + optional real AGS).
  *
- *   npm run harness:e2e
- *   npm run harness:full
+ *   npm run harness -- e2e
+ *   npm run harness -- full
  *
  * Loads .env + .env.harness via scripts/load-env.mjs
  */
@@ -29,9 +29,9 @@ const FULL = process.argv.includes("--full");
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const E2E_PORT = 19090;
 const BASE = `http://127.0.0.1:${E2E_PORT}`;
-/** Child runtime only — not a user-facing env var. */
-const E2E_STUB_SANDBOX_ENV = "HARNESS_E2E_STUB_SANDBOX";
 const BOT_ID = "e2e-bot";
+/** Dev-only: seed fake sync row when /sync/history empty — keep false in CI. */
+const E2E_SYNC_SEED_SYNTHETIC_ON_EMPTY = false;
 
 const BASE_AGENT_CONFIG = {
   name: "HarnessE2E",
@@ -53,6 +53,11 @@ const BASE_AGENT_CONFIG = {
       },
     },
   ],
+};
+
+const STUB_AGENT_CONFIG = {
+  ...BASE_AGENT_CONFIG,
+  metadata: { harnessE2eStub: "1" },
 };
 
 let activeAgentConfig = { ...BASE_AGENT_CONFIG };
@@ -117,19 +122,17 @@ async function waitHealthz() {
 async function startRuntime({
   useCloudDb = false,
   stubSandbox = false,
-  agentConfig = activeAgentConfig,
+  agentConfig,
 } = {}) {
-  activeAgentConfig = agentConfig;
+  const cfg = agentConfig ?? (stubSandbox ? STUB_AGENT_CONFIG : activeAgentConfig);
+  activeAgentConfig = cfg;
   const childEnv = {
     ...process.env,
     PORT: String(E2E_PORT),
     CLOUDBASE_SERVER_URL: BASE,
     CLOUDBASE_ENV_ID: process.env.CLOUDBASE_ENV_ID ?? "test-local-harness",
-    AGENT_CONFIG: JSON.stringify(agentConfig),
+    AGENT_CONFIG: JSON.stringify(cfg),
   };
-  if (stubSandbox) {
-    childEnv[E2E_STUB_SANDBOX_ENV] = "1";
-  }
   if (!useCloudDb) {
     childEnv.OAK_USE_MEMORY_STORE = "1";
   } else {
@@ -481,10 +484,8 @@ async function testSyncPersistence() {
     if (events.length > 0) break;
     await sleep(1000);
   }
-  if (events.length === 0 && process.env.HARNESS_SYNC_ALLOW_SYNTHETIC === "1") {
-    console.warn(
-      "sync: /sync/history empty — HARNESS_SYNC_ALLOW_SYNTHETIC=1, seeding synthetic event",
-    );
+  if (events.length === 0 && E2E_SYNC_SEED_SYNTHETIC_ON_EMPTY) {
+    console.warn("sync: /sync/history empty — E2E_SYNC_SEED_SYNTHETIC_ON_EMPTY, seeding synthetic");
     await syncStore.appendEvents({
       acpSessionId: sessionId,
       aggregateId: row.engineSessionId,
@@ -503,7 +504,7 @@ async function testSyncPersistence() {
   assert.ok(
     events.length > 0,
     `expected harness_sync_events from opencode /sync/history for ${row.engineSessionId} ` +
-      `(magent needs opencode >= 1.16.2; set HARNESS_SYNC_ALLOW_SYNTHETIC=1 to bypass)`,
+      `(magent needs opencode >= 1.16.2)`,
   );
 
   stopRuntime();

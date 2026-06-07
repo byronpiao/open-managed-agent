@@ -23,16 +23,9 @@ export const SANDBOX_TRW_MCP_COMPLETE_PATH = "/api/harness/mcp-complete";
 
 const SANDBOX_TRW_LOCAL_BASE = "http://127.0.0.1:9000";
 
-const FALLBACK_HARNESS_SANDBOX_IMAGE =
-  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260526-1008-vibecoding";
+import { resolveHarnessSandboxImage } from "./harness-env.js";
 
-/** Read at call time so scripts can loadEnv() before importing orchestrator. */
-export function resolveHarnessSandboxImage(): string {
-  return process.env.HARNESS_SANDBOX_IMAGE?.trim() || FALLBACK_HARNESS_SANDBOX_IMAGE;
-}
-
-/** @deprecated Use resolveHarnessSandboxImage() — kept for tests expecting a string constant. */
-export const DEFAULT_HARNESS_SANDBOX_IMAGE = FALLBACK_HARNESS_SANDBOX_IMAGE;
+export { HARNESS_PUBLIC_MAGENT_IMAGE, resolveHarnessSandboxImage } from "./harness-env.js";
 
 const OPENCODE_PROVIDER_ID = "openai-compat";
 
@@ -201,6 +194,10 @@ export function buildSkillsManifestEnv(
   return { Name: "HARNESS_SKILLS_JSON", Value: JSON.stringify(packed) };
 }
 
+/**
+ * CloudBase control-plane creds for TRW workspace/init (enables in-box CloudBase MCP).
+ * Intentionally injected into the sandbox — not a harness host env knob.
+ */
 export function buildHarnessInitCredEnv(): HarnessEnvVar[] {
   const out: HarnessEnvVar[] = [];
   const push = (name: string, value: string | undefined) => {
@@ -227,6 +224,8 @@ export function buildHarnessSandboxEnv(args: {
   engine: HarnessEngine;
   clientToolCallbackBase: string;
   acpSessionId?: string;
+  /** From harness_sessions — TRW secrets vault for this ACP session. */
+  secretMasterKey?: string;
   extraEnv?: HarnessEnvVar[];
 }): HarnessEnvVar[] {
   const mcporter = buildMcporterConfig({
@@ -237,6 +236,9 @@ export function buildHarnessSandboxEnv(args: {
   const base = buildHarnessInstanceEnv(args.config, args.engine);
   const mcporterEnv = mcporterConfigToEnvVar(mcporter);
   const merged = [...base, ...buildHarnessInitCredEnv()];
+  if (args.secretMasterKey) {
+    merged.push({ Name: "SECRET_MASTER_KEY", Value: args.secretMasterKey });
+  }
   if (args.engine === "claude") {
     const anthropic = resolveAnthropicCompatProvider(args.config);
     if (anthropic) merged.push(...anthropicCompatToTrwEnv(anthropic));
@@ -324,6 +326,7 @@ export function applyHarnessRuntimeEnv(
   } = {},
 ): Record<string, string> {
   if (config.runtime !== "harness") return envMap;
+  // Harness agent loop runs in AGS; drop managed-only local-dev flag that would block sandbox paths.
   delete envMap.OAK_DISABLE_SANDBOX;
   envMap.HARNESS_SANDBOX_IMAGE = opts.sandboxImage ?? resolveHarnessSandboxImage();
   if (opts.harnessToolId) envMap.HARNESS_TOOL_ID = opts.harnessToolId;
