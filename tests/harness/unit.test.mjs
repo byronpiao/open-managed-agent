@@ -8,6 +8,7 @@ import {
   resolveRuntime,
   engineToDataPlaneSlug,
   harnessToolNameForEnv,
+  buildHarnessInstanceEnv,
 } from "../../packages/agent-runtime/dist/config.js";
 import {
   buildHarnessAcpMcpServers,
@@ -28,6 +29,10 @@ import {
   invokeClientToolFromSandbox,
   registerActivePrompt,
   resetClientToolBridgeForTests,
+  getHarnessSyncEventStore,
+  resetHarnessSyncEventStoreForTests,
+  exportOpencodeSyncEvents,
+  hydrateOpencodeSyncEvents,
 } from "../../packages/agent-runtime/dist/harness/index.js";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -407,6 +412,87 @@ test("buildHarnessSandboxEnv maps LLM_* + ANTHROPIC_BASE_URL for claude engine",
   else process.env.ANTHROPIC_BASE_URL = saved.url;
   if (saved.model === undefined) delete process.env.LLM_MODEL;
   else process.env.LLM_MODEL = saved.model;
+});
+
+test("buildHarnessInstanceEnv enables opencode serve for sync persistence", () => {
+  const env = buildHarnessInstanceEnv(
+    { name: "t", model: "m", system: "s" },
+    "opencode",
+  );
+  const names = Object.fromEntries(env.map((e) => [e.Name, e.Value]));
+  assert.equal(names.ENABLE_AGENT_OPENCODE, "true");
+  assert.equal(names.ENABLE_AGENT_OPENCODE_ACP, "true");
+  assert.equal(names.ENABLE_AGENT_OPENCODE_SERVE, "true");
+});
+
+test("harness sync event store append + hydrate round-trip", async () => {
+  process.env.OAK_USE_MEMORY_STORE = "1";
+  resetHarnessSyncEventStoreForTests();
+  const store = getHarnessSyncEventStore("test-env");
+  const aggregateId = "550e8400-e29b-41d4-a716-446655440000";
+  const events = [
+    {
+      id: "ev-1",
+      aggregate_id: aggregateId,
+      seq: 1,
+      type: "session.created",
+      data: { sessionID: aggregateId },
+    },
+    {
+      id: "ev-2",
+      aggregate_id: aggregateId,
+      seq: 2,
+      type: "session.updated",
+      data: { title: "t" },
+    },
+  ];
+  const calls = [];
+  const handle = {
+    instanceId: "i",
+    toolId: "t",
+    baseUrl: "http://127.0.0.1:1",
+    headers: {},
+    async request(path, init) {
+      const body = init?.body ? JSON.parse(init.body) : {};
+      calls.push({ path, body });
+      if (path.endsWith("/health")) {
+        return new Response(
+          JSON.stringify({ ok: true, acpReady: true, serveReady: true }),
+          { status: 200 },
+        );
+      }
+      if (path.endsWith("/sync/start") || path.endsWith("/sync/steal")) {
+        return new Response(JSON.stringify(true), { status: 200 });
+      }
+      if (path.endsWith("/sync/history")) {
+        return new Response(JSON.stringify(events), { status: 200 });
+      }
+      if (path.endsWith("/sync/replay")) {
+        return new Response(JSON.stringify({ sessionID: aggregateId }), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    },
+    async stop() {},
+    async pause() {},
+    async resumeIfPaused() {},
+  };
+  const { inserted } = await exportOpencodeSyncEvents({
+    handle,
+    syncStore: store,
+    acpSessionId: "acp-1",
+    aggregateId,
+  });
+  assert.equal(inserted, 2);
+  const { replayed } = await hydrateOpencodeSyncEvents({
+    handle,
+    syncStore: store,
+    acpSessionId: "acp-1",
+    aggregateId,
+  });
+  assert.equal(replayed, 2);
+  assert.ok(calls.some((c) => c.path.endsWith("/sync/replay")));
+  delete process.env.OAK_USE_MEMORY_STORE;
+  resetHarnessSyncEventStoreForTests();
 });
 
 let failed = 0;

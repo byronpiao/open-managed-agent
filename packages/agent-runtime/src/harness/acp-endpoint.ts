@@ -40,6 +40,12 @@ import {
   type HarnessSessionRecord,
 } from "./sandbox/session-store.js";
 import { harnessLog } from "./logging.js";
+import {
+  exportOpencodeSyncEvents,
+  hydrateOpencodeSyncEvents,
+  snapshotWorkspaceIfAvailable,
+} from "./opencode-sync.js";
+import { getHarnessSyncEventStore } from "./sync-event-store.js";
 
 const abortControllers = new Map<string, AbortController>();
 
@@ -94,15 +100,22 @@ async function ensureSandboxForSession(
 
   let handle = getCachedSandboxHandle(acpSessionId);
   if (!handle) {
-    if (record.instanceId && record.toolId) {
-      throw Object.assign(
-        new Error(
-          `Session ${acpSessionId} lost sandbox handle after runtime recycle; start a new session`,
-        ),
-        { rpcCode: -32000 },
-      );
-    }
     const callbackBase = harnessCallbackBase();
+    const staleInstanceId = record.instanceId;
+
+    if (staleInstanceId && record.toolId && !isE2eStubSandboxEnabled()) {
+      try {
+        await getSandboxOrchestrator().stopInstanceForEnv(staleInstanceId, envId);
+      } catch (err) {
+        harnessLog({
+          lane: "orchestrator",
+          operation: "stale_instance.stop",
+          acpSessionId,
+          instanceId: staleInstanceId,
+        }).error(err);
+      }
+      await store.clearInstanceBinding(acpSessionId);
+    }
 
     if (isE2eStubSandboxEnabled()) {
       handle = createE2eStubSandboxHandle(acpSessionId);
@@ -120,6 +133,14 @@ async function ensureSandboxForSession(
           acpSessionId,
         }),
       });
+      if (record.engine === "opencode" && record.engineSessionId) {
+        await hydrateOpencodeSyncEvents({
+          handle,
+          syncStore: getHarnessSyncEventStore(envId),
+          acpSessionId,
+          aggregateId: record.engineSessionId,
+        });
+      }
     }
     if (!isE2eStubSandboxEnabled()) {
       await store.bindInstance(acpSessionId, {
@@ -403,7 +424,28 @@ async function pipeSandboxSseToClient(
     mcpPump?.stop();
     unregisterActivePrompt(acpSessionId);
     sseDone(res, sse);
+    void maybeExportOpencodeSync(acpSessionId, config).catch(() => {});
   }
+}
+
+async function maybeExportOpencodeSync(
+  acpSessionId: string,
+  config: AgentConfig,
+): Promise<void> {
+  const { engine } = resolveRuntime(config);
+  if (engine !== "opencode" || isE2eStubSandboxEnabled()) return;
+  const envId = envIdFromConfig();
+  const store = getHarnessSessionStore(envId);
+  const row = await store.get(acpSessionId);
+  if (!row?.engineSessionId) return;
+  const handle = getCachedSandboxHandle(acpSessionId);
+  if (!handle) return;
+  await exportOpencodeSyncEvents({
+    handle,
+    syncStore: getHarnessSyncEventStore(envId),
+    acpSessionId,
+    aggregateId: row.engineSessionId,
+  });
 }
 
 async function handleSessionNew(params: Record<string, unknown>, config: AgentConfig) {
@@ -477,11 +519,21 @@ async function handleSessionLoad(
 
   const { handle } = await ensureSandboxForSession(config, sessionId);
   const engineSessionId = row.engineSessionId ?? sessionId;
+  const mcpServers = buildHarnessAcpMcpServers({
+    config,
+    clientToolCallbackBase: harnessCallbackBase(),
+    acpSessionId: sessionId,
+  });
   const upstream = await forwardAcpToSandbox({
     handle,
     config,
     method: "session/load",
-    params: { ...params, sessionId: engineSessionId, replay: true },
+    params: {
+      sessionId: engineSessionId,
+      replay: true,
+      cwd: DEFAULT_HARNESS_SANDBOX_CWD,
+      mcpServers,
+    },
     id,
     acpSessionId: sessionId,
   });
@@ -618,6 +670,20 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
   const handle = getCachedSandboxHandle(sessionId);
   if (handle) {
     try {
+      if (row.engine === "opencode" && row.engineSessionId && !isE2eStubSandboxEnabled()) {
+        await exportOpencodeSyncEvents({
+          handle,
+          syncStore: getHarnessSyncEventStore(envId),
+          acpSessionId: sessionId,
+          aggregateId: row.engineSessionId,
+        });
+        await snapshotWorkspaceIfAvailable(handle);
+      }
+    } catch (err) {
+      harnessLog({ lane: "acp", operation: "session.delete.export", acpSessionId: sessionId })
+        .error(err);
+    }
+    try {
       await handle.stop();
     } catch (err) {
       harnessLog({ lane: "acp", operation: "session.delete.stop", acpSessionId: sessionId })
@@ -625,6 +691,7 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
     }
   }
 
+  await store.clearInstanceBinding(sessionId);
   await store.setStatus(sessionId, "ended");
   dropCachedSandboxHandle(sessionId);
   return { sessionId, deleted: true };

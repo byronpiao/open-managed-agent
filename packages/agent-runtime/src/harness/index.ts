@@ -44,3 +44,19 @@ export {
   harnessTrace,
   isHarnessLogDebug,
 } from "./logging.js";
+
+export {
+  HARNESS_SYNC_EVENTS_COLLECTION,
+  getHarnessSyncEventStore,
+  resetHarnessSyncEventStoreForTests,
+} from "./sync-event-store.js";
+
+export {
+  OPENCODE_SYNC_DIRECTORY,
+  ensureOpencodeSyncStarted,
+  exportOpencodeSyncEvents,
+  hydrateOpencodeSyncEvents,
+  fetchOpencodeSyncHistory,
+  replayOpencodeSyncEvents,
+  snapshotWorkspaceIfAvailable,
+} from "./opencode-sync.js";

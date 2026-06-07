@@ -434,6 +434,8 @@ function buildDataPlaneHeaders(args: {
     "X-Cloudbase-Authorization": `Bearer ${args.apiKey}`,
     "E2b-Sandbox-Id": args.instanceId,
     "E2b-Sandbox-Port": String(args.port),
+    // AGS data-plane proxy may return malformed gzip; avoid auto-decompress failures.
+    "Accept-Encoding": "identity",
   };
   if (args.accessToken) {
     headers["X-Access-Token"] = args.accessToken;
@@ -661,6 +663,55 @@ export class AgsStatefulSandboxOrchestrator {
     envId: string,
   ): Promise<void> {
     await callAgsApi("StopSandboxInstance", { InstanceId: instanceId }, cred, envId);
+  }
+
+  /** Stop a sandbox instance using orchestrator credentials (harness re-acquire path). */
+  async stopInstanceForEnv(instanceId: string, envId: string): Promise<void> {
+    const cred = resolveCredentials(this.options);
+    await this.stopInstance(instanceId, cred, envId);
+  }
+
+  /** Attach to an already-running instance (diagnostics / export on live session). */
+  async connectToInstance(instanceId: string, envId: string): Promise<HarnessSandboxHandle> {
+    const cred = resolveCredentials(this.options);
+    const baseUrl = resolveGatewayUrl(envId, cred.gatewayBaseUrl);
+    const accessToken = await acquireInstanceToken(instanceId, cred, envId);
+    const headers = buildDataPlaneHeaders({
+      apiKey: cred.apiKey,
+      instanceId,
+      port: TRW_SERVICE_PORT,
+      accessToken,
+    });
+    await waitForReady({ baseUrl, headers });
+    const self = this;
+    return {
+      instanceId,
+      toolId: cred.harnessToolId ?? "",
+      baseUrl,
+      headers,
+      request(path: string, init?: RequestInit) {
+        const p = path.startsWith("/") ? path : `/${path}`;
+        return fetch(`${baseUrl}${p}`, {
+          ...init,
+          headers: {
+            ...headers,
+            ...((init?.headers as Record<string, string> | undefined) ?? {}),
+          },
+        });
+      },
+      async stop() {
+        await self.stopInstance(instanceId, cred, envId);
+      },
+      async pause() {
+        await self.pauseInstance(instanceId, cred, envId);
+      },
+      async resumeIfPaused() {
+        const status = await describeInstanceStatus(instanceId, cred, envId);
+        if (status === "PAUSED" || status === "RESUME_FAILED") {
+          await callAgsApi("ResumeSandboxInstance", { InstanceId: instanceId }, cred, envId);
+        }
+      },
+    };
   }
 
   async listInstances(envId: string): Promise<SandboxInstanceRow[]> {

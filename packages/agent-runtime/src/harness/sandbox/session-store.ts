@@ -36,6 +36,8 @@ export interface HarnessSessionStore {
   ): Promise<HarnessSessionRecord>;
   setEngineSessionId(acpSessionId: string, engineSessionId: string): Promise<void>;
   setStatus(acpSessionId: string, status: HarnessSessionStatus): Promise<void>;
+  /** Drop sandbox binding after stop/delete; keeps engineSessionId for sync replay. */
+  clearInstanceBinding(acpSessionId: string): Promise<void>;
   remove(acpSessionId: string): Promise<void>;
 }
 
@@ -104,6 +106,13 @@ class InMemoryHarnessSessionStore implements HarnessSessionStore {
     const row = this.rows.get(acpSessionId);
     if (!row) return;
     this.rows.set(acpSessionId, { ...row, status, updatedAt: Date.now() });
+  }
+
+  async clearInstanceBinding(acpSessionId: string): Promise<void> {
+    const row = this.rows.get(acpSessionId);
+    if (!row) return;
+    const { instanceId: _i, toolId: _t, ...rest } = row;
+    this.rows.set(acpSessionId, { ...rest, updatedAt: Date.now() });
   }
 
   async remove(acpSessionId: string): Promise<void> {
@@ -265,6 +274,22 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
   async setStatus(acpSessionId: string, status: HarnessSessionStatus): Promise<void> {
     const collection = await this.col();
     await collection.doc(acpSessionId).update({ status, updatedAt: Date.now() });
+  }
+
+  async clearInstanceBinding(acpSessionId: string): Promise<void> {
+    const database = await this.db();
+    const cmd = (database as { command?: { remove: () => unknown } }).command;
+    const collection = await this.col();
+    const patch: Record<string, unknown> = { updatedAt: Date.now() };
+    if (cmd?.remove) {
+      patch.instanceId = cmd.remove();
+      patch.toolId = cmd.remove();
+    } else {
+      patch.instanceId = "";
+      patch.toolId = "";
+    }
+    await collection.doc(acpSessionId).update(patch);
+    harnessTrace("session_store.clear_instance_binding", { acpSessionId });
   }
 
   async remove(acpSessionId: string): Promise<void> {

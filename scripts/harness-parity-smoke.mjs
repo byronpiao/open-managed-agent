@@ -12,6 +12,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
 import { loadEnv, assertHarnessCreds } from "./load-env.mjs";
 
 loadEnv();
@@ -141,6 +142,23 @@ export async function runHarnessParitySmokes() {
       "cloudbase mcporter list empty — check workspace/init creds in instance env",
     );
     console.log("✓ cloudbase MCP schema list non-empty");
+
+    let health = null;
+    let healthStatus = 503;
+    const deadline = Date.now() + 90_000;
+    while (Date.now() < deadline) {
+      const healthRes = await handle.request("/api/agents/opencode/health");
+      healthStatus = healthRes.status;
+      health = await healthRes.json();
+      if (healthStatus === 200 && health.ok && health.acpReady && health.serveReady) break;
+      await sleep(2_000);
+    }
+    assert.equal(healthStatus, 200, `opencode health HTTP ${healthStatus}`);
+    assert.ok(
+      health?.ok && health.acpReady && health.serveReady,
+      `opencode dual acp+serve not ready: ${JSON.stringify(health).slice(0, 400)}`,
+    );
+    console.log("✓ opencode serve + acp health (sync persistence prerequisite)");
 
     console.log("✓ mcporter cloudbase + harness mcp_servers (json + schema)");
   } finally {

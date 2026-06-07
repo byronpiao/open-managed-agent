@@ -245,6 +245,26 @@ OMA 引用 TRW 路径：`TRW_ROOT` 默认 `code_sandbox/tcb-remote-workspace`（
 
 ---
 
+## OpenCode 会话持久化（`engine=opencode`）
+
+沙箱内 **`opencode acp --port 8765`**（`ENABLE_AGENT_OPENCODE_SERVE` 时内嵌 HTTP，ACP + `/sync/*` 共用单进程与 SQLite）。OMA 不 fork opencode。
+
+**magent 镜像需 `opencode >= 1.16.2`**：`1.15.x` 会把 session/message 写入 SQLite 投影表，但 `event` 表为空，导致 `/sync/history` 恒为 `[]`。TRW `docker-bake.hcl` 的 `OPENCODE_VERSION` 已钉到 `1.16.2`。
+
+`harness_sync_events` 内容来自沙箱 `POST /sync/history`（prompt 后 `sync/steal` + 重试）。**需可用 OpenAI-compatible LLM**（`LLM_API_KEY` + `OPENAI_BASE_URL` + `LLM_MODEL`）；Anthropic-only ModelSpec 不会注入 opencode。
+
+| 阶段 | 动作 |
+|------|------|
+| 每轮 prompt 结束 | `POST …/opencode/sync/history` → `harness_sync_events` |
+| 新沙箱 acquire | CloudBase events → `POST …/opencode/sync/replay` |
+| `session/delete` | 再 export + 可选 `POST /api/workspace/snapshot`（COS） |
+
+`harness_sessions` 仍管 `acpSessionId` ↔ `engineSessionId`；**对话真相**在 `harness_sync_events`（按 opencode event `id` 幂等）。
+
+日志 lane：`opencode_sync`（`export` / `hydrate` / `workspace.snapshot`）。
+
+---
+
 ## 相关文档
 
 - 一条龙命令：`packages/agent-runtime/src/harness/README.md`

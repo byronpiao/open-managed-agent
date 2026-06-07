@@ -43,14 +43,18 @@ AGS 配额：**RUNNING** 与 **PAUSED** 分开计数；一条龙用 **`StopSandb
 
 `harness:full` 顺序：teardown → parity → sandbox prompt → custom tool → Zed prompt → **opencode 必过**（claude/codebuddy 仅探测，失败 warn）→ teardown。
 
-### 3. 起箱 Env vs workspace/init
+### 3. OpenCode 持久化（`engine=opencode`）
+
+沙箱内 **opencode acp**（`ENABLE_AGENT_OPENCODE_SERVE` 时内嵌 HTTP :8765）提供 ACP 与 `/sync/*`；OMA 经 HTTP 调 `/sync/history` → `harness_sync_events`，新箱 `/sync/replay` 再 ACP 续聊。`session/delete` 时 export + 可选 COS snapshot。见 [docs/harness-env.md](../../../docs/harness-env.md)。
+
+### 4. 起箱 Env vs workspace/init
 
 - **StartSandboxInstance.Env**（OMA → TRW 沙箱）：引擎开关、`MCPORTER_CONFIG_CONTENT`、运行时注入的 `HARNESS_RUNTIME_CALLBACK_URL`（来自 `CLOUDBASE_SERVER_URL`）、`HARNESS_CLIENT_TOOLS_JSON`、`OPENCODE_CONFIG_CONTENT` / Anthropic 侧车等
 - **`POST /api/workspace/init`**：CloudBase 四件套 + `INTEGRATION_IDE` + `WORKSPACE_FOLDER_PATHS` + `body.skills` → `.workspace-env.json` / `.agents/skills/`
 
 见 TRW `docs/workspace-env.md`。`HARNESS_*` 透传键须 TRW 认可；勿在 OMA example 里堆沙箱内键让人手填。
 
-### 4. magent 镜像（改 TRW 后）
+### 5. magent 镜像（改 TRW 后）
 
 沙箱内逻辑在 **TRW** `tcb-remote-workspace`（preset `magent`）。若改了 TRW 里会影响沙箱行为的代码（workspace API、skills 落盘、relay 等），跑 `harness:full` / parity 前需重建并 push：
 

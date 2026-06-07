@@ -29,7 +29,8 @@
     "yaml": "^2.7.0"
   },
   "devDependencies": {
-    "@agentclientprotocol/sdk": "^0.24.0"
+    "@agentclientprotocol/sdk": "^0.24.0",
+    "undici": "^7.27.2"
   },
   "scripts": {
     "build": "npm run build --workspaces",

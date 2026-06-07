@@ -158,6 +158,7 @@ export function buildHarnessInstanceEnv(
   if (engine === "opencode") {
     push("ENABLE_AGENT_OPENCODE", "true");
     push("ENABLE_AGENT_OPENCODE_ACP", "true");
+    push("ENABLE_AGENT_OPENCODE_SERVE", "true");
   } else if (engine === "claude") {
     push("ENABLE_AGENT_CLAUDE_ACP", "true");
   } else {
