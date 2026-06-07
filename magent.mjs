@@ -280,6 +280,23 @@ function getAcpUrl(args) {
   return `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}/acp`;
 }
 
+/** Harness: poll session/status until sandbox prewarm finishes (short JSON-RPC calls). */
+async function waitForHarnessSandboxReady(acpUrl, sessionId, initResult) {
+  if (initResult?.agentConfig?.runtime !== "harness") return;
+  const maxMs = Number(process.env.MAGENT_SANDBOX_WARMUP_MS) || 5 * 60 * 1000;
+  const startedAt = Date.now();
+  process.stdout.write(dim("Warming sandbox... "));
+  while (Date.now() - startedAt < maxMs) {
+    const st = await acpCall(acpUrl, "session/status", { sessionId });
+    if (st?.sandboxReady) {
+      console.log(green("ready"));
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+  console.log(yellow("timeout — sending prompt anyway"));
+}
+
 // In-memory cache for access_token fetched via AK/SK/Token signing.
 // Map<cacheKey, { token: string, expiresAt: number }>
 const _tokenCache = new Map();
@@ -630,7 +647,13 @@ function buildCloudRunEnvParam({ envId, configB64, config = null }) {
 
 // Wait for a tcbr cloudrun service deploy to leave creating/deploying state.
 // Returns the final status string (typically "normal" on success).
-async function waitForCloudRunDeploy(envId, serviceName, { maxWaitMs = 10 * 60 * 1000 } = {}) {
+// minDeployRecords: wait until at least this many DeployRecords exist (use
+// pre-submit count + 1 on redeploy so we don't return a stale build_failed).
+async function waitForCloudRunDeploy(
+  envId,
+  serviceName,
+  { maxWaitMs = 10 * 60 * 1000, minDeployRecords = 0 } = {},
+) {
   const startedAt = Date.now();
   let lastStatus = "";
   while (Date.now() - startedAt < maxWaitMs) {
@@ -642,6 +665,10 @@ async function waitForCloudRunDeploy(envId, serviceName, { maxWaitMs = 10 * 60 *
         version: "2022-02-17",
       });
       const records = detail.DeployRecords ?? [];
+      if (records.length < minDeployRecords) {
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
       if (records.length > 0) {
         lastStatus = records[records.length - 1]?.Status ?? "";
         if (lastStatus && lastStatus !== "creating" && lastStatus !== "deploying") {
@@ -654,6 +681,51 @@ async function waitForCloudRunDeploy(envId, serviceName, { maxWaitMs = 10 * 60 *
     await new Promise((r) => setTimeout(r, 5000));
   }
   return lastStatus;
+}
+
+/** Stage agent-runtime (or --code) into a temp dir for CloudRun Docker build. */
+function stageCloudRunDeployDir(code) {
+  const deployDir = resolve(code, ".deploy-cloudrun");
+  execSync(`rm -rf "${deployDir}" && mkdir -p "${deployDir}"`, { encoding: "utf-8" });
+
+  const required = ["Dockerfile", "dist", "package.json"];
+  const optional = ["package-lock.json", ".dockerignore", "vendor", "agent.yaml", "skills"];
+  for (const f of required) {
+    const src = resolve(code, f);
+    if (!existsSync(src)) {
+      throw new Error(`Required file/dir missing in ${code}: ${f}`);
+    }
+    execSync(`cp -r "${src}" "${deployDir}/"`, { encoding: "utf-8" });
+  }
+  for (const f of optional) {
+    const src = resolve(code, f);
+    if (existsSync(src)) execSync(`cp -r "${src}" "${deployDir}/"`, { encoding: "utf-8" });
+  }
+  return deployDir;
+}
+
+/** Upload a fresh code zip for an existing or new CloudRun service. */
+async function uploadCloudRunCodePackage(envId, serviceName, code, { cloudbaserc } = {}) {
+  const deployDir = stageCloudRunDeployDir(code);
+  try {
+    if (cloudbaserc) {
+      writeFileSync(resolve(deployDir, "cloudbaserc.json"), JSON.stringify(cloudbaserc, null, 2));
+    }
+    const build = await describeBuildService(envId, serviceName);
+    const zip = await zipDir(deployDir);
+    await uploadZipBuffer({
+      uploadUrl: build.UploadUrl,
+      headers: build.UploadHeaders,
+      buffer: zip,
+    });
+    return {
+      packageName: build.PackageName,
+      packageVersion: build.PackageVersion,
+      zipKiB: zip.length / 1024,
+    };
+  } finally {
+    try { execSync(`rm -rf "${deployDir}"`, { encoding: "utf-8" }); } catch {}
+  }
 }
 
 // Poll the agent's own `initialize` endpoint until its echoed
@@ -1760,64 +1832,24 @@ const COMMANDS = {
     console.log(dim(`  code:        ${code}`));
     console.log();
 
-    // ── Stage deploy directory ───────────────────────────────────────────
-    // Just copy what the project ships. The Dockerfile and .dockerignore
-    // belong to the runtime project (committed alongside src/), so the CLI
-    // never has to know how to build the container — only how to ship code.
-    const deployDir = resolve(code, ".deploy-cloudrun");
+    // ── Phase 1: upload code package ─────────────────────────────────────
+    process.stdout.write(dim("Phase 1/3: uploading code package... "));
+    let packageName, packageVersion;
     try {
-      execSync(`rm -rf "${deployDir}" && mkdir -p "${deployDir}"`, { encoding: "utf-8" });
-
-      const required = ["Dockerfile", "dist", "package.json"];
-      const optional = ["package-lock.json", ".dockerignore", "vendor", "agent.yaml", "skills"];
-      for (const f of required) {
-        const src = resolve(code, f);
-        if (!existsSync(src)) {
-          throw new Error(`Required file/dir missing in ${code}: ${f}`);
-        }
-        execSync(`cp -r "${src}" "${deployDir}/"`, { encoding: "utf-8" });
-      }
-      for (const f of optional) {
-        const src = resolve(code, f);
-        if (existsSync(src)) execSync(`cp -r "${src}" "${deployDir}/"`, { encoding: "utf-8" });
-      }
-
-      // cloudbaserc.json — minimal, only what `tcb cloudrun deploy` actually
-      // reads (envId + service name). EnvParams are pushed via a separate
-      // UpdateCloudRunServerConfig API call after deploy, because the cli
-      // doesn't honor cloudrun.envParams in cloudbaserc on the deploy path.
-      writeFileSync(
-        resolve(deployDir, "cloudbaserc.json"),
-        JSON.stringify({
+      const uploaded = await uploadCloudRunCodePackage(envId, serviceName, code, {
+        cloudbaserc: {
           version: "2.0",
           envId,
           $schema: "https://framework-1258016615.tcloudbaseapp.com/schema/latest.json",
           cloudrun: { name: serviceName },
-        }, null, 2),
-      );
+        },
+      });
+      packageName = uploaded.packageName;
+      packageVersion = uploaded.packageVersion;
+      console.log(green(`OK (${uploaded.zipKiB.toFixed(1)} KiB)`));
     } catch (err) {
-      throw new Error(`Deploy prep failed: ${err.message}`);
-    }
-
-    // ── Phase 1: upload code package ─────────────────────────────────────
-    // We don't go through `tcb cloudrun deploy` because the cli prompts
-    // interactively on update flows and silently hangs on a piped stdin.
-    // Driving the same OpenAPIs ourselves keeps this fully non-interactive.
-    process.stdout.write(dim("Phase 1/3: uploading code package... "));
-    let packageName, packageVersion;
-    try {
-      const { UploadUrl, UploadHeaders, PackageName, PackageVersion } =
-        await describeBuildService(envId, serviceName);
-      const zip = await zipDir(deployDir);
-      await uploadZipBuffer({ uploadUrl: UploadUrl, headers: UploadHeaders, buffer: zip });
-      packageName = PackageName;
-      packageVersion = PackageVersion;
-      console.log(green(`OK (${(zip.length / 1024).toFixed(1)} KiB)`));
-    } catch (err) {
-      try { execSync(`rm -rf "${deployDir}"`, { encoding: "utf-8" }); } catch {}
       throw new Error(`upload failed: ${err.message}`);
     }
-    try { execSync(`rm -rf "${deployDir}"`, { encoding: "utf-8" }); } catch {}
 
     // ── Phase 2: create the cloudrun service ─────────────────────────────
     // CreateCloudRunServer takes Items (typed key/value list) which lets us
@@ -1917,6 +1949,93 @@ const COMMANDS = {
     console.log("Next steps (container build typically takes 2-5 minutes):");
     console.log(dim(`  1. Wait for ready: tcb agent detail ${createdAgentId} -e ${envId}`));
     console.log(dim(`  2. Start chatting: magent run -a ${createdAgentId} -e ${envId} -m "Hello"`));
+  },
+
+  /** Re-upload code package and rebuild Docker image for an existing CloudRun service. */
+  "cloudrun:redeploy": async (args) => {
+    const envId = requireEnvId(args);
+    const code = args.code ?? "./packages/agent-runtime";
+    let serviceName = args.name ?? args.service ?? "";
+    if (!serviceName && (args.id || args.agent)) {
+      const { serviceId } = await lookupAgent(envId, args.id ?? args.agent);
+      serviceName = serviceId ?? "";
+    }
+    if (!serviceName) {
+      throw new Error("-n/--name (service) or -i/--id (agent with ServiceId) is required");
+    }
+
+    console.log(bold(`Redeploying cloudrun service ${serviceName}...`));
+    console.log(dim(`  envId: ${envId}`));
+    console.log(dim(`  code:  ${code}`));
+    console.log();
+
+    process.stdout.write(dim("Phase 1/2: uploading code package... "));
+    let packageName, packageVersion;
+    try {
+      const uploaded = await uploadCloudRunCodePackage(envId, serviceName, code);
+      packageName = uploaded.packageName;
+      packageVersion = uploaded.packageVersion;
+      console.log(green(`OK (${uploaded.zipKiB.toFixed(1)} KiB)`));
+    } catch (err) {
+      throw new Error(`upload failed: ${err.message}`);
+    }
+
+    let deployRecordCount = 0;
+    try {
+      const before = await callTcbCloudApi({
+        action: "DescribeCloudRunDeployRecord",
+        payload: { EnvId: envId, ServerName: serviceName },
+        service: "tcbr",
+        version: "2022-02-17",
+      });
+      deployRecordCount = (before.DeployRecords ?? []).length;
+    } catch {
+      // ignore — minDeployRecords stays 0
+    }
+
+    process.stdout.write(dim("Phase 2/2: UpdateCloudRunServer (FULL)... "));
+    try {
+      await callTcbCloudApi({
+        action: "UpdateCloudRunServer",
+        payload: {
+          EnvId: envId,
+          ServerName: serviceName,
+          DeployInfo: {
+            DeployType: "package",
+            PackageName: packageName,
+            PackageVersion: packageVersion,
+            ReleaseType: "FULL",
+          },
+          Items: [
+            { Key: "Dockerfile", Value: "Dockerfile" },
+            { Key: "HasDockerfile", BoolValue: true },
+          ],
+        },
+        service: "tcbr",
+        version: "2022-02-17",
+      });
+      console.log(green("submitted"));
+    } catch (err) {
+      throw new Error(`UpdateCloudRunServer failed: ${err.message}`);
+    }
+
+    process.stdout.write(dim("Waiting for build to finish... "));
+    const lastStatus = await waitForCloudRunDeploy(envId, serviceName, {
+      maxWaitMs: 15 * 60 * 1000,
+      minDeployRecords: deployRecordCount + 1,
+    });
+    if (lastStatus === "normal") {
+      console.log(green("ready"));
+    } else {
+      console.log(yellow(`status=${lastStatus || "timeout"}`));
+      if (lastStatus === "build_failed") {
+        throw new Error(
+          `CloudRun build failed for ${serviceName}. ` +
+          `Check: node tools/cloudrun-logs.mjs ${serviceName}`,
+        );
+      }
+    }
+    console.log(green(`\n✅ ${serviceName} redeployed.`));
   },
 
   "cloudrun:list": async (args) => {
@@ -2059,6 +2178,7 @@ const COMMANDS = {
     process.stdout.write(dim("Creating session... "));
     const { sessionId } = await acpCall(acpUrl, "session/new", { cwd: "/", mcpServers: [] });
     console.log(dim(sessionId));
+    await waitForHarnessSandboxReady(acpUrl, sessionId, initResult);
 
     console.log(dim(`\nYou: ${args.message}\n`));
     console.log(bold("Agent:"));
@@ -2119,6 +2239,7 @@ const COMMANDS = {
     process.stdout.write(dim("Creating session... "));
     const { sessionId } = await acpCall(acpUrl, "session/new", { cwd: "/", mcpServers: [] });
     console.log(green(sessionId));
+    await waitForHarnessSandboxReady(acpUrl, sessionId, initResult);
     console.log();
 
     const rl = createInterface({ input: process.stdin, output: process.stdout });

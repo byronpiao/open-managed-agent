@@ -64,7 +64,7 @@ node scripts/load-env.mjs --check
 | `CLOUDBASE_ACCESS_KEY` | 部署/网关 | API Key JWT |
 | `CLOUDBASE_AGENT_ID` | 可选 | 默认 Agent |
 
-**`.env.example` 已含 `TCB_REGION`**（与 master 对齐）：真 AGS / CloudBase `harness_sessions` / `harness_sync_events` / COS SDK **都读 region**。本地纯 stub e2e（`OAK_USE_MEMORY_STORE=1`）可不填，但 `node scripts/load-env.mjs --check` 与 `harness -- full` 会要求。
+**`.env.example` 已含 `TCB_REGION`**（与 master 对齐）：真 AGS / CloudBase `harness_sessions` / `harness_sync_events` / COS SDK **都读 region**。本地纯 stub e2e（`OAK_USE_MEMORY_STORE=1`）可不填，但 `node scripts/load-env.mjs --check` 与 `harness -- local` 的 full 段会要求。
 
 **不要**往 example 加：`PORT`、`CLOUDBASE_SERVER_URL`（本地 runtime 有默认）、各类 `HARNESS_*` 镜像/COS 细项（放 `.env.harness`）。
 
@@ -133,30 +133,38 @@ CLOUDBASE_SERVER_URL ?? http://127.0.0.1:${PORT}
 
 ### opencode
 
-宿主机：
+**默认（一条龙 / 云上 deploy）**：不配 `LLM_*` → **`model: zen`**，箱内不注入 `OPENCODE_CONFIG_CONTENT`，用 opencode 内置 zen（免 key）。
+
+**自定义 LLM**（Mimo 等）宿主机必须：
 
 ```
-LLM_API_KEY + LLM_MODEL + OPENAI_BASE_URL
+LLM_API_KEY + LLM_MODEL + OPENAI_BASE_URL   # 必须带 /v1，Chat Completions
 ```
 
-沙箱 `Start env`：
+⚠️ **两套 URL 分开配**：`OPENAI_BASE_URL` → opencode / codebuddy；`ANTHROPIC_BASE_URL` → claude。不要把 `model.apiBaseUrl`（常为 Anthropic）混进 opencode — harness 起箱**只读 host 环境变量**，不猜、不转换。
+
+沙箱 `Start env`（仅自定义 LLM 时）：
 
 ```
 OPENCODE_CONFIG_CONTENT=<JSON>
 ```
 
-JSON 结构（节选）：
+OMA 生成的 `OPENCODE_CONFIG_CONTENT` 示例（节选；provider id 固定 `openai-compat`）：
 
 ```json
 {
-  "model": "openai-compat/<LLM_MODEL>",
+  "model": "openai-compat/mimo-v2.5-pro",
   "provider": {
     "openai-compat": {
-      "options": { "baseURL": "<OPENAI_BASE_URL>", "apiKey": "<LLM_API_KEY>" }
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "baseURL": "https://token-plan-cn.xiaomimimo.com/v1", "apiKey": "<LLM_API_KEY>" }
     }
-  }
+  },
+  "enabled_providers": ["openai-compat"]
 }
 ```
+
+可观测性（日志在哪、怎么读）：[harness-opencode-observability.md](./harness-opencode-observability.md)
 
 TRW 文档：[tcb-remote-workspace/docs/agents/opencode.md](https://github.com/TencentCloudBase/tcb-remote-workspace/blob/master/docs/agents/opencode.md)
 
@@ -279,9 +287,44 @@ OMA 引用 TRW 路径：`TRW_ROOT` 默认 `code_sandbox/tcb-remote-workspace`（
 
 ---
 
+## 验收入口（仅两个）
+
+```bash
+npm run harness -- local    # stub e2e + 真 AGS full（+ HARNESS_COS_ENABLED 时 cos）
+npm run harness -- cloud    # tcbr deploy/update + ACP prompt smoke
+npm run test:full         # unit + local
+```
+
+| 子命令 | 要啥 |
+|--------|------|
+| `local` | `.env` + `.env.harness`；full 段要 AGS 凭证 |
+| `cloud` | 同上 + CloudBase；`HARNESS_CLOUD_AGENT_ID` 已有机则 **update**，否则 create |
+
+`cloud` 可选：`--agent-id` · `--verify-only` · `--no-verify`
+
+| 变量 | 说明 |
+|------|------|
+| `HARNESS_CLOUD_AGENT_ID` | 已有 agent 时写入 `.env.harness`，避免重复 create |
+| `LLM_API_KEY` + `OPENAI_BASE_URL` | 有则自定义 opencode；无则 **`model: zen`** |
+
+当前测试环境（`test-6g2rfs50c69b7fb8`）：`agent-oma-harness-7ef1v611abd610` / `oma-harness-kzh2bn`。
+
+### 进阶（不单独 npm script，见 [`code_sandbox/Harness一条龙.md`](../../Harness一条龙.md)）
+
+| 操作 | 命令 |
+|------|------|
+| COS 探针 | `node scripts/harness-cos-probe.mjs` |
+| COS e2e | `node scripts/harness-cos-e2e.mjs` |
+| 停本 env 沙箱 | `node scripts/harness-ags-teardown.mjs` |
+| 同步 harness Tool 镜像 | `node scripts/sync-harness-tool.mjs` |
+| 推 magent 公开镜像 | `./scripts/build-push-magent-public.sh` |
+| 本地 ACP stdio 桥 | `node scripts/harness-acp-bridge.mjs [baseURL]` |
+
+---
+
 ## 相关文档
 
-- 一条龙验收：`.plan/harness-一条龙.md`（本地 SoT）；COS 对齐 `code_sandbox/一条龙.md` §5
+- 一条龙验收：[`code_sandbox/Harness一条龙.md`](../../Harness一条龙.md)；COS 对齐 [`AGS一条龙.md`](../../AGS一条龙.md) §5
 - 索引：`packages/agent-runtime/src/harness/README.md`
 - TRW 双通道 env：[workspace-env.md](https://github.com/TencentCloudBase/tcb-remote-workspace/blob/master/docs/workspace-env.md)
 - 加载脚本：`scripts/load-env.mjs`

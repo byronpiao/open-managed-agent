@@ -8,7 +8,6 @@ import type { AgentConfig } from "../config.js";
 import { resolveRuntime } from "../config.js";
 import {
   buildHarnessAcpMcpServers,
-  buildHarnessSandboxEnv,
   DEFAULT_HARNESS_SANDBOX_CWD,
 } from "./deploy.js";
 import { startSandboxMcpPump } from "./mcp-pump.js";
@@ -28,14 +27,19 @@ import {
 import {
   getSandboxOrchestrator,
   getCachedSandboxHandle,
-  cacheSandboxHandle,
   dropCachedSandboxHandle,
   type HarnessSandboxHandle,
 } from "./sandbox/orchestrator.js";
+import { isE2eStubSandboxEnabled } from "./sandbox/e2e-stub.js";
 import {
-  createE2eStubSandboxHandle,
-  isE2eStubSandboxEnabled,
-} from "./sandbox/e2e-stub.js";
+  bindSandboxForSession,
+  clearSandboxPrewarmState,
+  isSandboxPrewarmInFlight,
+  isSandboxReadyForSession,
+  startSandboxPrewarm,
+  touchSandboxActivity,
+  waitForSandboxPrewarm,
+} from "./sandbox/sandbox-prewarm.js";
 import {
   getHarnessSessionStore,
   type HarnessSessionRecord,
@@ -43,7 +47,6 @@ import {
 import { harnessLog } from "./logging.js";
 import {
   exportOpencodeSyncEvents,
-  hydrateOpencodeSyncEvents,
   snapshotWorkspaceIfAvailable,
 } from "./opencode-sync.js";
 import { getHarnessSyncEventStore } from "./sync-event-store.js";
@@ -90,75 +93,43 @@ function handleInitialize(params: Record<string, unknown>, config: AgentConfig) 
 async function ensureSandboxForSession(
   config: AgentConfig,
   acpSessionId: string,
-): Promise<{ handle: HarnessSandboxHandle; record: Awaited<ReturnType<ReturnType<typeof getHarnessSessionStore>["get"]>> }> {
+): Promise<{
+  handle: HarnessSandboxHandle;
+  record: Awaited<ReturnType<ReturnType<typeof getHarnessSessionStore>["get"]>>;
+  /** Events replayed via HTTP /sync/replay on this acquire (0 if cached handle). */
+  syncHydrated: number;
+}> {
   const envId = envIdFromConfig();
-  const { engine } = resolveRuntime(config);
   const store = getHarnessSessionStore(envId);
   let record = await store.get(acpSessionId);
   if (!record) {
     throw Object.assign(new Error(`Session not found: ${acpSessionId}`), { rpcCode: -32602 });
   }
-  if (!record.secretMasterKey) {
-    record = await store.ensureSecretMasterKey(acpSessionId);
-  }
 
   let handle = getCachedSandboxHandle(acpSessionId);
+  let syncHydrated = 0;
+
   if (!handle) {
-    const callbackBase = harnessCallbackBase();
-    const staleInstanceId = record.instanceId;
+    await waitForSandboxPrewarm(acpSessionId);
+    handle = getCachedSandboxHandle(acpSessionId);
+  }
 
-    if (staleInstanceId && record.toolId && !isE2eStubSandboxEnabled(config)) {
-      try {
-        await getSandboxOrchestrator().stopInstanceForEnv(staleInstanceId, envId);
-      } catch (err) {
-        harnessLog({
-          lane: "orchestrator",
-          operation: "stale_instance.stop",
-          acpSessionId,
-          instanceId: staleInstanceId,
-        }).error(err);
-      }
-      await store.clearInstanceBinding(acpSessionId);
-    }
-
-    if (isE2eStubSandboxEnabled(config)) {
-      handle = createE2eStubSandboxHandle(acpSessionId);
-    } else {
-      const orchestrator = getSandboxOrchestrator();
-      handle = await orchestrator.acquire({
-        envId,
-        agentConfig: config,
-        engine: record.engine,
-        acpSessionId,
-        instanceEnv: buildHarnessSandboxEnv({
-          config,
-          engine: record.engine,
-          clientToolCallbackBase: callbackBase,
-          acpSessionId,
-          secretMasterKey: record.secretMasterKey,
-        }),
-      });
-      if (record.engine === "opencode" && record.engineSessionId) {
-        await hydrateOpencodeSyncEvents({
-          handle,
-          syncStore: getHarnessSyncEventStore(envId),
-          acpSessionId,
-          aggregateId: record.engineSessionId,
-        });
-      }
-    }
-    if (!isE2eStubSandboxEnabled(config)) {
-      await store.bindInstance(acpSessionId, {
-        instanceId: handle.instanceId,
-        toolId: handle.toolId,
+  if (!handle) {
+    const bound = await bindSandboxForSession(config, acpSessionId);
+    syncHydrated = bound.syncHydrated;
+    handle = getCachedSandboxHandle(acpSessionId);
+    if (!handle) {
+      throw Object.assign(new Error(`Sandbox bind failed for ${acpSessionId}`), {
+        rpcCode: -32000,
       });
     }
-    cacheSandboxHandle(acpSessionId, handle);
   } else {
     await handle.resumeIfPaused();
   }
 
-  return { handle, record };
+  touchSandboxActivity(acpSessionId);
+  record = (await store.get(acpSessionId)) ?? record;
+  return { handle, record, syncHydrated };
 }
 
 async function forwardAcpToSandbox(args: {
@@ -429,6 +400,7 @@ async function pipeSandboxSseToClient(
     mcpPump?.stop();
     unregisterActivePrompt(acpSessionId);
     sseDone(res, sse);
+    touchSandboxActivity(acpSessionId);
     void maybeExportOpencodeSync(acpSessionId, config).catch(() => {});
   }
 }
@@ -474,6 +446,7 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
     acpSessionId = reqSessionId;
     const existing = await store.get(acpSessionId);
     if (existing) {
+      startSandboxPrewarm(config, acpSessionId);
       return { sessionId: acpSessionId, hasHistory: existing.status === "active" };
     }
   } else {
@@ -481,7 +454,26 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
   }
 
   await store.create({ acpSessionId, userId, engine });
+  startSandboxPrewarm(config, acpSessionId);
   return { sessionId: acpSessionId, hasHistory: false };
+}
+
+async function handleSessionStatus(params: Record<string, unknown>) {
+  const sessionId = String(params.sessionId ?? "");
+  if (!sessionId) throw Object.assign(new Error("sessionId is required"), { rpcCode: -32602 });
+
+  const envId = envIdFromConfig();
+  const row = await getHarnessSessionStore(envId).get(sessionId);
+  if (!row) {
+    throw Object.assign(new Error(`Session not found: ${sessionId}`), { rpcCode: -32602 });
+  }
+
+  return {
+    sessionId,
+    sandboxReady: isSandboxReadyForSession(sessionId),
+    prewarmInFlight: isSandboxPrewarmInFlight(sessionId),
+    instanceId: row.instanceId ?? null,
+  };
 }
 
 async function handleSessionList(_params: Record<string, unknown>, config: AgentConfig) {
@@ -522,20 +514,22 @@ async function handleSessionLoad(
     return true;
   }
 
-  const { handle } = await ensureSandboxForSession(config, sessionId);
+  const { handle, syncHydrated } = await ensureSandboxForSession(config, sessionId);
   const engineSessionId = row.engineSessionId ?? sessionId;
   const mcpServers = buildHarnessAcpMcpServers({
     config,
     clientToolCallbackBase: harnessCallbackBase(),
     acpSessionId: sessionId,
   });
+  // HTTP hydrate in ensureSandbox already replays sync events; ACP replay again can hang opencode.
+  const acpReplay = Boolean(params.replay) && syncHydrated === 0;
   const upstream = await forwardAcpToSandbox({
     handle,
     config,
     method: "session/load",
     params: {
       sessionId: engineSessionId,
-      replay: true,
+      replay: acpReplay,
       cwd: DEFAULT_HARNESS_SANDBOX_CWD,
       mcpServers,
     },
@@ -569,6 +563,9 @@ async function handleSessionPrompt(
   const abortController = new AbortController();
   abortControllers.set(sessionId, abortController);
 
+  const promptStartedAt = Date.now();
+  let sandboxWaitMs = 0;
+
   try {
     const promptBlocks = (params.prompt ?? []) as Array<{
       type: string;
@@ -592,7 +589,9 @@ async function handleSessionPrompt(
     }
     // permission_decision is not handled locally — forward to sandbox engine ACP.
 
+    const sandboxWaitStart = Date.now();
     const { handle, record } = await ensureSandboxForSession(config, sessionId);
+    sandboxWaitMs = Date.now() - sandboxWaitStart;
     if (!record) {
       res.json(rpcError(id, -32602, `Session not found: ${sessionId}`));
       return true;
@@ -616,11 +615,22 @@ async function handleSessionPrompt(
       signal: abortController.signal,
     });
 
+    const forwardStartedAt = Date.now();
     await pipeSandboxSseToClient(upstream, res, id, sessionId, store, config);
+    harnessLog({ lane: "acp", operation: "session.prompt", acpSessionId: sessionId }).emit({
+      status: "ok",
+      sandboxWaitMs,
+      sandboxForwardMs: Date.now() - forwardStartedAt,
+      totalMs: Date.now() - promptStartedAt,
+    });
   } catch (err) {
     const wl = harnessLog({ lane: "acp", operation: "session.prompt", acpSessionId: sessionId });
     wl.error(err);
-    wl.emit({ status: "error" });
+    wl.emit({
+      status: "error",
+      sandboxWaitMs,
+      totalMs: Date.now() - promptStartedAt,
+    });
     if (!res.headersSent) {
       res.json(
         rpcError(id, (err as { rpcCode?: number })?.rpcCode ?? -32000, String(err)),
@@ -668,6 +678,7 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
   const store = getHarnessSessionStore(envId);
   const row = await store.get(sessionId);
   if (!row) {
+    clearSandboxPrewarmState(sessionId);
     dropCachedSandboxHandle(sessionId);
     return { sessionId, deleted: false };
   }
@@ -698,6 +709,7 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
 
   await store.clearInstanceBinding(sessionId);
   await store.setStatus(sessionId, "ended");
+  clearSandboxPrewarmState(sessionId);
   dropCachedSandboxHandle(sessionId);
   return { sessionId, deleted: true };
 }
@@ -766,6 +778,9 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
 
         case "session/list":
           return res.json(rpcResult(id, await handleSessionList(params, agentConfig)));
+
+        case "session/status":
+          return res.json(rpcResult(id, await handleSessionStatus(params)));
 
         case "session/load":
           sseDelegated = Boolean(params.replay);

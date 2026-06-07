@@ -33,6 +33,8 @@ import {
   resetHarnessSyncEventStoreForTests,
   exportOpencodeSyncEvents,
   hydrateOpencodeSyncEvents,
+  resolveHarnessSandboxIdlePauseMs,
+  resetSandboxPrewarmForTests,
 } from "../../packages/agent-runtime/dist/harness/index.js";
 import {
   buildCosMountOptions,
@@ -121,6 +123,21 @@ test("buildHarnessAcpMcpServers returns http MCP for custom tools", () => {
   assert.equal(servers[0].type, "http");
   assert.equal(servers[0].name, MANAGED_AGENT_CLIENT_MCP_SERVER);
   assert.ok(servers[0].url.includes(SANDBOX_TRW_MCP_RELAY_PATH));
+});
+
+test("buildHarnessOpencodeConfigContent ignores model.apiBaseUrl (OpenAI from env only)", () => {
+  const cfg = {
+    name: "x",
+    model: {
+      id: "mimo-v2.5-pro",
+      apiKey: "tp-test",
+      apiBaseUrl: "https://token-plan-cn.xiaomimimo.com/anthropic",
+    },
+    system: "s",
+    runtime: "harness",
+    engine: "opencode",
+  };
+  assert.equal(buildHarnessOpencodeConfigContent(cfg), null);
 });
 
 test("buildHarnessOpencodeConfigContent uses LLM_* + OPENAI_BASE_URL", () => {
@@ -541,6 +558,19 @@ test("buildCosStorageMounts and mount options", () => {
   ]) {
     delete process.env[k];
   }
+});
+
+test("resolveHarnessSandboxIdlePauseMs defaults to 20 minutes", () => {
+  resetSandboxPrewarmForTests();
+  const prev = process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS;
+  delete process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS;
+  assert.equal(resolveHarnessSandboxIdlePauseMs(), 20 * 60 * 1000);
+  process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS = "0";
+  assert.equal(resolveHarnessSandboxIdlePauseMs(), 0);
+  process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS = "60000";
+  assert.equal(resolveHarnessSandboxIdlePauseMs(), 60000);
+  if (prev === undefined) delete process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS;
+  else process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS = prev;
 });
 
 let failed = 0;

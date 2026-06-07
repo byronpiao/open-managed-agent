@@ -71,3 +71,8 @@ export {
   replayOpencodeSyncEvents,
   snapshotWorkspaceIfAvailable,
 } from "./opencode-sync.js";
+
+export {
+  resolveHarnessSandboxIdlePauseMs,
+  resetSandboxPrewarmForTests,
+} from "./sandbox/sandbox-prewarm.js";

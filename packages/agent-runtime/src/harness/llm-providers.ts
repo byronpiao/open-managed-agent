@@ -3,6 +3,9 @@
  *
  * OpenAI-compatible → opencode (OPENCODE_CONFIG_CONTENT) + codebuddy (CODEBUDDY_*)
  * Anthropic-compatible → claude ACP (ANTHROPIC_*)
+ *
+ * Harness reads LLM from **host env only** (`.env.harness` → CloudRun EnvParam).
+ * Do not infer OpenAI base URLs from agent.yaml `model.apiBaseUrl` (often Anthropic).
  */
 
 import type { AgentConfig } from "../config.js";
@@ -18,22 +21,8 @@ function modelId(config: AgentConfig): string | undefined {
   return config.model?.id;
 }
 
-function fromModelSpec(config: AgentConfig): CompatLlmProvider | null {
-  if (typeof config.model !== "object" || !config.model) return null;
-  const { apiKey, apiBaseUrl, id } = config.model;
-  if (!apiKey && !apiBaseUrl) return null;
-  return {
-    apiKey,
-    baseUrl: apiBaseUrl,
-    model: id,
-  };
-}
-
-/** OpenAI Chat Completions–compatible (opencode). */
+/** OpenAI Chat Completions → opencode + codebuddy. Requires OPENAI_BASE_URL. */
 export function resolveOpenAiCompatProvider(config: AgentConfig): CompatLlmProvider | null {
-  const spec = fromModelSpec(config);
-  if (spec?.apiKey) return spec;
-
   const apiKey = process.env.LLM_API_KEY?.trim();
   const baseUrl = process.env.OPENAI_BASE_URL?.trim();
   const model = process.env.LLM_MODEL?.trim() ?? modelId(config);
@@ -41,16 +30,8 @@ export function resolveOpenAiCompatProvider(config: AgentConfig): CompatLlmProvi
   return { apiKey, baseUrl, model };
 }
 
-/** Anthropic Messages–compatible (claude ACP). Base URL must not include trailing /v1. */
+/** Anthropic Messages → claude ACP. Uses ANTHROPIC_BASE_URL (not OPENAI_BASE_URL). */
 export function resolveAnthropicCompatProvider(config: AgentConfig): CompatLlmProvider | null {
-  const spec = fromModelSpec(config);
-  if (spec?.apiKey) {
-    return {
-      ...spec,
-      baseUrl: spec.baseUrl ? stripOpenAiV1Suffix(spec.baseUrl) : spec.baseUrl,
-    };
-  }
-
   const apiKey = process.env.LLM_API_KEY?.trim();
   let baseUrl = process.env.ANTHROPIC_BASE_URL?.trim();
   const model = process.env.LLM_MODEL?.trim() ?? modelId(config);
@@ -60,19 +41,10 @@ export function resolveAnthropicCompatProvider(config: AgentConfig): CompatLlmPr
 }
 
 /**
- * OpenAI-compatible for CodeBuddy ACP (`CODEBUDDY_BASE_URL`).
- * `OPENAI_BASE_URL` is optional — omit for TRW default China (`internal`) Copilot.
+ * CodeBuddy ACP — same OpenAI-compatible env as opencode (`CODEBUDDY_BASE_URL` ← OPENAI_BASE_URL).
+ * BASE_URL optional: omit for TRW China Copilot (`internal`).
  */
 export function resolveCodebuddyProvider(config: AgentConfig): CompatLlmProvider | null {
-  const spec = fromModelSpec(config);
-  if (spec?.apiKey) {
-    return {
-      apiKey: spec.apiKey,
-      baseUrl: spec.baseUrl,
-      model: spec.model ?? modelId(config),
-    };
-  }
-
   const apiKey = process.env.LLM_API_KEY?.trim();
   const baseUrl = process.env.OPENAI_BASE_URL?.trim();
   const model = process.env.LLM_MODEL?.trim() ?? modelId(config);

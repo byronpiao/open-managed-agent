@@ -29,7 +29,7 @@ export { HARNESS_PUBLIC_MAGENT_IMAGE, resolveHarnessSandboxImage } from "./harne
 
 const OPENCODE_PROVIDER_ID = "openai-compat";
 
-/** Inline opencode.json from LLM_* + OPENAI_BASE_URL (or agent.yaml ModelSpec). */
+/** Inline opencode.json from LLM_* + OPENAI_BASE_URL (host env). */
 export function buildHarnessOpencodeConfigContent(config: AgentConfig): string | null {
   const provider = resolveOpenAiCompatProvider(config);
   if (!provider?.apiKey || !provider.baseUrl || !provider.model) return null;

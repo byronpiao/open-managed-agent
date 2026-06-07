@@ -53,9 +53,10 @@ COPY --chown=agent:agent package*.json ./
 COPY --chown=agent:agent vendor ./vendor
 
 RUN npm config set registry https://mirrors.cloud.tencent.com/npm/ \
- && npm install --omit=dev --no-audit --no-fund \
- && npm install --no-save --no-audit --no-fund \
-        @anthropic-ai/claude-agent-sdk-linux-x64@$(node -p "require('@anthropic-ai/claude-agent-sdk/package.json').version")
+ && npm install --omit=dev --no-audit --no-fund --legacy-peer-deps \
+ && CLAUDE_SDK_VER=$(node -p "require('./node_modules/@anthropic-ai/claude-agent-sdk/package.json').version") \
+ && npm install --no-save --no-audit --no-fund --legacy-peer-deps \
+        @anthropic-ai/claude-agent-sdk-linux-x64@${CLAUDE_SDK_VER}
 
 COPY --chown=agent:agent . .
 

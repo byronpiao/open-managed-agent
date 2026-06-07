@@ -79,11 +79,11 @@ async function main() {
 
     if (!snap.ok) {
       if (process.env.HARNESS_COS_ENABLED === "1") {
-        console.error("\nCOS enabled but snapshot failed — see 一条龙 §5 / npm run harness -- cos");
+        console.error("\nCOS enabled but snapshot failed — see docs/harness-env.md / 一条龙 §5");
         process.exit(1);
       }
       console.log("\nNote: default harness-{envId} tool has no COS_MOUNT_DIR — skip is expected.");
-      console.log("Enable: HARNESS_COS_* in .env.harness → npm run harness -- cos");
+      console.log("Enable: HARNESS_COS_* in .env.harness → HARNESS_COS_ENABLED=1 npm run harness -- local");
     } else {
       console.log("\n✓ COS snapshot ready");
     }

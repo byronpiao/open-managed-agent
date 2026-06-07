@@ -1,21 +1,23 @@
-# Harness cloud deploy template — copy and fill model.apiKey before magent agent:create/update.
-#   cp agent.harness.cloud.yaml agent.harness.yaml  # gitignored if you add secrets
+# Harness cloud deploy template — default opencode zen (no API key burn).
 #
-#   magent agent:create -n "OMA-Harness" --type tcbr --runtime harness --engine opencode \
-#     -f ./agent.harness.yaml -e "$CLOUDBASE_ENV_ID"
+#   cp agent.harness.cloud.yaml agent.harness.yaml  # optional; deploy script writes this
+#   npm run harness -- cloud
 #
-# Host shell must also export: TCB_*, LLM_* (or model below), optional HARNESS_COS_* / HARNESS_TOOL_ID.
+# Custom LLM (e.g. Mimo): set in .env.harness:
+#   LLM_API_KEY=tp-...
+#   LLM_MODEL=mimo-v2.5-pro
+#   OPENAI_BASE_URL=https://token-plan-cn.xiaomimimo.com/v1   # opencode Chat Completions
+#   ANTHROPIC_BASE_URL=https://token-plan-cn.xiaomimimo.com/anthropic  # only if engine=claude
+#
+# Host shell must export TCB_*; optional HARNESS_COS_* / HARNESS_TOOL_ID.
 # Do NOT set SECRET_MASTER_KEY or OAK_USE_MEMORY_STORE on cloud harness.
 
 name: OMA Harness Sandbox Agent
 runtime: harness
 engine: opencode
-model:
-  id: mimo-v2.5
-  # apiKey: <from LLM_API_KEY at deploy time>
-  apiBaseUrl: https://token-plan-cn.xiaomimimo.com/anthropic
+model: zen
 system: You are a helpful coding assistant in a remote sandbox workspace.
-description: Sandbox Agent (harness runtime) with opencode ACP in AGS magent image.
+description: Sandbox Agent (harness) — default zen; override via .env.harness LLM_*.
 
 metadata:
   runtime: open-managed-agent

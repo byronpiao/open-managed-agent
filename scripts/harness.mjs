@@ -1,14 +1,36 @@
 #!/usr/bin/env node
 /**
- * Harness 验收统一入口（关停分散的 harness:* npm script）。
+ * Harness 验收 — 两个入口：
  *
- *   npm run harness -- e2e|full|cos|probe|teardown|all
- *   npm run test:full   # npm test && harness all
+ *   npm run harness -- local    # stub e2e + 真 AGS full（+ 可选 COS）
+ *   npm run harness -- cloud    # tcbr deploy/update + prompt smoke
+ *
+ * 进阶（COS / teardown / 镜像）：见 docs/harness-env.md
  */
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { loadEnv } from "./load-env.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(__dirname, "..");
+
+const HELP = `Usage: npm run harness -- <local|cloud> [options]
+
+  local   stub e2e + full AGS（.env + .env.harness）；HARNESS_COS_ENABLED=1 时追加 cos
+  cloud   build → agent:create|update → magent pong → ACP prompt smoke
+          --agent-id <id>     更新已有 agent（或 HARNESS_CLOUD_AGENT_ID）
+          --verify-only       只跑 ACP smoke，不 deploy
+          --no-verify         只 deploy，不 ACP smoke
+
+Examples:
+  npm run harness -- local
+  npm run test:full              # npm test && harness local
+  npm run harness -- cloud
+  npm run harness -- cloud --verify-only --agent-id agent-oma-harness-xxx
+
+More: docs/harness-env.md · ../Harness一条龙.md
+`;
 
 async function assertAgsHarnessEnv() {
   const { assertHarnessAgsRuntimeEnv } = await import(
@@ -16,24 +38,6 @@ async function assertAgsHarnessEnv() {
   );
   assertHarnessAgsRuntimeEnv();
 }
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(__dirname, "..");
-
-const HELP = `Usage: npm run harness -- <command>
-
-Commands:
-  e2e        stub 沙箱 e2e（无 AGS 凭证）
-  full       真 AGS + sync + parity（要 .env + .env.harness）
-  cos        COS 跨实例 write→snapshot→restore（要 HARNESS_COS_ENABLED=1）
-  probe      COS snapshot 轻量探针
-  teardown   Stop 本 env 全部 RUNNING 沙箱
-  all        e2e → full →（COS 开启时）cos
-
-Examples:
-  npm run harness -- full
-  npm run test:full
-`;
 
 function runNode(scriptRel, extraArgs = []) {
   const script = resolve(repoRoot, scriptRel);
@@ -50,48 +54,57 @@ function truthyCos() {
   return v === "1" || v === "true" || v === "yes";
 }
 
+async function runLocal() {
+  console.log("=== harness local: e2e (stub) ===");
+  runNode("tests/harness/e2e.test.mjs");
+
+  loadEnv();
+  console.log("=== harness local: full (AGS) ===");
+  await assertAgsHarnessEnv();
+  runNode("tests/harness/e2e.test.mjs", ["--full"]);
+
+  if (truthyCos()) {
+    console.log("=== harness local: cos (HARNESS_COS_ENABLED) ===");
+    runNode("scripts/harness-cos-e2e.mjs");
+  } else {
+    console.log("(skip cos — set HARNESS_COS_ENABLED=1 or see docs/harness-env.md)");
+  }
+}
+
 async function main() {
-  const cmd = process.argv[2];
+  const args = process.argv.slice(2);
+  const cmd = args[0];
+
   if (!cmd || cmd === "-h" || cmd === "--help") {
     console.log(HELP);
     process.exit(cmd ? 0 : 1);
   }
 
+  // Legacy aliases → local
+  if (cmd === "e2e" || cmd === "full" || cmd === "all") {
+    console.warn(`WARN: harness ${cmd} is deprecated — use: npm run harness -- local\n`);
+    if (cmd === "e2e") {
+      runNode("tests/harness/e2e.test.mjs");
+      return;
+    }
+    if (cmd === "full") {
+      loadEnv();
+      await assertAgsHarnessEnv();
+      runNode("tests/harness/e2e.test.mjs", ["--full"]);
+      return;
+    }
+    await runLocal();
+    return;
+  }
+
   switch (cmd) {
-    case "e2e":
-      runNode("tests/harness/e2e.test.mjs");
+    case "local":
+      await runLocal();
       break;
-    case "full":
+    case "cloud": {
       loadEnv();
-      await assertAgsHarnessEnv();
-      runNode("tests/harness/e2e.test.mjs", ["--full"]);
-      break;
-    case "cos":
-      loadEnv();
-      await assertAgsHarnessEnv();
-      runNode("scripts/harness-cos-e2e.mjs");
-      break;
-    case "probe":
-      loadEnv();
-      await assertAgsHarnessEnv();
-      runNode("scripts/harness-cos-probe.mjs");
-      break;
-    case "teardown":
-      runNode("scripts/harness-ags-teardown.mjs");
-      break;
-    case "all": {
-      loadEnv();
-      console.log("=== harness all: e2e (stub) ===");
-      runNode("tests/harness/e2e.test.mjs");
-      console.log("=== harness all: full (AGS) ===");
-      await assertAgsHarnessEnv();
-      runNode("tests/harness/e2e.test.mjs", ["--full"]);
-      if (truthyCos()) {
-        console.log("=== harness all: cos (HARNESS_COS_ENABLED) ===");
-        runNode("scripts/harness-cos-e2e.mjs");
-      } else {
-        console.log("(skip cos — set HARNESS_COS_ENABLED=1 to include)");
-      }
+      const { runCloudHarness } = await import("./harness/cloud.mjs");
+      await runCloudHarness(args.slice(1));
       break;
     }
     default:
@@ -101,4 +114,7 @@ async function main() {
   }
 }
 
-main();
+main().catch((err) => {
+  console.error(err.message ?? err);
+  process.exit(1);
+});

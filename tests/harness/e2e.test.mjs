@@ -1,8 +1,7 @@
 /**
  * Harness runtime e2e — agent-in-sandbox chain (local stub + optional real AGS).
  *
- *   npm run harness -- e2e
- *   npm run harness -- full
+ *   npm run harness -- local
  *
  * Loads .env + .env.harness via scripts/load-env.mjs
  */
@@ -423,7 +422,16 @@ async function promptSessionText(sessionId, text, rpcId = 100) {
       },
     }),
   });
-  return res.text();
+  const body = await res.text();
+  if (body.includes("timeout waiting for id=")) {
+    throw new Error(body.slice(0, 400));
+  }
+  return body;
+}
+
+function syncEventsContainToken(events, token) {
+  const blob = JSON.stringify(events);
+  return blob.includes(token);
 }
 
 async function testSyncPersistence() {
@@ -506,6 +514,11 @@ async function testSyncPersistence() {
     `expected harness_sync_events from opencode /sync/history for ${row.engineSessionId} ` +
       `(magent needs opencode >= 1.16.2)`,
   );
+  if (!syncEventsContainToken(events, token)) {
+    console.warn(
+      `sync: token not found in ${events.length} event(s) — recall will rely on opencode session state`,
+    );
+  }
 
   stopRuntime();
   await sleep(800);
@@ -528,15 +541,32 @@ async function testSyncPersistence() {
     `session/load replay error: ${loadText.slice(0, 400)}`,
   );
 
-  const recallBody = await promptSessionText(
-    sessionId,
-    "Reply with ONLY the exact token I asked you to remember, nothing else.",
-    203,
-  );
-  const recallText = extractAllSseText(recallBody);
+  await sleep(1500);
+
+  let recallBody = "";
+  let recallText = "";
+  let lastRecallErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      recallBody = await promptSessionText(
+        sessionId,
+        "Reply with ONLY the exact token I asked you to remember, nothing else.",
+        203 + attempt,
+      );
+      recallText = extractAllSseText(recallBody);
+      if (recallText.includes(token) || recallBody.includes(token)) break;
+      lastRecallErr = new Error(
+        `attempt ${attempt + 1}: token missing in response: ${recallText.slice(0, 280) || recallBody.slice(0, 280)}`,
+      );
+      await sleep(2000);
+    } catch (err) {
+      lastRecallErr = err;
+      if (attempt === 0) await sleep(3000);
+    }
+  }
   assert.ok(
     recallText.includes(token) || recallBody.includes(token),
-    `post-replay prompt should recall token ${token}; got: ${recallText.slice(0, 400) || recallBody.slice(0, 400)}`,
+    `post-replay prompt should recall token ${token}; ${lastRecallErr?.message ?? recallText.slice(0, 400)}`,
   );
 
   await rpc("/acp", "session/delete", { sessionId });

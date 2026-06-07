@@ -1908,7 +1908,7 @@ onetime@^5.1.2:
   dependencies:
     mimic-fn "^2.1.0"
 
-"open-managed-agent-runtime@file:/Users/slahser/Documents/obsidian/work/code_sandbox/yanshi/open-managed-agent/packages/agent-runtime":
+"open-managed-agent-runtime@file:/Users/slahser/Documents/obsidian/work/code_sandbox/open-managed-agent/packages/agent-runtime":
   version "0.1.0"
   resolved "file:packages/agent-runtime"
   dependencies:
@@ -1917,12 +1917,13 @@ onetime@^5.1.2:
     "@cloudbase/node-sdk" "^3.16.0"
     "@cloudbase/open-agent-kernel" "file:./vendor/cloudbase-open-agent-kernel-0.1.0-alpha.0.tgz"
     cors "^2.8.5"
+    cos-nodejs-sdk-v5 "^2.15.4"
     evlog "^2.18.1"
     express "^4.21.2"
     yaml "^2.4.0"
     zod "^4.0.0"
 
-"open-managed-agent-sdk@file:/Users/slahser/Documents/obsidian/work/code_sandbox/yanshi/open-managed-agent/packages/sdk":
+"open-managed-agent-sdk@file:/Users/slahser/Documents/obsidian/work/code_sandbox/open-managed-agent/packages/sdk":
   version "0.0.1"
   resolved "file:packages/sdk"
 
