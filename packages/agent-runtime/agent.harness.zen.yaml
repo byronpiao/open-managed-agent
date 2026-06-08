@@ -1,7 +1,0 @@
-# Harness cloud — opencode built-in zen (no OPENCODE_CONFIG_CONTENT / no LLM_* on host).
-name: OMA Harness Sandbox Agent (zen)
-runtime: harness
-engine: opencode
-model: zen
-system: Reply briefly and exactly as the user asks.
-description: Cross-check prompt latency without Mimo / custom provider.

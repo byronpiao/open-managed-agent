@@ -20,14 +20,6 @@ import cors from "cors";
 import { mountAcpEndpoint } from "./acp-endpoint.js";
 import { loadAgentConfig, resolveRuntime, resolveSkills } from "./config.js";
 import { getKernelAgent, getStoreDiag } from "./kernel-adapter.js";
-import {
-  initHarnessLogging,
-  mountHarnessMcpGateway,
-  harnessLog,
-} from "./harness/index.js";
-import { getHarnessStoreDiag } from "./harness/sandbox/session-store.js";
-import { getHarnessSandboxCacheStats } from "./harness/sandbox/orchestrator.js";
-import { getSandboxPrewarmStats } from "./harness/sandbox/sandbox-prewarm.js";
 
 const port = Number(process.env.PORT ?? 9000);
 
@@ -36,9 +28,13 @@ async function main() {
   const config = await resolveSkills(rawConfig);
   const { runtime, engine } = resolveRuntime(config);
 
+  type HarnessRuntime = typeof import("./harness/index.js");
+  let harnessRuntime: HarnessRuntime | undefined;
+
   if (runtime === "harness") {
-    initHarnessLogging();
-    harnessLog({
+    harnessRuntime = await import("./harness/index.js");
+    harnessRuntime.initHarnessLogging();
+    harnessRuntime.harnessLog({
       lane: "runtime",
       operation: "boot",
       name: config.name,
@@ -67,7 +63,6 @@ async function main() {
 
   const app = express();
   app.use(cors());
-  app.use("/internal/harness/mcp", express.json({ limit: "2mb" }));
   app.get("/healthz", async (_req, res) => {
     const base = {
       ok: true,
@@ -82,6 +77,15 @@ async function main() {
         process.env.CLOUDBASE_ENV_ID?.trim() ??
         process.env.TCB_ENV_ID?.trim() ??
         "default";
+      const [
+        { getHarnessStoreDiag },
+        { getHarnessSandboxCacheStats },
+        { getSandboxPrewarmStats },
+      ] = await Promise.all([
+        import("./harness/sandbox/session-store.js"),
+        import("./harness/sandbox/orchestrator.js"),
+        import("./harness/sandbox/sandbox-prewarm.js"),
+      ]);
       const harnessStore = await getHarnessStoreDiag(envId);
       res.json({
         ...base,
@@ -98,12 +102,14 @@ async function main() {
 
   mountAcpEndpoint(app, config);
   if (runtime === "harness") {
-    mountHarnessMcpGateway(app, config);
+    app.use("/internal/harness/mcp", express.json({ limit: "2mb" }));
+    harnessRuntime ??= await import("./harness/index.js");
+    harnessRuntime.mountHarnessMcpGateway(app, config);
   }
 
   app.listen(port, () => {
-    if (runtime === "harness") {
-      harnessLog({ lane: "runtime", operation: "listen", port, runtime, engine }).emit({
+    if (runtime === "harness" && harnessRuntime) {
+      harnessRuntime.harnessLog({ lane: "runtime", operation: "listen", port, runtime, engine }).emit({
         status: "ok",
       });
     } else {

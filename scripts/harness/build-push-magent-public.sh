@@ -2,8 +2,13 @@
 # Build TRW magent preset, push public CCR, sync OMA defaults + AGS tool.
 set -euo pipefail
 
-export PATH="/opt/homebrew/Cellar/docker/29.5.3/bin:/opt/homebrew/bin:${PATH:-}"
-export DOCKER_HOST="${DOCKER_HOST:-unix://${HOME}/.colima/default/docker.sock}"
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker not found in PATH — install Docker Desktop/Colima or export PATH" >&2
+  exit 1
+fi
+if [[ -z "${DOCKER_HOST:-}" && -S "${HOME}/.colima/default/docker.sock" ]]; then
+  export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
+fi
 
 TRW_ROOT="${TRW_ROOT:-$(cd "$(dirname "$0")/../../../tcb-remote-workspace" && pwd)}"
 PUBLIC_REPO="${PUBLIC_REPO:-ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d}"

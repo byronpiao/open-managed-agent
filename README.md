@@ -242,6 +242,19 @@ sessions_collection: acp_sessions   # Session 存储的集合名，启动时自�
 | `always_allow` | 工具自动执行，不需要确认 |
 | `always_ask` | 暂停等待客户端发送 `user.tool_confirmation` 事件 |
 
+### MCP Tool Calling（`runtime=managed`）
+
+MCP 工具调用已在 **TCBR 云托管**（`--type tcbr`）端到端验证：Agent 能发现远程 MCP server 的工具并自动调用。
+
+```bash
+magent agent:create -n my-agent --type tcbr -f agent.yaml -e <env-id>
+magent run -a <agent-id> -m "现在几点了？"
+```
+
+验证链路：`agent.yaml` → `AGENT_CONFIG_B64` → `loadAgentConfig()` → kernel MCP 连接 → 模型发现工具 → 调用 → 结果返回。
+
+> **SCF zip 模式（默认 `agent:create`）**：历史上存在事件流问题（模型已响应但客户端收不到 tool/文本帧）。生产环境推荐 **TCBR**；排障见 [docs/scf-debugging.md](docs/scf-debugging.md)。**沙箱 Agent（`runtime=harness`）** 走 AGS + 箱内引擎，与上述 SCF zip 限制无关，见 [沙箱内 Agent](#沙箱内-agent)。
+
 ---
 
 ## 更新 Agent 配置（`magent agent:update` / `magent agent:export`）
@@ -513,6 +526,15 @@ await client.sessions.delete(session.id);
 ---
 
 ## 部署详解
+
+### 部署类型（`runtime=managed`）
+
+| 类型 | 命令 | 耗时 | 适用场景 |
+|------|------|------|----------|
+| **TCBR 云托管**（推荐） | `--type tcbr` | ~3–5 min | 生产；MCP / 流式事件正常 |
+| SCF 云函数 | 默认（省略 `--type`） | ~60–90s | 快速原型；zip 模式流式有已知限制 |
+
+沙箱 Agent 使用 `runtime: harness`，见 [沙箱内 Agent](#沙箱内-agent) 与 [docs/harness-architecture.md](docs/harness-architecture.md)。
 
 ### 首次部署（`magent agent:create`）
 

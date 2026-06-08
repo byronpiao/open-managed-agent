@@ -7,21 +7,16 @@
  */
 
 import { execSync } from "child_process";
-import { existsSync, readFileSync } from "fs";
-import { resolve, dirname } from "path";
+import { resolve } from "path";
 import { fileURLToPath } from "url";
 import {
   clearShellLeakedHarnessPins,
   expectedHarnessToolName,
   harnessCosEnabledFromMap,
+  loadHarnessEnvIntoProcess,
   pinnedHarnessToolId,
   readHarnessEnvMap,
 } from "../../lib/harness-env-file.mjs";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(__dirname, "../..");
-
-const HARNESS_ENV_FILE = resolve(repoRoot, ".env.harness");
 
 const ALIASES = [
   ["TCB_ENV_ID", "CLOUDBASE_ENV_ID"],
@@ -37,35 +32,9 @@ const REQUIRED_FOR_AGS = [
   "TCB_REGION",
 ];
 
-function parseEnvLine(line) {
-  const trimmed = line.trim();
-  if (!trimmed || trimmed.startsWith("#")) return null;
-  const eq = trimmed.indexOf("=");
-  if (eq === -1) return null;
-  const key = trimmed.slice(0, eq).trim();
-  let val = trimmed.slice(eq + 1).trim();
-  if (
-    (val.startsWith('"') && val.endsWith('"')) ||
-    (val.startsWith("'") && val.endsWith("'"))
-  ) {
-    val = val.slice(1, -1);
-  }
-  return { key, val };
-}
-
-function loadFile(path) {
-  if (!existsSync(path)) return false;
-  for (const line of readFileSync(path, "utf-8").split("\n")) {
-    const parsed = parseEnvLine(line);
-    if (!parsed) continue;
-    process.env[parsed.key] = parsed.val;
-  }
-  return true;
-}
-
 /** Load `.env.harness` only. */
 export function loadEnv() {
-  if (!loadFile(HARNESS_ENV_FILE)) {
+  if (!loadHarnessEnvIntoProcess()) {
     throw new Error(
       "Missing .env.harness — run: cp .env.harness.example .env.harness",
     );
