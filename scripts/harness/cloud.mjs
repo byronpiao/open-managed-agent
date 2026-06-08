@@ -1,5 +1,7 @@
 /**
- * Cloud harness: deploy (tcbr) + prompt smoke. Internal — use `npm run harness -- cloud`.
+ * Cloud harness: deploy + gateway ACP smoke.
+ *   npm run harness -- cloud       # 云托管 tcbr（默认）
+ *   npm run harness -- cloud-scf   # SCF 云函数
  */
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -12,9 +14,58 @@ const repoRoot = resolve(__dirname, "../..");
 const runtimeRoot = resolve(repoRoot, "packages/agent-runtime");
 const magent = resolve(repoRoot, "magent.mjs");
 
+const DEFAULT_GATEWAY_READY_MS = 5 * 60_000;
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function gatewayAcpUrl(envId, agentId) {
+  return `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}/acp`;
+}
+
 function sh(cmd, opts = {}) {
   console.log(`\n$ ${cmd}\n`);
   execSync(cmd, { stdio: "inherit", cwd: repoRoot, ...opts });
+}
+
+function execOutputBlob(err) {
+  return `${err?.message ?? ""}${err?.stdout ?? ""}${err?.stderr ?? ""}`;
+}
+
+/** tcbr redeploy may still hold the service lock when agent:update runs. */
+async function agentUpdateWithRetry(agentId, yamlPath, envId, opts = {}) {
+  const cmd = `node "${magent}" agent:update -i "${agentId}" -f "${yamlPath}" --runtime harness --engine opencode -e "${envId}"`;
+  const maxAttempts = Number(process.env.HARNESS_CLOUD_UPDATE_RETRIES) || 12;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      console.log(`\n=== magent agent:update ${agentId} (attempt ${attempt}/${maxAttempts}) ===\n`);
+      execSync(cmd, {
+        cwd: repoRoot,
+        env: opts.env ?? process.env,
+        encoding: "utf-8",
+        stdio: ["inherit", "pipe", "pipe"],
+        maxBuffer: 20 * 1024 * 1024,
+      });
+      return;
+    } catch (err) {
+      if (err.stdout) process.stdout.write(err.stdout);
+      if (err.stderr) process.stderr.write(err.stderr);
+      const blob = execOutputBlob(err);
+      const locked = /ResourceInUse|部署发布任务运行中/i.test(blob);
+      const retryable = locked || (opts.afterRedeploy && attempt < maxAttempts);
+      if (retryable) {
+        console.warn(
+          locked
+            ? "agent:update: deploy still in flight — retry in 15s…"
+            : `agent:update failed after redeploy — retry ${attempt}/${maxAttempts} in 15s…`,
+        );
+        await sleep(15_000);
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 function flagValue(argv, name) {
@@ -47,13 +98,29 @@ async function buildAgentYaml() {
   return out;
 }
 
-async function deployCloudHarness(argv) {
+function resolveCloudBackend(argv, explicitBackend) {
+  const fromFlag = flagValue(argv, "--backend")?.toLowerCase();
+  if (fromFlag === "scf" || fromFlag === "tcbr") return fromFlag;
+  if (explicitBackend === "scf" || explicitBackend === "tcbr") return explicitBackend;
+  return "tcbr";
+}
+
+function pinnedAgentId(backend) {
+  const fromEnv =
+    backend === "scf"
+      ? process.env.HARNESS_CLOUD_SCF_AGENT_ID?.trim()
+      : process.env.HARNESS_CLOUD_AGENT_ID?.trim();
+  return fromEnv;
+}
+
+async function deployCloudHarness(argv, backend = "tcbr") {
   const envId = process.env.CLOUDBASE_ENV_ID?.trim();
   if (!envId) throw new Error("Missing CLOUDBASE_ENV_ID");
 
-  const agentIdArg = flagValue(argv, "--agent-id") || process.env.HARNESS_CLOUD_AGENT_ID?.trim();
+  const agentIdArg =
+    flagValue(argv, "--agent-id") || pinnedAgentId(backend);
 
-  console.log("=== build agent-runtime ===");
+  console.log(`=== build agent-runtime (backend=${backend}) ===`);
   sh("npm run build --workspace=packages/agent-runtime");
 
   const yamlPath = await buildAgentYaml();
@@ -62,13 +129,15 @@ async function deployCloudHarness(argv) {
   let agentId = agentIdArg;
 
   if (agentId) {
-    console.log(`=== magent cloudrun:redeploy ${agentId} ===`);
-    sh(`node "${magent}" cloudrun:redeploy -i "${agentId}" -e "${envId}" --code "${runtimeRoot}"`);
-    console.log(`=== magent agent:update ${agentId} ===`);
-    sh(
-      `node "${magent}" agent:update -i "${agentId}" -f "${yamlPath}" --runtime harness --engine opencode -e "${envId}"`,
-    );
-  } else {
+    if (backend === "tcbr") {
+      console.log(`=== magent cloudrun:redeploy ${agentId} ===`);
+      sh(`node "${magent}" cloudrun:redeploy -i "${agentId}" -e "${envId}" --code "${runtimeRoot}"`);
+      await agentUpdateWithRetry(agentId, yamlPath, envId, { afterRedeploy: true });
+    } else {
+      console.log(`=== magent agent:update (SCF harness ${agentId}) ===`);
+      await agentUpdateWithRetry(agentId, yamlPath, envId);
+    }
+  } else if (backend === "tcbr") {
     console.log("=== magent agent:create (tcbr harness, ~3–5 min) ===");
     const createOut = execSync(
       `node "${magent}" agent:create -n "OMA-Harness" --type tcbr --runtime harness --engine opencode -f "${yamlPath}" -e "${envId}"`,
@@ -76,10 +145,18 @@ async function deployCloudHarness(argv) {
     );
     console.log(createOut);
     agentId = createOut.match(/Agent created:\s*(agent-[a-z0-9-]+)/i)?.[1];
+  } else {
+    console.log("=== magent agent:create (SCF harness, ~60–90s) ===");
+    const createOut = execSync(
+      `node "${magent}" agent:create -n "OMA-Harness-SCF" --runtime harness --engine opencode -f "${yamlPath}" --code "${runtimeRoot}" -e "${envId}"`,
+      { encoding: "utf-8", cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
+    );
+    console.log(createOut);
+    agentId = createOut.match(/Agent created:\s*(agent-[a-z0-9-]+)/i)?.[1];
   }
 
   if (!agentId) {
-    throw new Error("Could not resolve agent id — set HARNESS_CLOUD_AGENT_ID or --agent-id");
+    throw new Error("Could not resolve agent id — pass --agent-id or set HARNESS_CLOUD_AGENT_ID (harness pin only)");
   }
   console.log(`\nAgent ID: ${agentId}`);
 
@@ -101,15 +178,88 @@ async function deployCloudHarness(argv) {
     process.env.CLOUDBASE_SERVER_URL = base;
     sh(`curl -sf "${base}/healthz" | head -c 800`);
     console.log("\n");
-    sh(
-      `node "${magent}" agent:update -i "${agentId}" -f "${yamlPath}" --runtime harness --engine opencode -e "${envId}"`,
-      { env: { ...process.env, CLOUDBASE_SERVER_URL: base } },
-    );
+    await agentUpdateWithRetry(agentId, yamlPath, envId, {
+      env: { ...process.env, CLOUDBASE_SERVER_URL: base },
+    });
   } else {
     console.warn("WARN: set CLOUDBASE_SERVER_URL to public gateway for client-tool callback");
   }
 
   return agentId;
+}
+
+/** Post-create: tcbr build may be "ready" while gateway bot route still 404. */
+async function waitForCloudAgentGateway(agentId, envId) {
+  const acpUrl = gatewayAcpUrl(envId, agentId);
+  const maxWaitMs = Number(process.env.HARNESS_CLOUD_READY_MS) || DEFAULT_GATEWAY_READY_MS;
+  const started = Date.now();
+  console.log("\n=== cloud: wait for gateway ACP ===");
+
+  while (Date.now() - started < maxWaitMs) {
+    const elapsed = Date.now() - started;
+    try {
+      const headers = await getAuthHeaders(envId);
+      const res = await fetch(acpUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: 1,
+            clientCapabilities: {},
+            clientInfo: { name: "harness-cloud-ready", version: "0" },
+          },
+        }),
+      });
+      const text = await res.text();
+      if (res.status === 404 || /default backend\s*-\s*404/i.test(text)) {
+        process.stdout.write(`  ... gateway 404 (${Math.round(elapsed / 1000)}s)\r`);
+        await sleep(5000);
+        continue;
+      }
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        throw new Error(`initialize not JSON (HTTP ${res.status}): ${text.slice(0, 300)}`);
+      }
+      if (json.error) throw new Error(`initialize: ${json.error.message}`);
+      const runtime = json.result?.agentConfig?.runtime;
+      if (runtime !== "harness") {
+        throw new Error(`initialize runtime=${runtime ?? "missing"} (expected harness)`);
+      }
+      console.log(
+        `✓ gateway ACP ready ${elapsed}ms runtime=${runtime} engine=${json.result?.agentConfig?.engine ?? "n/a"}`,
+      );
+      return json.result;
+    } catch (err) {
+      if (/expected harness/.test(err.message)) throw err;
+      process.stdout.write(`  ... ${err.message?.slice(0, 60) || "retry"} (${Math.round(elapsed / 1000)}s)\r`);
+      await sleep(5000);
+    }
+  }
+  throw new Error(`gateway ACP not ready for ${agentId} after ${maxWaitMs}ms`);
+}
+
+async function magentRunPong(agentId, envId) {
+  const cmd = `node "${magent}" run -a "${agentId}" -e "${envId}" -m "Reply with exactly: pong"`;
+  const maxAttempts = Number(process.env.HARNESS_CLOUD_MAGENT_RETRIES) || 6;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      console.log(`\n=== magent run pong (attempt ${attempt}/${maxAttempts}) ===`);
+      sh(cmd);
+      return;
+    } catch {
+      if (attempt >= maxAttempts) {
+        throw new Error(`magent run failed after ${maxAttempts} attempts`);
+      }
+      console.warn(`magent run failed — retry in 10s…`);
+      await sleep(10_000);
+      await waitForCloudAgentGateway(agentId, envId);
+    }
+  }
 }
 
 async function getAuthHeaders(envId) {
@@ -157,7 +307,7 @@ async function verifyCloudHarness(agentId) {
   if (!envId) throw new Error("Missing CLOUDBASE_ENV_ID");
   if (!agentId) throw new Error("Missing agent id for verify");
 
-  const acpUrl = `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}/acp`;
+  const acpUrl = gatewayAcpUrl(envId, agentId);
 
   async function acpCall(method, params) {
     const headers = await getAuthHeaders(envId);
@@ -177,6 +327,7 @@ async function verifyCloudHarness(agentId) {
   console.log(`agent: ${agentId}`);
   console.log(`env:   ${envId}\n`);
 
+  // Gateway does not expose GET …/healthz — use ACP initialize (same path as magent run).
   const tInit = Date.now();
   const init = await acpCall("initialize", {
     protocolVersion: 1,
@@ -256,24 +407,55 @@ async function verifyCloudHarness(agentId) {
   console.log("\n✓ cloud verify ok");
 }
 
+/** Fail fast when .env.harness has custom LLM (Mimo tp/sk, etc.) before deploy. */
+async function maybeProbeCustomLlm() {
+  const { hasHarnessCustomLlmEnv } = await import(
+    "../../packages/agent-runtime/dist/harness/harness-env.js"
+  );
+  if (!hasHarnessCustomLlmEnv()) {
+    console.log("=== cloud: LLM probe skipped（无 LLM_* → deploy 用 zen）===");
+    return;
+  }
+  console.log("=== cloud: LLM probe（自定义 provider，deploy 前验 key）===");
+  const { assertHarnessOpenAiLlmReachable } = await import(
+    "../../packages/agent-runtime/dist/harness/llm-probe.js"
+  );
+  const probe = await assertHarnessOpenAiLlmReachable();
+  console.log(
+    `✓ LLM probe ${probe.latencyMs}ms model=${probe.model} reply=${probe.replySnippet ?? "(empty)"}`,
+  );
+}
+
 /** @param {string[]} argv process.argv slice from harness.mjs */
-export async function runCloudHarness(argv = []) {
+/** @param {{ backend?: "tcbr" | "scf" }} [opts] */
+export async function runCloudHarness(argv = [], opts = {}) {
   const verifyOnly = hasFlag(argv, "--verify-only");
   const deployOnly = hasFlag(argv, "--no-verify");
+  const backend = resolveCloudBackend(argv, opts.backend);
 
-  let agentId = flagValue(argv, "--agent-id") || process.env.HARNESS_CLOUD_AGENT_ID?.trim();
+  await maybeProbeCustomLlm();
+
+  let agentId =
+    flagValue(argv, "--agent-id") || pinnedAgentId(backend);
+
+  const envId = process.env.CLOUDBASE_ENV_ID?.trim();
+  if (!envId) throw new Error("Missing CLOUDBASE_ENV_ID");
+
+  console.log(`\n=== cloud harness backend: ${backend} ===\n`);
 
   if (!verifyOnly) {
-    agentId = await deployCloudHarness(argv);
-    console.log("\n=== magent run pong ===");
-    sh(`node "${magent}" run -a "${agentId}" -e "${process.env.CLOUDBASE_ENV_ID}" -m "Reply with exactly: pong"`);
+    agentId = await deployCloudHarness(argv, backend);
+    await waitForCloudAgentGateway(agentId, envId);
+    await magentRunPong(agentId, envId);
   }
 
   if (!deployOnly) {
+    if (verifyOnly) await waitForCloudAgentGateway(agentId, envId);
     await verifyCloudHarness(agentId);
   }
 
-  console.log(`\n✓ Cloud harness done. Agent: ${agentId}`);
-  console.log(`  Tip: set HARNESS_CLOUD_AGENT_ID=${agentId} in .env.harness for update (not create)`);
+  const pinVar = backend === "scf" ? "HARNESS_CLOUD_SCF_AGENT_ID" : "HARNESS_CLOUD_AGENT_ID";
+  console.log(`\n✓ Cloud harness (${backend}) done. Agent: ${agentId}`);
+  console.log(`  pin: ${pinVar}=${agentId}`);
   return agentId;
 }

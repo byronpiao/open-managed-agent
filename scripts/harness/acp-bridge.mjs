@@ -3,7 +3,7 @@
  * ACP stdio bridge → harness runtime HTTP (for Zed / any ACP client).
  *
  * Usage:
- *   node scripts/harness-acp-bridge.mjs [baseURL]
+ *   node scripts/harness/acp-bridge.mjs [baseURL]
  *
  */
 

@@ -11,9 +11,9 @@
  *   tsx tests/agui-integration.ts
  */
 
-import { loadEnv } from "../scripts/load-env.mjs";
+import { loadProjectEnv } from "../scripts/env.mjs";
 
-loadEnv();
+loadProjectEnv();
 
 // ── Configuration (from .env — never hardcode tokens) ─────────────────────────
 

@@ -22,7 +22,7 @@ which atomically rolls out a new deploy version reusing the same image.
 
     node tools/cloudrun-set-env.mjs <serviceName>
 
-Reads from `.env` + `.env.harness` via `scripts/load-env.mjs`:
+Reads `.env` via `scripts/env.mjs`；若存在 `.env.harness` 则叠加 LLM 等 harness 键：
 
 | 变量 | 文件 | 说明 |
 |------|------|------|

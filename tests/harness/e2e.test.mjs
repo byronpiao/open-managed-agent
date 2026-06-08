@@ -3,10 +3,10 @@
  *
  *   npm run harness -- local
  *
- * Loads .env + .env.harness via scripts/load-env.mjs
+ * Loads `.env.harness` via scripts/harness/load-env.mjs
  */
 
-import { loadEnv, assertHarnessCreds } from "../../scripts/load-env.mjs";
+import { loadEnv, assertHarnessCreds } from "../../scripts/harness/load-env.mjs";
 loadEnv();
 
 import { strict as assert } from "node:assert";
@@ -25,7 +25,10 @@ function sandboxFetch(url, init = {}) {
 }
 
 const FULL = process.argv.includes("--full");
+const LLM_SUITE = process.argv.includes("--llm");
+const FORCE_ZEN = process.env.HARNESS_FORCE_ZEN === "1" || (FULL && !LLM_SUITE);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const SKILL_FIXTURE_PATH = resolve(repoRoot, "tests/fixtures/skills/harness-e2e-demo.md");
 const E2E_PORT = 19090;
 const BASE = `http://127.0.0.1:${E2E_PORT}`;
 const BOT_ID = "e2e-bot";
@@ -34,7 +37,7 @@ const E2E_SYNC_SEED_SYNTHETIC_ON_EMPTY = false;
 
 const BASE_AGENT_CONFIG = {
   name: "HarnessE2E",
-  model: "hunyuan-t1-latest",
+  model: "zen",
   system:
     "When asked to use echo_tool, you MUST call it before answering. " +
     "Harness e2e agent.",
@@ -61,10 +64,28 @@ const STUB_AGENT_CONFIG = {
 
 let activeAgentConfig = { ...BASE_AGENT_CONFIG };
 
-/** FULL e2e: merge host AGENT_CONFIG; opencode LLM prefers LLM_* + OPENAI_BASE_URL over Anthropic ModelSpec. */
+function hasCustomLlmInEnv() {
+  return !!(
+    process.env.LLM_API_KEY?.trim() &&
+    process.env.OPENAI_BASE_URL?.trim() &&
+    process.env.LLM_MODEL?.trim()
+  );
+}
+
+/** FULL e2e: zen by default; --llm merges host LLM_* into opencode openai-compat. */
 function resolveFullAgentConfig() {
+  if (FORCE_ZEN || (!LLM_SUITE && !hasCustomLlmInEnv())) {
+    return { ...BASE_AGENT_CONFIG, model: "zen", engine: "opencode" };
+  }
+
   const raw = process.env.AGENT_CONFIG?.trim();
-  if (!raw) return { ...BASE_AGENT_CONFIG };
+  if (!raw) {
+    return {
+      ...BASE_AGENT_CONFIG,
+      model: process.env.LLM_MODEL?.trim() ?? BASE_AGENT_CONFIG.model,
+      engine: "opencode",
+    };
+  }
   try {
     const parsed = JSON.parse(raw);
     const { model, tools, ...rest } = parsed;
@@ -84,7 +105,7 @@ function resolveFullAgentConfig() {
     }
     return cfg;
   } catch {
-    return { ...BASE_AGENT_CONFIG };
+    return { ...BASE_AGENT_CONFIG, model: process.env.LLM_MODEL?.trim() ?? BASE_AGENT_CONFIG.model };
   }
 }
 
@@ -380,7 +401,7 @@ async function testSandboxCustomToolLoop() {
   assert.ok(
     sawToolUse,
     "expected sandbox agent to invoke echo_tool via managed-agent-client MCP. " +
-      "If mcp.pump.poll_error 404 in logs, rebuild magent (TRW harness-mcp-relay) and sync-harness-tool.",
+      "If mcp.pump.poll_error 404 in logs, rebuild magent (TRW harness-mcp-relay) and scripts/harness/sync-tool.mjs.",
   );
   assert.ok(
     chunks.includes("TOOL_OK") || chunks.includes(marker),
@@ -399,13 +420,44 @@ function extractAllSseText(body) {
     try {
       const j = JSON.parse(payload);
       const update = j.params?.update;
-      const chunk = update?.content?.text;
+      const chunk = update?.content?.text ?? update?.text;
       if (typeof chunk === "string") parts.push(chunk);
+      const resultText = j.result?.content?.text ?? j.result?.text;
+      if (typeof resultText === "string") parts.push(resultText);
     } catch {
       // skip
     }
   }
   return parts.join("");
+}
+
+/** True when sandbox opencode returned streaming chunks (not 0-token instant end_turn). */
+function sseShowsLlmActivity(body) {
+  if (/agent_message_chunk|agent_thought_chunk|tool_call/.test(body)) return true;
+  if (extractAllSseText(body).trim().length > 0) return true;
+  try {
+    for (const line of body.split("\n")) {
+      let payload = line.trim();
+      if (payload.startsWith("data:")) payload = payload.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      const j = JSON.parse(payload);
+      const usage = j.result?.usage;
+      if (usage && (usage.outputTokens > 0 || usage.totalTokens > 0)) return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+async function waitSandboxReady(sessionId, maxMs = 180_000) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    const st = await rpc("/acp", "session/status", { sessionId });
+    if (st.sandboxReady) return st;
+    await sleep(2000);
+  }
+  throw new Error(`sandbox not ready for session ${sessionId} after ${maxMs}ms`);
 }
 
 async function promptSessionText(sessionId, text, rpcId = 100) {
@@ -437,7 +489,8 @@ function syncEventsContainToken(events, token) {
 async function testSyncPersistence() {
   assertHarnessCreds();
   const envId = process.env.CLOUDBASE_ENV_ID;
-  const token = `SYNC${Date.now().toString(36)}`;
+  const requireTokenRecall = LLM_SUITE;
+  const token = requireTokenRecall ? `SYNC${Date.now().toString(36)}` : null;
 
   stopRuntime();
   await sleep(500);
@@ -446,14 +499,31 @@ async function testSyncPersistence() {
   const sessionId = crypto.randomUUID();
   await rpc("/acp", "session/new", { sessionId, meta: { userId: "e2e-sync" } });
 
-  const first = await promptSessionText(
-    sessionId,
-    `Remember exactly this token: ${token}. Reply with OK only.`,
-    201,
-  );
-  if (first.includes('"code":-32000')) {
-    console.warn(`sync: prompt returned error (LLM?): ${first.slice(0, 280)}`);
+  await waitSandboxReady(sessionId);
+  await sleep(5000);
+
+  let first = "";
+  let firstText = "";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(4000);
+    first = await promptSessionText(
+      sessionId,
+      token
+        ? `Remember exactly this token: ${token}. Reply with OK only.`
+        : "Reply with exactly: OK",
+      201 + attempt,
+    );
+    if (first.includes('"code":-32000') || first.includes("opencode acp timeout")) {
+      console.warn(`sync: prompt attempt ${attempt + 1} error: ${first.slice(0, 280)}`);
+      continue;
+    }
+    firstText = extractAllSseText(first);
+    if (firstText.trim().length > 0) break;
   }
+  assert.ok(
+    firstText.trim().length > 0,
+    `sync: first prompt produced no LLM text (check LLM_* / OPENCODE_CONFIG): ${first.slice(0, 400)}`,
+  );
 
   const { getHarnessSessionStore } = await import(
     "../../packages/agent-runtime/dist/harness/sandbox/session-store.js"
@@ -478,7 +548,7 @@ async function testSyncPersistence() {
   );
   const syncStore = getHarnessSyncEventStore(envId);
   let events = [];
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 36; i++) {
     const handle = getCachedSandboxHandle(sessionId);
     if (handle) {
       await exportOpencodeSyncEvents({
@@ -489,8 +559,8 @@ async function testSyncPersistence() {
       }).catch(() => {});
     }
     events = await syncStore.listEventsForAggregate(row.engineSessionId);
-    if (events.length > 0) break;
-    await sleep(1000);
+    if (events.length > 0 && (!requireTokenRecall || syncEventsContainToken(events, token))) break;
+    await sleep(2000);
   }
   if (events.length === 0 && E2E_SYNC_SEED_SYNTHETIC_ON_EMPTY) {
     console.warn("sync: /sync/history empty — E2E_SYNC_SEED_SYNTHETIC_ON_EMPTY, seeding synthetic");
@@ -514,9 +584,11 @@ async function testSyncPersistence() {
     `expected harness_sync_events from opencode /sync/history for ${row.engineSessionId} ` +
       `(magent needs opencode >= 1.16.2)`,
   );
-  if (!syncEventsContainToken(events, token)) {
-    console.warn(
-      `sync: token not found in ${events.length} event(s) — recall will rely on opencode session state`,
+  if (requireTokenRecall) {
+    assert.ok(
+      syncEventsContainToken(events, token),
+      `expected token ${token} in harness_sync_events (${events.length} events): ` +
+        `${JSON.stringify(events).slice(0, 600)}`,
     );
   }
 
@@ -541,33 +613,45 @@ async function testSyncPersistence() {
     `session/load replay error: ${loadText.slice(0, 400)}`,
   );
 
-  await sleep(1500);
+  await waitSandboxReady(sessionId);
+  await sleep(8000);
 
-  let recallBody = "";
-  let recallText = "";
-  let lastRecallErr = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      recallBody = await promptSessionText(
-        sessionId,
-        "Reply with ONLY the exact token I asked you to remember, nothing else.",
-        203 + attempt,
-      );
-      recallText = extractAllSseText(recallBody);
-      if (recallText.includes(token) || recallBody.includes(token)) break;
-      lastRecallErr = new Error(
-        `attempt ${attempt + 1}: token missing in response: ${recallText.slice(0, 280) || recallBody.slice(0, 280)}`,
-      );
-      await sleep(2000);
-    } catch (err) {
-      lastRecallErr = err;
-      if (attempt === 0) await sleep(3000);
-    }
-  }
+  const pongBody = await promptSessionText(sessionId, "Reply with exactly: pong", 220);
   assert.ok(
-    recallText.includes(token) || recallBody.includes(token),
-    `post-replay prompt should recall token ${token}; ${lastRecallErr?.message ?? recallText.slice(0, 400)}`,
+    sseShowsLlmActivity(pongBody),
+    `post-reload LLM inactive after session/load (0-token?): ${pongBody.slice(0, 400)}`,
   );
+
+  if (requireTokenRecall) {
+    let recallBody = "";
+    let recallText = "";
+    let lastRecallErr = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        if (attempt > 0) await sleep(4000);
+        recallBody = await promptSessionText(
+          sessionId,
+          `What is the exact token I asked you to remember? Reply with ONLY that token (${token.length} chars), nothing else.`,
+          203 + attempt,
+        );
+        if (recallBody.includes('"code":-32000') || recallBody.includes("opencode acp timeout")) {
+          lastRecallErr = new Error(`attempt ${attempt + 1}: ${recallBody.slice(0, 280)}`);
+          continue;
+        }
+        recallText = extractAllSseText(recallBody);
+        if (recallText.includes(token) || recallBody.includes(token)) break;
+        lastRecallErr = new Error(
+          `attempt ${attempt + 1}: token missing in response: ${recallText.slice(0, 280) || recallBody.slice(0, 280)}`,
+        );
+      } catch (err) {
+        lastRecallErr = err;
+      }
+    }
+    assert.ok(
+      recallText.includes(token) || recallBody.includes(token),
+      `post-replay prompt should recall token ${token}; ${lastRecallErr?.message ?? recallText.slice(0, 400)}`,
+    );
+  }
 
   await rpc("/acp", "session/delete", { sessionId });
 }
@@ -603,13 +687,9 @@ async function testSandboxPrompt() {
     );
   }
   if (text.includes('"code":-32000') || text.includes("opencode acp timeout")) {
-    console.warn(
-      `⚠ session/prompt sandbox skipped (opencode/LLM): ${text.slice(0, 280)}. ` +
-        "Set LLM_API_KEY + OPENAI_BASE_URL + LLM_MODEL in .env.harness for live LLM.",
-    );
-  } else {
-    assert.ok(text.length > 0, "expected SSE from sandbox");
+    throw new Error(`session/prompt sandbox failed (opencode): ${text.slice(0, 400)}`);
   }
+  assert.ok(sseShowsLlmActivity(text), `expected LLM SSE from sandbox (zen): ${text.slice(0, 400)}`);
   await rpc("/acp", "session/delete", { sessionId });
 }
 
@@ -627,7 +707,7 @@ class TestAcpClient {
 }
 
 async function testZedStdioLifecycle() {
-  bridgeChild = spawn(process.execPath, ["scripts/harness-acp-bridge.mjs", BASE], {
+  bridgeChild = spawn(process.execPath, ["scripts/harness/acp-bridge.mjs", BASE], {
     cwd: repoRoot,
     env: process.env,
     stdio: ["pipe", "pipe", "inherit"],
@@ -718,15 +798,82 @@ async function testHitlPermissionStubLoop() {
   await startRuntime();
 }
 
+/** Custom LLM suite: skill materialization + model follows skill. */
+async function testSkillsLlmOptional() {
+  if (!LLM_SUITE) {
+    console.log("○ skills LLM probe — skipped (pass --llm for manual custom-provider run)");
+    return;
+  }
+
+  stopRuntime();
+  await sleep(500);
+  await startRuntime({
+    useCloudDb: true,
+    agentConfig: {
+      ...resolveFullAgentConfig(),
+      skills: [
+        {
+          name: "harness-e2e-demo",
+          description: "E2E skill fixture",
+          source: SKILL_FIXTURE_PATH,
+        },
+      ],
+    },
+  });
+
+  const sessionId = crypto.randomUUID();
+  try {
+    await rpc("/acp", "session/new", { sessionId, meta: { userId: "e2e-skill-llm" } });
+    const res = await sandboxFetch(`${BASE}/acp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 410,
+        method: "session/prompt",
+        params: {
+          sessionId,
+          prompt: [
+            {
+              type: "text",
+              text: "HARNESS_SKILL_CHECK — follow the skill and reply with ONLY: SKILL_OK",
+            },
+          ],
+        },
+      }),
+    });
+    const body = await res.text();
+    if (body.includes('"code":-32000') || body.includes("opencode acp timeout")) {
+      console.warn(
+        `⚠ skills LLM probe optional skipped (opencode/LLM): ${body.slice(0, 240)}`,
+      );
+      return;
+    }
+    const text = extractAllSseText(body);
+    if (!text.includes("SKILL_OK") && !body.includes("SKILL_OK")) {
+      console.warn(
+        `⚠ skills LLM probe optional: model did not reply SKILL_OK (got: ${text.slice(0, 200) || body.slice(0, 200)})`,
+      );
+      return;
+    }
+    console.log("✓ skills LLM probe optional: model replied SKILL_OK");
+  } finally {
+    await rpc("/acp", "session/delete", { sessionId }).catch(() => {});
+    stopRuntime();
+    await sleep(300);
+    await startRuntime({ useCloudDb: true });
+  }
+}
+
 async function testEngineMatrix() {
-  const engines = ["opencode", "claude", "codebuddy"];
+  const engines = LLM_SUITE ? ["opencode", "claude", "codebuddy"] : ["opencode"];
   for (const engine of engines) {
     try {
       stopRuntime();
       await sleep(500);
       await startRuntime({
         useCloudDb: true,
-        agentConfig: { ...BASE_AGENT_CONFIG, engine },
+        agentConfig: { ...resolveFullAgentConfig(), engine },
       });
       const sessionId = crypto.randomUUID();
       await rpc("/acp", "session/new", { sessionId, meta: { userId: `e2e-engine-${engine}` } });
@@ -763,7 +910,7 @@ async function testZedStdioPrompt() {
   await sleep(500);
   await startRuntime({ useCloudDb: true });
 
-  bridgeChild = spawn(process.execPath, ["scripts/harness-acp-bridge.mjs", BASE], {
+  bridgeChild = spawn(process.execPath, ["scripts/harness/acp-bridge.mjs", BASE], {
     cwd: repoRoot,
     env: process.env,
     stdio: ["pipe", "pipe", "inherit"],
@@ -785,7 +932,8 @@ async function testZedStdioPrompt() {
       prompt: [{ type: "text", text: "Reply with exactly: pong" }],
     });
   } catch (err) {
-    console.warn(`⚠ Zed stdio prompt skipped (opencode/LLM): ${err.message}`);
+    if (LLM_SUITE) throw err;
+    console.warn(`⚠ Zed stdio prompt skipped: ${err.message}`);
     await connection.unstable_deleteSession({ sessionId: session.sessionId }).catch(() => {});
     bridgeChild.kill("SIGTERM");
     bridgeChild = null;
@@ -800,7 +948,7 @@ async function testZedStdioPrompt() {
 async function main() {
   try {
     if (FULL) {
-      const { teardownHarnessSandboxes } = await import("../../scripts/harness-ags-teardown.mjs");
+      const { teardownHarnessSandboxes } = await import("../../scripts/harness/ags-teardown.mjs");
       console.log("teardown (pre-flight)…");
       await teardownHarnessSandboxes();
     }
@@ -820,11 +968,12 @@ async function main() {
     console.log("✓ Zed-style stdio bridge lifecycle");
 
     if (FULL) {
-      const { runHarnessParitySmokes } = await import("../../scripts/harness-parity-smoke.mjs");
-      await runHarnessParitySmokes();
-      console.log("✓ parity smokes (mcp_servers, skills env, cloudbase MCP)");
       await testSyncPersistence();
-      console.log("✓ opencode sync export → CloudBase → hydrate → session/load replay");
+      console.log(
+        LLM_SUITE
+          ? "✓ opencode sync export → CloudBase → hydrate → session/load → token recall"
+          : "✓ opencode sync export → CloudBase → hydrate → session/load replay (zen)",
+      );
       await testSandboxPrompt();
       console.log("✓ session/prompt → AGS sandbox SSE");
       await testSandboxCustomToolLoop();
@@ -832,12 +981,13 @@ async function main() {
       await testZedStdioPrompt();
       console.log("✓ Zed-style stdio prompt → sandbox");
       await testEngineMatrix();
+      await testSkillsLlmOptional();
     }
   } finally {
     stopRuntime();
     if (FULL) {
       try {
-        const { teardownHarnessSandboxes } = await import("../../scripts/harness-ags-teardown.mjs");
+        const { teardownHarnessSandboxes } = await import("../../scripts/harness/ags-teardown.mjs");
         console.log("teardown (post-flight)…");
         await teardownHarnessSandboxes();
       } catch (err) {

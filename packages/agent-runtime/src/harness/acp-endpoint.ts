@@ -44,6 +44,7 @@ import {
   getHarnessSessionStore,
   type HarnessSessionRecord,
 } from "./sandbox/session-store.js";
+import { isScfServerless } from "./harness-env.js";
 import { harnessLog } from "./logging.js";
 import {
   exportOpencodeSyncEvents,
@@ -309,6 +310,13 @@ async function pipeSandboxSseToClient(
 
   let sseFrames = 0;
   let permissionFrames = 0;
+  const sseUpdateTypes = new Set<string>();
+
+  const noteSessionUpdate = (payload: Record<string, unknown>) => {
+    const su = (payload.params as { update?: { sessionUpdate?: string } } | undefined)?.update
+      ?.sessionUpdate;
+    if (su) sseUpdateTypes.add(su);
+  };
 
   try {
     if (!upstream.ok) {
@@ -344,6 +352,7 @@ async function pipeSandboxSseToClient(
             const payload = JSON.parse(payloadRaw) as Record<string, unknown>;
             if (payload.result !== undefined) sawResult = true;
             sseFrames++;
+            noteSessionUpdate(payload);
             if (
               (payload.params as Record<string, unknown> | undefined)?.update &&
               typeof (payload.params as { update?: { sessionUpdate?: string } }).update
@@ -363,7 +372,12 @@ async function pipeSandboxSseToClient(
       if (!sawResult) {
         sse.write(rpcResult(rpcId, { stopReason: "end_turn" }));
       }
-      wl.set({ sseFrames, permissionFrames, sawResult });
+      wl.set({
+        sseFrames,
+        permissionFrames,
+        sawResult,
+        sseUpdateTypes: [...sseUpdateTypes],
+      });
       wl.emit({ status: "sse", durationMs: Date.now() - startedAt });
       return;
     }
@@ -377,6 +391,7 @@ async function pipeSandboxSseToClient(
         if (payloadRaw === "[DONE]") continue;
         try {
           const payload = JSON.parse(payloadRaw) as Record<string, unknown>;
+          noteSessionUpdate(payload);
           await ingestSsePayload(payload, acpSessionId, store);
           sse.write(payload);
         } catch {
@@ -394,7 +409,11 @@ async function pipeSandboxSseToClient(
         sse.write(rpcError(rpcId, -32000, text.slice(0, 500)));
       }
     }
-    wl.set({ sseFrames, permissionFrames });
+    wl.set({
+      sseFrames,
+      permissionFrames,
+      sseUpdateTypes: [...sseUpdateTypes],
+    });
     wl.emit({ status: "sse", durationMs: Date.now() - startedAt });
   } finally {
     mcpPump?.stop();
@@ -446,7 +465,11 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
     acpSessionId = reqSessionId;
     const existing = await store.get(acpSessionId);
     if (existing) {
-      startSandboxPrewarm(config, acpSessionId);
+      if (isScfServerless()) {
+        await bindSandboxForSession(config, acpSessionId);
+      } else {
+        startSandboxPrewarm(config, acpSessionId);
+      }
       return { sessionId: acpSessionId, hasHistory: existing.status === "active" };
     }
   } else {
@@ -454,11 +477,15 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
   }
 
   await store.create({ acpSessionId, userId, engine });
-  startSandboxPrewarm(config, acpSessionId);
+  if (isScfServerless()) {
+    await bindSandboxForSession(config, acpSessionId);
+  } else {
+    startSandboxPrewarm(config, acpSessionId);
+  }
   return { sessionId: acpSessionId, hasHistory: false };
 }
 
-async function handleSessionStatus(params: Record<string, unknown>) {
+async function handleSessionStatus(params: Record<string, unknown>, config: AgentConfig) {
   const sessionId = String(params.sessionId ?? "");
   if (!sessionId) throw Object.assign(new Error("sessionId is required"), { rpcCode: -32602 });
 
@@ -466,6 +493,14 @@ async function handleSessionStatus(params: Record<string, unknown>) {
   const row = await getHarnessSessionStore(envId).get(sessionId);
   if (!row) {
     throw Object.assign(new Error(`Session not found: ${sessionId}`), { rpcCode: -32602 });
+  }
+
+  if (!isSandboxReadyForSession(sessionId) && isScfServerless()) {
+    if (isSandboxPrewarmInFlight(sessionId)) {
+      await waitForSandboxPrewarm(sessionId);
+    } else {
+      await bindSandboxForSession(config, sessionId);
+    }
   }
 
   return {
@@ -780,7 +815,7 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
           return res.json(rpcResult(id, await handleSessionList(params, agentConfig)));
 
         case "session/status":
-          return res.json(rpcResult(id, await handleSessionStatus(params)));
+          return res.json(rpcResult(id, await handleSessionStatus(params, agentConfig)));
 
         case "session/load":
           sseDelegated = Boolean(params.replay);

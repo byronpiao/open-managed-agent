@@ -11,11 +11,11 @@
  *   tsx tests/integration.ts
  */
 
-import { loadEnv } from "../scripts/load-env.mjs";
+import { loadProjectEnv } from "../scripts/env.mjs";
 import ManagedAgents, { AcpClient } from "../packages/sdk/src/index.js";
 import type { ManagedAgentsConfig, Session, ListResponse } from "../packages/sdk/src/index.js";
 
-loadEnv();
+loadProjectEnv();
 
 // ── Configuration (from .env — never hardcode tokens) ───────────────────────────
 

@@ -11,6 +11,7 @@ export {
   HARNESS_PUBLIC_MAGENT_IMAGE,
   resolveHarnessSandboxImage,
   buildHarnessOpencodeConfigContent,
+  buildHarnessOpencodePermission,
   buildManagedAgentClientTools,
   buildManagedAgentClientMcpUrl,
   buildSandboxReachableClientMcpUrl,
@@ -56,11 +57,20 @@ export {
   assertHarnessCloudCreds,
   assertHarnessCosEnv,
   assertHarnessLlmEnv,
+  assertHarnessLlmSuiteEnv,
+  hasHarnessCustomLlmEnv,
   missingHarnessCosEnv,
   missingHarnessLlmEnv,
   resolveHarnessToolRoleArn,
   resolveTcbRegion,
 } from "./harness-env.js";
+
+export {
+  assertHarnessOpenAiLlmReachable,
+  openAiChatCompletionsUrl,
+  probeHarnessOpenAiLlm,
+  type HarnessLlmProbeResult,
+} from "./llm-probe.js";
 
 export {
   OPENCODE_SYNC_DIRECTORY,

@@ -14,6 +14,7 @@ import {
   buildHarnessAcpMcpServers,
   buildHarnessSandboxEnv,
   buildHarnessOpencodeConfigContent,
+  buildHarnessOpencodePermission,
   buildManagedAgentClientMcpUrl,
   buildMcporterConfig,
   buildSandboxReachableClientMcpUrl,
@@ -35,6 +36,7 @@ import {
   hydrateOpencodeSyncEvents,
   resolveHarnessSandboxIdlePauseMs,
   resetSandboxPrewarmForTests,
+  openAiChatCompletionsUrl,
 } from "../../packages/agent-runtime/dist/harness/index.js";
 import {
   buildCosMountOptions,
@@ -158,6 +160,37 @@ test("buildHarnessOpencodeConfigContent uses LLM_* + OPENAI_BASE_URL", () => {
   const parsed = JSON.parse(raw);
   assert.equal(parsed.provider["openai-compat"].options.apiKey, "sk-test");
   assert.ok(parsed.model.includes("hunyuan-t1-latest"));
+  if (saved.key === undefined) delete process.env.LLM_API_KEY;
+  else process.env.LLM_API_KEY = saved.key;
+  if (saved.url === undefined) delete process.env.OPENAI_BASE_URL;
+  else process.env.OPENAI_BASE_URL = saved.url;
+  if (saved.model === undefined) delete process.env.LLM_MODEL;
+  else process.env.LLM_MODEL = saved.model;
+});
+
+test("buildHarnessOpencodeConfigContent skips custom LLM when HARNESS_FORCE_ZEN=1", () => {
+  const saved = {
+    zen: process.env.HARNESS_FORCE_ZEN,
+    key: process.env.LLM_API_KEY,
+    url: process.env.OPENAI_BASE_URL,
+    model: process.env.LLM_MODEL,
+  };
+  process.env.HARNESS_FORCE_ZEN = "1";
+  process.env.LLM_API_KEY = "sk-test";
+  process.env.OPENAI_BASE_URL = "https://example.com/v1";
+  process.env.LLM_MODEL = "hunyuan-t1-latest";
+  assert.equal(
+    buildHarnessOpencodeConfigContent({
+      name: "t",
+      model: "zen",
+      system: "s",
+      runtime: "harness",
+      engine: "opencode",
+    }),
+    null,
+  );
+  if (saved.zen === undefined) delete process.env.HARNESS_FORCE_ZEN;
+  else process.env.HARNESS_FORCE_ZEN = saved.zen;
   if (saved.key === undefined) delete process.env.LLM_API_KEY;
   else process.env.LLM_API_KEY = saved.key;
   if (saved.url === undefined) delete process.env.OPENAI_BASE_URL;
@@ -558,6 +591,83 @@ test("buildCosStorageMounts and mount options", () => {
   ]) {
     delete process.env[k];
   }
+});
+
+test("openAiChatCompletionsUrl appends /v1/chat/completions", () => {
+  assert.equal(
+    openAiChatCompletionsUrl("https://token-plan-cn.xiaomimimo.com/v1"),
+    "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+  );
+  assert.equal(
+    openAiChatCompletionsUrl("https://example.com"),
+    "https://example.com/v1/chat/completions",
+  );
+});
+
+test("buildHarnessOpencodePermission maps bash always_ask to ask", () => {
+  const perm = buildHarnessOpencodePermission({
+    name: "t",
+    model: "m",
+    system: "s",
+    runtime: "harness",
+    engine: "opencode",
+    tools: [
+      {
+        type: "agent_toolset",
+        default_config: { enabled: true, permission_policy: { type: "always_allow" } },
+        configs: [
+          { name: "bash", enabled: true, permission_policy: { type: "always_ask" } },
+          { name: "read_file", enabled: true, permission_policy: { type: "always_allow" } },
+        ],
+      },
+    ],
+  });
+  assert.equal(perm.bash, "ask");
+  assert.equal(perm.read, undefined);
+});
+
+test("buildHarnessOpencodePermission maps mcp_toolset always_ask", () => {
+  const perm = buildHarnessOpencodePermission({
+    name: "t",
+    model: "m",
+    system: "s",
+    runtime: "harness",
+    engine: "opencode",
+    tools: [
+      {
+        type: "mcp_toolset",
+        mcp_server_name: "cloudbase",
+        default_config: { enabled: true, permission_policy: { type: "always_ask" } },
+        configs: [
+          { name: "envQuery", enabled: true, permission_policy: { type: "always_allow" } },
+          { name: "danger", enabled: true, permission_policy: { type: "always_ask" } },
+        ],
+      },
+    ],
+  });
+  assert.equal(perm["cloudbase_*"], "ask");
+  assert.equal(perm.cloudbase_danger, "ask");
+  assert.equal(perm.cloudbase_envQuery, undefined);
+});
+
+test("buildHarnessOpencodeConfigContent embeds permission in OPENCODE_CONFIG", () => {
+  const raw = buildHarnessOpencodeConfigContent({
+    name: "t",
+    model: "m",
+    system: "s",
+    runtime: "harness",
+    engine: "opencode",
+    tools: [
+      {
+        type: "agent_toolset",
+        default_config: { enabled: true, permission_policy: { type: "always_allow" } },
+        configs: [
+          { name: "write_file", enabled: true, permission_policy: { type: "always_ask" } },
+        ],
+      },
+    ],
+  });
+  assert.ok(raw?.includes('"edit":"ask"') || raw?.includes('"edit": "ask"'));
 });
 
 test("resolveHarnessSandboxIdlePauseMs defaults to 20 minutes", () => {

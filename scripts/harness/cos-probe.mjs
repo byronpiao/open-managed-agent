@@ -5,7 +5,7 @@
  */
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadEnv, assertHarnessCreds } from "./load-env.mjs";
-import { COS_POST_WRITE_SETTLE_MS, postWorkspaceSnapshot } from "./harness-cos-lib.mjs";
+import { COS_POST_WRITE_SETTLE_MS, postWorkspaceSnapshot } from "./cos-lib.mjs";
 
 loadEnv();
 assertHarnessCreds();
@@ -14,10 +14,10 @@ const envId = process.env.CLOUDBASE_ENV_ID;
 
 async function main() {
   const { getSandboxOrchestrator } = await import(
-    "../packages/agent-runtime/dist/harness/sandbox/orchestrator.js"
+    "../../packages/agent-runtime/dist/harness/sandbox/orchestrator.js"
   );
   const { buildHarnessInstanceEnv } = await import(
-    "../packages/agent-runtime/dist/config.js"
+    "../../packages/agent-runtime/dist/config.js"
   );
 
   const orch = getSandboxOrchestrator();
@@ -79,7 +79,7 @@ async function main() {
 
     if (!snap.ok) {
       if (process.env.HARNESS_COS_ENABLED === "1") {
-        console.error("\nCOS enabled but snapshot failed — see docs/harness-env.md / 一条龙 §5");
+        console.error("\nCOS enabled but snapshot failed — see docs/harness-architecture.md §2 COS / §6");
         process.exit(1);
       }
       console.log("\nNote: default harness-{envId} tool has no COS_MOUNT_DIR — skip is expected.");

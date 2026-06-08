@@ -15,7 +15,7 @@ FULL_IMAGE="${PUBLIC_REPO}:${TAG}"
 echo "TRW_ROOT=$TRW_ROOT"
 echo "IMAGE=$FULL_IMAGE"
 
-OMA_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OMA_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 cd "$TRW_ROOT"
 pnpm build:prod
@@ -40,12 +40,12 @@ else
 HARNESS_SANDBOX_IMAGE=$FULL_IMAGE
 # HARNESS_TOOL_ID unset — orchestrator auto-ensures harness-{CLOUDBASE_ENV_ID}
 EOF
-  echo "Wrote $HARNESS_ENV (gitignored; loaded by scripts/load-env.mjs)"
+  echo "Wrote $HARNESS_ENV (gitignored; loaded by scripts/harness/load-env.mjs)"
 fi
-echo "See packages/agent-runtime/src/harness/README.md for harness e2e"
+echo "See scripts/harness/README.md"
 if [[ -n "${HARNESS_TOOL_ID:-}" ]]; then
-  node "$OMA_ROOT/scripts/sync-harness-tool.mjs"
+  node "$OMA_ROOT/scripts/harness/sync-tool.mjs"
 else
-  echo "(no HARNESS_TOOL_ID — skip sync-harness-tool; image applied on next ensureHarnessTool)"
+  echo "(no HARNESS_TOOL_ID — skip sync-tool; image applied on next ensureHarnessTool)"
 fi
 echo "Pushed: $FULL_IMAGE"

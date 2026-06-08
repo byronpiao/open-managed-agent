@@ -10,7 +10,7 @@ import { fileURLToPath } from "url";
 import { loadEnv } from "./load-env.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(__dirname, "..");
+const repoRoot = resolve(__dirname, "../..");
 
 loadEnv();
 

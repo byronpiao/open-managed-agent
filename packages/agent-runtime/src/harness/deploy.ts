@@ -13,6 +13,9 @@ import {
   resolveCodebuddyProvider,
   resolveOpenAiCompatProvider,
 } from "./llm-providers.js";
+import { buildHarnessOpencodePermission } from "./opencode-permissions.js";
+
+export { buildHarnessOpencodePermission } from "./opencode-permissions.js";
 
 export const MANAGED_AGENT_CLIENT_MCP_SERVER = "managed-agent-client";
 
@@ -29,24 +32,33 @@ export { HARNESS_PUBLIC_MAGENT_IMAGE, resolveHarnessSandboxImage } from "./harne
 
 const OPENCODE_PROVIDER_ID = "openai-compat";
 
-/** Inline opencode.json from LLM_* + OPENAI_BASE_URL (host env). */
+/** Inline opencode.json: LLM_* + OPENAI_BASE_URL + agent.yaml permission → `permission`. */
 export function buildHarnessOpencodeConfigContent(config: AgentConfig): string | null {
+  const permission = buildHarnessOpencodePermission(config);
+  const hasPermission = Object.keys(permission).length > 0;
   const provider = resolveOpenAiCompatProvider(config);
-  if (!provider?.apiKey || !provider.baseUrl || !provider.model) return null;
+  const hasProvider = !!(provider?.apiKey && provider.baseUrl && provider.model);
 
-  return JSON.stringify({
+  if (!hasPermission && !hasProvider) return null;
+
+  const doc: Record<string, unknown> = {
     $schema: "https://opencode.ai/config.json",
-    model: `${OPENCODE_PROVIDER_ID}/${provider.model}`,
-    provider: {
+  };
+  if (hasPermission) doc.permission = permission;
+  if (hasProvider && provider) {
+    const model = provider.model!;
+    doc.model = `${OPENCODE_PROVIDER_ID}/${model}`;
+    doc.provider = {
       [OPENCODE_PROVIDER_ID]: {
         npm: "@ai-sdk/openai-compatible",
         name: "OpenAI-compatible",
         options: { baseURL: provider.baseUrl, apiKey: provider.apiKey },
-        models: { [provider.model]: { name: provider.model } },
+        models: { [model]: { name: model } },
       },
-    },
-    enabled_providers: [OPENCODE_PROVIDER_ID],
-  });
+    };
+    doc.enabled_providers = [OPENCODE_PROVIDER_ID];
+  }
+  return JSON.stringify(doc);
 }
 
 /** 箱内引擎 session/new 的工作目录（TRW 沙箱默认项目根）. */

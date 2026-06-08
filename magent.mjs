@@ -1095,12 +1095,13 @@ const COMMANDS = {
     // Do NOT set OAK_USE_MEMORY_STORE here — in-memory store breaks across
     // SCF invocations.
     const envVars = Object.entries(scfEnvMap).map(([k, v]) => `${k}=${v}`).join(",");
+    const memorySize = config.runtime === "harness" ? "512" : "256";
 
     console.log(bold("Creating agent..."));
     console.log(dim(`  name:    ${config.name}`));
     console.log(dim(`  model:   ${typeof config.model === "string" ? config.model : `${config.model?.id ?? "?"}${config.model?.apiBaseUrl ? ` @ ${config.model.apiBaseUrl}` : ""}`}`));
     console.log(dim(`  code:    ${code}`));
-    console.log(dim(`  runtime: ${runtime}`));
+    console.log(dim(`  loop: ${config.runtime ?? "managed"} · scf: ${scfRuntime}`));
     console.log();
 
     // Bundle node_modules locally so the SCF function has deps available
@@ -1175,7 +1176,7 @@ const COMMANDS = {
         "--code",        actualCode,
         "--ignore",      ".git,node_modules,.DS_Store,.deploy,.deploy-cloudrun,logs",
         "--timeout",     "7200",
-        "--memory-size", "256",
+        "--memory-size", memorySize,
         "--env",         envVars,
         "-e",            envId,
         ...(actualCode === code ? ["--install-dep"] : []),  // fallback: cloud-side install
@@ -1187,7 +1188,7 @@ const COMMANDS = {
       if (data.data?.agentId) {
         console.log(green(`✅ Agent created: ${data.data.agentId}`));
         console.log(dim(`  name:    ${name}`));
-        console.log(dim(`  runtime: ${runtime}`));
+        console.log(dim(`  loop: ${config.runtime ?? "managed"} · scf: ${scfRuntime}`));
         console.log();
         console.log("Next steps:");
         console.log(dim(`  1. Wait for ready: magent agent:get -i ${data.data.agentId} -e ${envId}`));

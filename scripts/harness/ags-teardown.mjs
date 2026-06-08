@@ -2,8 +2,7 @@
 /**
  * Stop all non-terminal AGS sandbox instances for CLOUDBASE_ENV_ID (frees RUNNING + PAUSED quota).
  *
- *   node scripts/harness-ags-teardown.mjs
- *   node scripts/harness-ags-teardown.mjs --dry-run
+ *   node scripts/harness/ags-teardown.mjs [--dry-run]
  */
 
 import { loadEnv, assertHarnessCreds } from "./load-env.mjs";
@@ -15,7 +14,7 @@ export async function teardownHarnessSandboxes() {
   assertHarnessCreds();
   const envId = process.env.CLOUDBASE_ENV_ID;
   const { getSandboxOrchestrator } = await import(
-    "../packages/agent-runtime/dist/harness/sandbox/orchestrator.js"
+    "../../packages/agent-runtime/dist/harness/sandbox/orchestrator.js"
   );
   const orch = getSandboxOrchestrator();
   const rows = await orch.listInstances(envId);
@@ -37,7 +36,7 @@ export async function teardownHarnessSandboxes() {
   return stopped;
 }
 
-if (process.argv[1]?.endsWith("harness-ags-teardown.mjs")) {
+if (process.argv[1]?.endsWith("ags-teardown.mjs")) {
   teardownHarnessSandboxes().catch((err) => {
     console.error(err);
     process.exit(1);

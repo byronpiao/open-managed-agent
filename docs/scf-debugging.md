@@ -224,8 +224,8 @@ kernel 的 `session.send()` 是一个 async generator，内部等待 claude bina
 ### 复现步骤
 
 ```bash
-# 0. 凭证从 .env / .env.harness 加载（勿写进 yaml 提交）
-set -a && source .env && source .env.harness 2>/dev/null; set +a
+# 0. 凭证从 .env.harness 加载（勿写进 yaml 提交）
+set -a && source .env.harness && set +a
 
 # 1. 准备配置（apiKey 从环境变量注入）
 cat > /tmp/scf-debug.yaml << EOF
@@ -319,7 +319,7 @@ magent.mjs               # 部署工具（agent:create/update/delete）
 
 ## 测试账户信息
 
-从仓库根 `.env` + `.env.harness` 读取（`node scripts/load-env.mjs --check` 校验）：
+从仓库根 `.env.harness` 读取（`cp .env.harness.example .env.harness` 后 `node scripts/harness/load-env.mjs --check` 校验）：
 
 | 变量 | 用途 |
 |------|------|

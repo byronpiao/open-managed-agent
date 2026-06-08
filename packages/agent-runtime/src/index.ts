@@ -71,7 +71,7 @@ async function main() {
       ok: true,
       name: config.name,
       model: config.model,
-      buildMarker: "harness-runtime-v1",
+      buildMarker: "oma-runtime-v1",
       runtime,
       engine: runtime === "harness" ? engine : undefined,
     };

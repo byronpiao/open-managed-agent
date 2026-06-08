@@ -688,15 +688,20 @@ export class AgsStatefulSandboxOrchestrator {
         }),
       });
       if (!res.ok) {
-        const body = (await res.text()).slice(0, 200);
+        const body = (await res.text()).slice(0, 300);
         parentLog?.set({ workspaceInitHttpStatus: res.status, workspaceInitBody: body });
         harnessTrace("orchestrator.harness.trw_init", { httpStatus: res.status, body });
-      } else {
-        parentLog?.set({ workspaceInitHttpStatus: res.status });
+        throw new SandboxOrchestratorError(
+          `POST /api/workspace/init failed HTTP ${res.status}: ${body}`,
+        );
       }
+      parentLog?.set({ workspaceInitHttpStatus: res.status });
     } catch (err) {
-      parentLog?.set({ workspaceInitError: (err as Error).message });
-      harnessTrace("orchestrator.harness.trw_init", { error: (err as Error).message });
+      if (err instanceof SandboxOrchestratorError) throw err;
+      const message = (err as Error).message;
+      parentLog?.set({ workspaceInitError: message });
+      harnessTrace("orchestrator.harness.trw_init", { error: message });
+      throw new SandboxOrchestratorError(`POST /api/workspace/init failed: ${message}`);
     }
   }
 

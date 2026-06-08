@@ -121,6 +121,25 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 
 ---
 
+## 沙箱内 Agent
+
+远程 AGS 沙箱内运行 **OpenCode**，支持 bash、读写项目文件。
+
+| 项 | 说明 |
+|----|------|
+| 文档 | [沙箱内 Agent 使用指南](./docs/harness-tutorial.md) |
+| 配置 | `runtime: harness` + `engine: opencode` + `model: zen` |
+| 部署 | `magent agent:create --runtime harness --engine opencode ...` |
+| 参考 | [架构](./docs/harness-architecture.md) · [环境变量](./docs/harness-env.md) |
+
+```bash
+cp docs/examples/agent.sandbox.min.yaml ./agent.sandbox.yaml
+magent agent:create --name my-sandbox --runtime harness --engine opencode \
+  --file ./agent.sandbox.yaml --code ./packages/agent-runtime -e "$CLOUDBASE_ENV_ID"
+```
+
+---
+
 ## Agent 配置
 
 Agent 通过 `agent.yaml` 文件配置，结构兼容 [Anthropic Agent Setup](https://platform.claude.com/docs/en/managed-agents/agent-setup)。

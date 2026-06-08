@@ -2,9 +2,15 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { createRequire } from "module";
-import { loadEnv } from "../scripts/load-env.mjs";
+import { loadProjectEnv } from "../scripts/env.mjs";
+import { loadEnv as loadHarnessEnv } from "../scripts/harness/load-env.mjs";
 
-loadEnv();
+loadProjectEnv();
+try {
+  loadHarnessEnv();
+} catch {
+  /* harness overlay optional for this tool */
+}
 
 const _require = createRequire(import.meta.url);
 const { sign } = _require("@cloudbase/signature-nodejs");

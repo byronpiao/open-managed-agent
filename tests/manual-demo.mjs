@@ -24,10 +24,10 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { loadEnv } from "../scripts/load-env.mjs";
+import { loadProjectEnv } from "../scripts/env.mjs";
 import ManagedAgents from "../packages/sdk/dist/index.js";
 
-loadEnv();
+loadProjectEnv();
 
 const DEFAULT_AGENT_ID = "agent-stop-resume-demo-9c2611949";
 

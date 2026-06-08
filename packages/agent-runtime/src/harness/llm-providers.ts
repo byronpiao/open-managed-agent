@@ -23,6 +23,7 @@ function modelId(config: AgentConfig): string | undefined {
 
 /** OpenAI Chat Completions → opencode + codebuddy. Requires OPENAI_BASE_URL. */
 export function resolveOpenAiCompatProvider(config: AgentConfig): CompatLlmProvider | null {
+  if (process.env.HARNESS_FORCE_ZEN === "1") return null;
   const apiKey = process.env.LLM_API_KEY?.trim();
   const baseUrl = process.env.OPENAI_BASE_URL?.trim();
   const model = process.env.LLM_MODEL?.trim() ?? modelId(config);
@@ -32,6 +33,7 @@ export function resolveOpenAiCompatProvider(config: AgentConfig): CompatLlmProvi
 
 /** Anthropic Messages → claude ACP. Uses ANTHROPIC_BASE_URL (not OPENAI_BASE_URL). */
 export function resolveAnthropicCompatProvider(config: AgentConfig): CompatLlmProvider | null {
+  if (process.env.HARNESS_FORCE_ZEN === "1") return null;
   const apiKey = process.env.LLM_API_KEY?.trim();
   let baseUrl = process.env.ANTHROPIC_BASE_URL?.trim();
   const model = process.env.LLM_MODEL?.trim() ?? modelId(config);
@@ -45,6 +47,7 @@ export function resolveAnthropicCompatProvider(config: AgentConfig): CompatLlmPr
  * BASE_URL optional: omit for TRW China Copilot (`internal`).
  */
 export function resolveCodebuddyProvider(config: AgentConfig): CompatLlmProvider | null {
+  if (process.env.HARNESS_FORCE_ZEN === "1") return null;
   const apiKey = process.env.LLM_API_KEY?.trim();
   const baseUrl = process.env.OPENAI_BASE_URL?.trim();
   const model = process.env.LLM_MODEL?.trim() ?? modelId(config);

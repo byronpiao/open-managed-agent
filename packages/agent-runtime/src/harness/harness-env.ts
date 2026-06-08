@@ -5,7 +5,7 @@
 
 /** 唯一允许内置的默认：公开 CCR magent 镜像（可用 HARNESS_SANDBOX_IMAGE 覆盖）。 */
 export const HARNESS_PUBLIC_MAGENT_IMAGE =
-  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260607-1629-9ac156-magent";
+  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260608-1044-2d795e-magent";
 
 export function requireEnv(name: string, hint?: string): string {
   const value = process.env[name]?.trim();
@@ -78,6 +78,20 @@ export function assertHarnessLlmEnv(): void {
   }
 }
 
+/** Host has custom OpenAI-compatible provider (Mimo tp/sk, etc.). */
+export function hasHarnessCustomLlmEnv(): boolean {
+  return missingHarnessLlmEnv().length === 0;
+}
+
+/** Custom LLM suite: CloudBase + LLM_* (probe / hitl / Mimo pong). Not required for test:full. */
+export function assertHarnessLlmSuiteEnv(): void {
+  assertHarnessCloudCreds();
+  assertHarnessLlmEnv();
+  if (!process.env.TCB_REGION?.trim()) {
+    throw new Error("Missing TCB_REGION (e.g. ap-shanghai) for CloudBase data stores");
+  }
+}
+
 const COS_REQUIRED = [
   "HARNESS_COS_BUCKET",
   "HARNESS_COS_BUCKET_PATH",
@@ -102,10 +116,18 @@ export function assertHarnessCosEnv(): void {
   }
 }
 
-/** 真 AGS full / cos 验收前调用。 */
+/** True inside Tencent SCF zip/image web functions (stateless; no in-memory prewarm). */
+export function isScfServerless(): boolean {
+  const runEnv = process.env.TENCENTCLOUD_RUNENV?.trim().toUpperCase();
+  if (runEnv === "SCF") return true;
+  if (process.env.SCF_RUNTIME?.trim()) return true;
+  if (process.env._SCF_SERVER_PORT?.trim()) return true;
+  return false;
+}
+
+/** 真 AGS 验收前：CloudBase + TCB_REGION +（可选）COS。主链用 opencode zen，不要求 LLM_*。 */
 export function assertHarnessAgsRuntimeEnv(): void {
   assertHarnessCloudCreds();
-  assertHarnessLlmEnv();
   if (!process.env.TCB_REGION?.trim()) {
     throw new Error("Missing TCB_REGION (e.g. ap-shanghai) for CloudBase data stores");
   }

@@ -2,12 +2,12 @@
 /**
  * Harness COS full path: write → snapshot → stop → new instance same SubPath → restore proof.
  * Requires HARNESS_COS_ENABLED=1 + bucket vars (see .env.harness.example).
- * Aligns with code_sandbox/一条龙.md §5 and TRW ags-snapshot-verify-sop.md.
+ * Called from `npm run harness -- local` when HARNESS_COS_ENABLED=1.
  */
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadEnv } from "./load-env.mjs";
-import { COS_POST_WRITE_SETTLE_MS, postWorkspaceSnapshot } from "./harness-cos-lib.mjs";
+import { COS_POST_WRITE_SETTLE_MS, postWorkspaceSnapshot } from "./cos-lib.mjs";
 
 loadEnv();
 
@@ -30,7 +30,7 @@ async function parseHealth(res) {
 
 async function acquireSandbox(orch, label) {
   const { buildHarnessInstanceEnv } = await import(
-    "../packages/agent-runtime/dist/config.js"
+    "../../packages/agent-runtime/dist/config.js"
   );
   const agentConfig = {
     name: "CosE2E",
@@ -50,7 +50,7 @@ async function acquireSandbox(orch, label) {
 
 async function main() {
   const { getSandboxOrchestrator } = await import(
-    "../packages/agent-runtime/dist/harness/sandbox/orchestrator.js"
+    "../../packages/agent-runtime/dist/harness/sandbox/orchestrator.js"
   );
   const orch = getSandboxOrchestrator();
 
