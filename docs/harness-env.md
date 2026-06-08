@@ -38,7 +38,7 @@ node scripts/harness/load-env.mjs --check --probe-llm
 | 运行时临时密钥 | 容器内 `TCB_SECRET_*`（或 STS） | 执行角色自动注入 `TENCENTCLOUD_SECRETID` / `SECRETKEY` / `SESSIONTOKEN` |
 | 参考 | [buildCloudRunEnvParam](../lib/cloudrun.mjs) | [腾讯云 SCF 环境变量](https://docs.cloudbase.net/cloud-function/function-configuration/env) |
 
-Harness 运行时（`resolveCamControlPlaneCredentials`）：SCF 内优先读请求头 `X-Scf-Secret-*`（Web 函数），其次 `TENCENTCLOUD_*`；COS `putObject` 必须带 `SessionToken`（角色临时密钥）。
+Harness 运行时（`resolveCamControlPlaneCredentials`）：SCF 内优先 `TENCENTCLOUD_*`（角色注入），勿用误配的 `TCB_SECRET_*`；COS `putObject` 须带 `SessionToken`。
 
 `agent:update`（SCF）会**整表替换**函数 env，须与 `agent:create` 共用同一套 `buildScfDeployEnvMap`（含 `TCB_REGION`、`HARNESS_TOOL_ROLE_ARN`、COS 段等）。
 

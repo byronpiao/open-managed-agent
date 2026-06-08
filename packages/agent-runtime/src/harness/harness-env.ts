@@ -3,8 +3,6 @@
  * 除 HARNESS_PUBLIC_MAGENT_IMAGE 外不设兜底魔法值。
  */
 
-import { getScfCamFromContext } from "./scf-cam-context.js";
-
 /** 唯一允许内置的默认：公开 CCR magent 镜像（可用 HARNESS_SANDBOX_IMAGE 覆盖）。 */
 export const HARNESS_PUBLIC_MAGENT_IMAGE =
   "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260608-1044-2d795e-magent";
@@ -125,8 +123,6 @@ export function resolveCamControlPlaneCredentials(): {
   sessionToken?: string;
 } {
   if (isScfServerless()) {
-    const fromHeaders = getScfCamFromContext();
-    if (fromHeaders?.secretId && fromHeaders.secretKey) return fromHeaders;
     return {
       secretId:
         process.env.TENCENTCLOUD_SECRETID?.trim() ??

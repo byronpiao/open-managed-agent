@@ -45,7 +45,6 @@ import {
   type HarnessSessionRecord,
 } from "./sandbox/session-store.js";
 import { isScfServerless } from "./harness-env.js";
-import { runWithScfCamHeaders } from "./scf-cam-context.js";
 import { harnessLog } from "./logging.js";
 import {
   exportOpencodeSyncEvents,
@@ -771,7 +770,6 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
   };
 
   const harnessHandler = async (req: Request, res: Response) => {
-    await runWithScfCamHeaders(req.headers, async () => {
     const body = req.body as {
       jsonrpc?: string;
       id?: unknown;
@@ -860,7 +858,6 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
         rpcLog.emit({ status: "ok", durationMs });
       }
     }
-    });
   };
 
   app.post("/acp", corsHandler, harnessHandler);
