@@ -1,7 +1,7 @@
 # Harness cloud deploy template — default opencode zen (no API key burn).
 #
 #   cp agent.harness.cloud.yaml agent.harness.yaml  # optional; deploy script writes this
-#   npm run harness -- cloud
+#   npm run harness -- cloud-tcbr
 #
 # Custom LLM (e.g. Mimo): set in .env.harness:
 #   LLM_API_KEY=tp-...

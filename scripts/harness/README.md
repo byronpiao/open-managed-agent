@@ -7,7 +7,7 @@
 | 场景 | 命令 |
 |------|------|
 | 合入 / 日常 | `npm run test:full` |
-| 云上 tcbr | `npm run harness -- cloud` |
+| 云上 tcbr | `npm run harness -- cloud-tcbr` |
 | 云上 SCF（完整一条龙） | `npm run harness -- cloud-scf` |
 
 ```bash
@@ -21,7 +21,7 @@ node scripts/harness/load-env.mjs --check
 
 | 脚本 | 用途 |
 |------|------|
-| `index.mjs` | 入口：`local` / `cloud` / `cloud-scf` |
+| `index.mjs` | 入口：`local` / `cloud-tcbr` / `cloud-scf` |
 | `cloud.mjs` | 云上 deploy + gateway ACP smoke |
 | `load-env.mjs` | 只读 `.env.harness`，`--check` |
 | `cos-e2e.mjs` | COS 写→快照→恢复（`local` 在 `HARNESS_COS_ENABLED=1` 时调用） |

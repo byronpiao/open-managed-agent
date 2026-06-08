@@ -1,5 +1,5 @@
 /**
- * Harness #7 — opencode HITL on real AGS (manual / debug; not in test:full or harness -- cloud).
+ * Harness #7 — opencode HITL on real AGS (manual / debug; not in test:full or harness cloud-*).
  *
  *   node tests/harness/hitl-opencode.test.mjs
  *

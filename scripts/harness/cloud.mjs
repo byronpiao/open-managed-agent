@@ -1,6 +1,6 @@
 /**
  * Cloud harness: deploy + gateway ACP smoke.
- *   npm run harness -- cloud       # 云托管 tcbr（默认）
+ *   npm run harness -- cloud-tcbr  # 云托管 tcbr
  *   npm run harness -- cloud-scf   # SCF 云函数
  */
 import { execSync } from "node:child_process";

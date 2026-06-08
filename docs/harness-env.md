@@ -37,7 +37,7 @@ node scripts/harness/load-env.mjs --check --probe-llm
 | 段 | 内容 |
 |----|------|
 | ② | `CLOUDBASE_AGENT_ID` |
-| ③ | `LLM_*`（仅 `harness -- cloud` custom） |
+| ③ | `LLM_*`（仅 `harness -- cloud-tcbr` / `cloud-scf` custom） |
 | ④ | 沙箱镜像 / `HARNESS_TOOL_ID` |
 | ⑤ | `HARNESS_CLOUD_AGENT_ID` / `HARNESS_CLOUD_SCF_AGENT_ID` |
 | ⑥ | `HARNESS_COS_*` |

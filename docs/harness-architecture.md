@@ -42,25 +42,25 @@ node scripts/harness/load-env.mjs --check
 | 场景 | 命令 |
 |------|------|
 | 合入 / 日常 | `npm run test:full`（= `npm test` + `harness -- local`） |
-| 云上（云托管） | `npm run harness -- cloud` |
+| 云上（tcbr） | `npm run harness -- cloud-tcbr` |
 | 云上（SCF） | `npm run harness -- cloud-scf` |
-| **完整一条龙** | `test:full` + `cloud` + `cloud-scf` |
+| **完整一条龙** | `test:full` + `cloud-tcbr` + `cloud-scf` |
 
 ```bash
 # 日常
 npm run test:full
-npm run harness -- cloud
+npm run harness -- cloud-tcbr
 
 # 完整（发版 / 大改 runtime）
 npm run test:full
-npm run harness -- cloud
+npm run harness -- cloud-tcbr
 npm run harness -- cloud-scf
 ```
 
 | 命令 | 部署形态 | 范围 |
 |------|----------|------|
 | `harness -- local` | 本机进程 + 真 AGS | stub / full / matrix / COS |
-| `harness -- cloud` | **tcbr** 云托管 | deploy + gateway ACP smoke |
+| `harness -- cloud-tcbr` | **tcbr** 云托管 | deploy + gateway ACP smoke |
 | `harness -- cloud-scf` | **SCF** 云函数 | 同上 smoke |
 
 Pin：`.env.harness` 中 `HARNESS_CLOUD_AGENT_ID`（tcbr）、`HARNESS_CLOUD_SCF_AGENT_ID`（scf）。
@@ -71,7 +71,7 @@ Pin：`.env.harness` 中 `HARNESS_CLOUD_AGENT_ID`（tcbr）、`HARNESS_CLOUD_SCF
 
 ```bash
 npm run test:full
-npm run harness -- cloud [--agent-id …] [--verify-only]
+npm run harness -- cloud-tcbr [--agent-id …] [--verify-only]
 npm run harness -- cloud-scf [--agent-id …] [--verify-only]
 
 node scripts/harness/load-env.mjs --check [--probe-llm]

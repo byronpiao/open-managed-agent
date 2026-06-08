@@ -3,8 +3,8 @@
  * Harness 验收入口：
  *
  *   npm run harness -- local    # stub → zen 真箱 e2e → 矩阵 →（COS 硬门）
- *   npm run harness -- cloud       # 云托管 tcbr + smoke（另跑，不进 test:full）
- *   npm run harness -- cloud-scf   # SCF + smoke（完整一条龙时与 cloud 都跑）
+ *   npm run harness -- cloud-tcbr  # 云托管 tcbr + smoke（另跑，不进 test:full）
+ *   npm run harness -- cloud-scf  # SCF + smoke（完整一条龙时与 cloud-tcbr 都跑）
  */
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -14,19 +14,19 @@ import { loadEnv } from "./load-env.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
 
-const HELP = `Usage: npm run harness -- <local|cloud|cloud-scf> [options]
+const HELP = `Usage: npm run harness -- <local|cloud-tcbr|cloud-scf> [options]
 
-  local      stub e2e + 真 AGS（zen）+ 矩阵；HARNESS_COS_ENABLED=1 时 COS
-  cloud      云托管 tcbr：deploy/redeploy → gateway ACP smoke（日常云上验收）
-  cloud-scf  SCF 云函数：agent:create/update → 同上 smoke（完整一条龙时必跑）
+  local        stub e2e + 真 AGS（zen）+ 矩阵；HARNESS_COS_ENABLED=1 时 COS
+  cloud-tcbr   云托管 tcbr：deploy/redeploy → gateway ACP smoke（日常云上验收）
+  cloud-scf    SCF 云函数：agent:create/update → 同上 smoke（完整一条龙时必跑）
 
-  cloud / cloud-scf 共用：
+  cloud-tcbr / cloud-scf 共用：
           有 LLM_* 时先 probe；无则 zen
           --agent-id <id>   或 HARNESS_CLOUD_AGENT_ID / HARNESS_CLOUD_SCF_AGENT_ID
           --verify-only     只 smoke
           --no-verify       只 deploy
 
-日常：  npm run test:full && npm run harness -- cloud
+日常：  npm run test:full && npm run harness -- cloud-tcbr
 完整：  上式 + npm run harness -- cloud-scf
 
 More: docs/harness-architecture.md · docs/harness-env.md
@@ -105,7 +105,7 @@ async function main() {
     case "local":
       await runLocal();
       break;
-    case "cloud":
+    case "cloud-tcbr":
     case "cloud-scf": {
       loadEnv();
       const { runCloudHarness } = await import("./cloud.mjs");
@@ -114,7 +114,11 @@ async function main() {
       break;
     }
     default:
-      console.error(`Unknown command: ${cmd}\n`);
+      if (cmd === "cloud") {
+        console.error("Renamed: use cloud-tcbr (tcbr) or cloud-scf (SCF), not cloud.\n");
+      } else {
+        console.error(`Unknown command: ${cmd}\n`);
+      }
       console.log(HELP);
       process.exit(1);
   }
