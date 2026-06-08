@@ -7,6 +7,7 @@
   },
   "files": [
     "magent.mjs",
+    "lib",
     "README.md"
   ],
   "keywords": [
@@ -25,12 +26,19 @@
   "dependencies": {
     "@cloudbase/cli": "latest",
     "@cloudbase/signature-nodejs": "^2.2.0",
+    "open-managed-agent-runtime": "workspace:*",
     "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@agentclientprotocol/sdk": "^0.24.0",
+    "undici": "^7.27.2"
   },
   "scripts": {
     "build": "npm run build --workspaces",
     "build:sdk": "npm run build --workspace=packages/sdk",
-    "build:runtime": "npm run build --workspace=packages/agent-runtime"
-  },
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+    "build:runtime": "npm run build --workspace=packages/agent-runtime",
+    "test": "npm run build:runtime && node tests/stop-and-resume.test.mjs && node tests/harness/unit.test.mjs",
+    "test:full": "npm test && npm run harness -- local",
+    "harness": "npm run build:runtime && node scripts/harness/index.mjs"
+  }
 }

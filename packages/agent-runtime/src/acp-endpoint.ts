@@ -34,6 +34,8 @@
 import type { Express, Request, Response } from "express";
 import expressLib from "express";
 import type { AgentConfig } from "./config.js";
+import { resolveRuntime } from "./config.js";
+import { mountHarnessAcpEndpoint } from "./harness/acp-endpoint.js";
 import type { MessageRecord } from "@cloudbase/open-agent-kernel";
 import {
   abortKernelSession,
@@ -458,7 +460,7 @@ async function handleSessionResume(params: Record<string, unknown>, config: Agen
 
 // ── Mount function ──────────────────────────────────────────────────────────
 
-export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
+function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   app.use("/acp", expressLib.json({ limit: "10mb" }));
   app.use("/v1/aibot/bots", expressLib.json({ limit: "10mb" }));
 
@@ -552,5 +554,19 @@ export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   app.post("/acp", acpHandler);
   app.post("/v1/aibot/bots/:botId/acp", acpHandler);
 
-  console.log("[ACP] Endpoints mounted: POST /acp (+ gateway /v1/aibot/bots/:botId/acp)");
+  console.log("[ACP] Managed endpoints mounted: POST /acp (+ gateway /v1/aibot/bots/:botId/acp)");
+}
+
+/** Routes POST /acp by agent.runtime (managed vs harness). */
+export function mountAcpEndpoint(app: Express, agentConfig: AgentConfig) {
+  app.use("/acp", expressLib.json({ limit: "10mb" }));
+  app.use("/v1/aibot/bots", expressLib.json({ limit: "10mb" }));
+
+  const { runtime, engine } = resolveRuntime(agentConfig);
+  if (runtime === "harness") {
+    mountHarnessAcpEndpoint(app, agentConfig);
+    return;
+  }
+  console.log(`[ACP] runtime=managed (engine field ignored, yaml engine=${engine})`);
+  mountManagedAcpEndpoint(app, agentConfig);
 }

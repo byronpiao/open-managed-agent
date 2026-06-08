@@ -1,0 +1,8 @@
+# Minimal sandbox agent — opencode + built-in zen (no custom LLM, no COS).
+name: My Sandbox Agent
+runtime: harness
+engine: opencode
+model: zen
+system: |
+  You are a helpful coding assistant in a remote sandbox workspace.
+  Reply concisely.

@@ -22,5 +22,12 @@ which atomically rolls out a new deploy version reusing the same image.
 
     node tools/cloudrun-set-env.mjs <serviceName>
 
-Edit the file to change the env vars it pushes (kept hard-coded so the
-deployed agent isn't accidentally updated by a stray invocation).
+Reads `.env` via `scripts/env.mjs`；若存在 `.env.harness` 则叠加 LLM 等 harness 键：
+
+| 变量 | 文件 | 说明 |
+|------|------|------|
+| `CLOUDBASE_ENV_ID` | `.env` | 必填 |
+| `LLM_API_KEY` | `.env.harness` | 优先；与 `ANTHROPIC_BASE_URL` 成对 |
+| `ANTHROPIC_BASE_URL` | `.env.harness` | 必填（无 harness 时可放 `.env`） |
+| `ANTHROPIC_AUTH_TOKEN` | `.env` | 仅当未设 `LLM_API_KEY` 时回退 |
+| `LLM_MODEL` | `.env.harness` | 可选，默认 `mimo-v2.5-pro` |

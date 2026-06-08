@@ -80,6 +80,19 @@ export interface ModelSpec {
   options?: Record<string, unknown>;
 }
 
+/** Where the agent loop runs (`runtime`: local | harness | oak). */
+export type AgentRuntimeMode = "managed" | "harness";
+
+/** 箱内引擎（ACP 服务端）when runtime=harness; data-plane slug may differ (D5). */
+export type HarnessEngine = "opencode" | "claude" | "codebuddy";
+
+/** TRW route segment: POST /api/agents/{slug}/acp */
+export type DataPlaneEngineSlug = "opencode" | "claudecode" | "codebuddy";
+
+/**
+ * Shared by managed (OAK loop on gateway) and harness (loop in AGS sandbox).
+ * Fields like tools / mcp_servers / skills are interpreted per runtime in deploy.ts.
+ */
 export interface AgentConfig {
   name: string;
   /** Model can be a bare ID string (CloudBase-hosted model) or a ModelSpec
@@ -87,12 +100,84 @@ export interface AgentConfig {
   model: string | ModelSpec;
   system: string;
   description?: string;
+  /** `managed` = 托管运行时；`harness` = 沙箱 Agent（Harness 运行时）. */
+  runtime?: AgentRuntimeMode;
+  /** 箱内引擎（ACP 服务端）. Only when runtime=harness. Default `opencode`. */
+  engine?: HarnessEngine;
   tools?: AgentTool[];
   mcp_servers?: McpServer[];
   skills?: Skill[];
   metadata?: Record<string, string>;
   // Storage
   sessions_collection?: string; // NoSQL collection name for sessions, default: "acp_sessions"
+}
+
+export interface ResolvedRuntime {
+  runtime: AgentRuntimeMode;
+  engine: HarnessEngine;
+}
+
+export function resolveRuntime(config: AgentConfig): ResolvedRuntime {
+  const runtime = config.runtime === "harness" ? "harness" : "managed";
+  const engine =
+    config.engine === "claude" || config.engine === "codebuddy"
+      ? config.engine
+      : "opencode";
+  return { runtime, engine };
+}
+
+export function engineToDataPlaneSlug(engine: HarnessEngine): DataPlaneEngineSlug {
+  switch (engine) {
+    case "claude":
+      return "claudecode";
+    case "codebuddy":
+      return "codebuddy";
+    default:
+      return "opencode";
+  }
+}
+
+/** Env slug for AGS tool names (`oma-harness-{slug}-{no-cos|with-cos}`). */
+export function harnessEnvSlug(envId: string, maxLen = 40): string {
+  return envId.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, maxLen) || "default";
+}
+
+export function harnessToolNameForEnv(envId: string): string {
+  return `oma-harness-${harnessEnvSlug(envId)}-no-cos`;
+}
+
+/** AGS StartSandboxInstance CustomConfiguration.Env entries (F4 / D1). */
+export interface HarnessEnvVar {
+  Name: string;
+  Value: string;
+}
+
+export function buildHarnessInstanceEnv(
+  config: AgentConfig,
+  engine: HarnessEngine,
+): HarnessEnvVar[] {
+  const out: HarnessEnvVar[] = [];
+  const push = (name: string, value: string | undefined) => {
+    if (value !== undefined && value !== "") {
+      out.push({ Name: name, Value: value });
+    }
+  };
+
+  if (engine === "opencode") {
+    push("ENABLE_AGENT_OPENCODE", "true");
+    push("ENABLE_AGENT_OPENCODE_ACP", "true");
+    push("ENABLE_AGENT_OPENCODE_SERVE", "true");
+  } else if (engine === "claude") {
+    push("ENABLE_AGENT_CLAUDE_ACP", "true");
+  } else {
+    push("ENABLE_AGENT_CODEBUDDY_ACP", "true");
+  }
+
+  // SECRET_MASTER_KEY: injected per harness session (harness_sessions.secretMasterKey), not from host env.
+  push("INTEGRATION_IDE", engine === "codebuddy" ? "codebuddy" : engine === "claude" ? "claude" : "opencode");
+  push("WORKSPACE_FOLDER_PATHS", "/home/user");
+
+  return out;
 }
 
 // ── Built-in tool names ───────────────────────────────────────────────────────
@@ -333,12 +418,8 @@ export function toKernelAgentConfig(
     });
   } else {
     const credentials = resolveCloudBaseCredentials(envId);
-    const driverOpts: Record<string, unknown> = credentials ? { credentials } : {};
-    if (config.sessions_collection) {
-      driverOpts.collectionPrefix = config.sessions_collection;
-    }
     sessionStore = new CloudBaseSessionStore({
-      driver: new CloudBaseDbDriver(driverOpts),
+      driver: new CloudBaseDbDriver(credentials ? { credentials } : undefined),
       projectKey: envId,
     });
   }

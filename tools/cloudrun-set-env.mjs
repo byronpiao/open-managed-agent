@@ -2,6 +2,15 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { createRequire } from "module";
+import { loadProjectEnv } from "../scripts/env.mjs";
+import { loadEnv as loadHarnessEnv } from "../scripts/harness/load-env.mjs";
+
+loadProjectEnv();
+try {
+  loadHarnessEnv();
+} catch {
+  /* harness overlay optional for this tool */
+}
 
 const _require = createRequire(import.meta.url);
 const { sign } = _require("@cloudbase/signature-nodejs");
@@ -34,18 +43,34 @@ async function callTcbr(action, payload) {
   return body?.Response ?? body;
 }
 
-const envId = "test-6g2rfs50c69b7fb8";
+const envId = process.env.CLOUDBASE_ENV_ID?.trim();
 const serviceName = process.argv[2] || "magtest-v2";
+// .env.harness overlays .env — prefer LLM_API_KEY so token matches ANTHROPIC_BASE_URL.
+const anthropicToken =
+  process.env.LLM_API_KEY?.trim() || process.env.ANTHROPIC_AUTH_TOKEN?.trim();
+const anthropicBase = process.env.ANTHROPIC_BASE_URL?.trim();
+const model = process.env.LLM_MODEL?.trim() || process.env.AGENT_MODEL?.trim() || "mimo-v2.5-pro";
 
-const config = { name: "magtest", model: "mimo-v2.5-pro", system: "You are a helpful assistant." };
+if (!envId) {
+  console.error("Missing CLOUDBASE_ENV_ID — set in .env or export before running.");
+  process.exit(1);
+}
+if (!anthropicToken || !anthropicBase) {
+  console.error(
+    "Missing LLM creds — set ANTHROPIC_AUTH_TOKEN (or LLM_API_KEY) and ANTHROPIC_BASE_URL in .env / .env.harness.",
+  );
+  process.exit(1);
+}
+
+const config = { name: "magtest", model, system: "You are a helpful assistant." };
 const configB64 = Buffer.from(JSON.stringify(config)).toString("base64");
 
 const envMap = {
   CLOUDBASE_ENV_ID: envId,
   AGENT_CONFIG_B64: configB64,
-  ANTHROPIC_BASE_URL: "https://token-plan-sgp.xiaomimimo.com/anthropic",
-  ANTHROPIC_AUTH_TOKEN: "tp-sk55ibh59r6h1gu2oubb8ybumhzw8tub3u2lvhjoacu7hgzi",
-  AGENT_MODEL: "mimo-v2.5-pro",
+  ANTHROPIC_BASE_URL: anthropicBase,
+  ANTHROPIC_AUTH_TOKEN: anthropicToken,
+  AGENT_MODEL: model,
   OAK_DISABLE_SANDBOX: "1",
   OAK_USE_MEMORY_STORE: "1",
 };

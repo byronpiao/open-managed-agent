@@ -121,6 +121,25 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 
 ---
 
+## 沙箱内 Agent
+
+远程 AGS 沙箱内运行 **OpenCode**，支持 bash、读写项目文件。
+
+| 项 | 说明 |
+|----|------|
+| 文档 | [沙箱内 Agent 使用指南](./docs/harness-tutorial.md) |
+| 配置 | `runtime: harness` + `engine: opencode` + `model: zen` |
+| 部署 | `magent agent:create --runtime harness --engine opencode ...` |
+| 参考 | [架构](./docs/harness-architecture.md) · [环境变量](./docs/harness-env.md) |
+
+```bash
+cp docs/examples/agent.sandbox.min.yaml ./agent.sandbox.yaml
+magent agent:create --name my-sandbox --runtime harness --engine opencode \
+  --file ./agent.sandbox.yaml --code ./packages/agent-runtime -e "$CLOUDBASE_ENV_ID"
+```
+
+---
+
 ## Agent 配置
 
 Agent 通过 `agent.yaml` 文件配置，结构兼容 [Anthropic Agent Setup](https://platform.claude.com/docs/en/managed-agents/agent-setup)。
@@ -216,31 +235,25 @@ sessions_collection: acp_sessions   # Session 存储的集合名，启动时自�
 | `mcp_toolset` | 远程 MCP 服务器提供的工具 | 服务端代理 |
 | `custom` | 自定义工具，Agent 请求调用后由客户端执行 | 客户端 |
 
-### MCP Tool Calling（已验证）
-
-MCP 工具调用已端到端验证通过。Agent 能发现远程 MCP server 的工具并自动调用：
-
-```bash
-# 创建带 MCP 的 agent
-magent agent:create -n my-agent --type tcbr -f agent.yaml -e <env-id>
-
-# 发送消息，agent 会自动调用 MCP 工具
-magent run -a <agent-id> -m "现在几点了？"
-# 输出: 🔧 Tool: mcp__test-mcp__get_time [in_progress]
-#       Current time: 2026-06-03T13:22:14.824Z
-#       当前时间是 2026年6月3日 21:22:14 (北京时间)
-```
-
-验证链路：`agent.yaml` → `AGENT_CONFIG_B64` → `loadAgentConfig()` → `toKernelAgentConfig()` → MCP server 连接 → 模型发现工具 → 调用 → 结果返回。
-
-> ⚠️ MCP tool calling 仅在 TCBR 容器部署下验证通过。SCF zip 模式的事件流问题会导致工具调用结果无法返回给客户端。
-
 ### Permission Policy
 
 | 策略 | 行为 |
 |------|------|
 | `always_allow` | 工具自动执行，不需要确认 |
 | `always_ask` | 暂停等待客户端发送 `user.tool_confirmation` 事件 |
+
+### MCP Tool Calling（`runtime=managed`）
+
+MCP 工具调用已在 **TCBR 云托管**（`--type tcbr`）端到端验证：Agent 能发现远程 MCP server 的工具并自动调用。
+
+```bash
+magent agent:create -n my-agent --type tcbr -f agent.yaml -e <env-id>
+magent run -a <agent-id> -m "现在几点了？"
+```
+
+验证链路：`agent.yaml` → `AGENT_CONFIG_B64` → `loadAgentConfig()` → kernel MCP 连接 → 模型发现工具 → 调用 → 结果返回。
+
+> **SCF zip 模式（默认 `agent:create`）**：历史上存在事件流问题（模型已响应但客户端收不到 tool/文本帧）。生产环境推荐 **TCBR**；排障见 [docs/scf-debugging.md](docs/scf-debugging.md)。**沙箱 Agent（`runtime=harness`）** 走 AGS + 箱内引擎，与上述 SCF zip 限制无关，见 [沙箱内 Agent](#沙箱内-agent)。
 
 ---
 
@@ -271,15 +284,15 @@ magent agent:update \
 
 ```bash
 # 导出到文件（可直接用于 agent:update -f，round-trip 安全）
-magent agent:export -a agent_xxx -o ./agent.yaml
+magent agent:export -i agent_xxx -e my-env-id -o ./agent.yaml
 
 # 打印到 stdout
-magent agent:export -a agent_xxx
+magent agent:export -i agent_xxx -e my-env-id
 
 # 典型工作流：导出 → 编辑 → 推回
-magent agent:export -a agent_xxx -o ./agent.yaml
+magent agent:export -i agent_xxx -e my-env-id -o ./agent.yaml
 # 编辑 agent.yaml ...
-magent agent:update -f ./agent.yaml
+magent agent:update -f ./agent.yaml -e my-env-id
 ```
 
 ### 工作原理
@@ -329,9 +342,9 @@ npm install -g open-managed-agent
 
 | 短标志 | 长标志 | 说明 |
 |--------|--------|------|
-| `-e <envId>` | `--env <envId>` | CloudBase 环境 ID（可自动检测） |
+| `-e <envId>` | `--env <envId>` | CloudBase 环境 ID |
 | `-a <agentId>` | `--agent <agentId>` | Agent ID |
-| `-i <id>` | `--id <id>` | Session ID（session:get/delete） |
+| `-i <id>` | `--id <id>` | 资源 ID |
 | `-m <msg>` | `--message <msg>` | 消息文本 |
 | `-s <id>` | `--session <id>` | Session ID |
 | `-f <path>` | `--file <path>` | 文件路径 |
@@ -342,8 +355,8 @@ npm install -g open-managed-agent
 
 | 变量 | 说明 |
 |------|------|
-| `CLOUDBASE_ENV_ID` | CloudBase 环境 ID（可用 `-e` 覆盖，未设置时自动从 tcb 检测） |
-| `CLOUDBASE_AGENT_ID` | 默认 Agent ID（可免 `-a`） |
+| `CLOUDBASE_ENV_ID` | CloudBase 环境 ID（可用 `-e` 覆盖） |
+| `CLOUDBASE_AGENT_ID` | 默认 Agent ID（可免 `--id`） |
 | `CLOUDBASE_ACCESS_KEY` | API Key（JWT Token） |
 | `CLOUDBASE_SERVER_URL` | 自定义 Server URL |
 
@@ -357,12 +370,12 @@ magent env:list                           # 列出 CloudBase 环境
 
 # ─── Agent 管理 ───────────────────────────────────────────
 magent agent:create  --name <name> [options]  # 创建并部署 Agent
-magent agent:list                             # 列出所有 Agents
-magent agent:get    -a <id>                   # 查看 Agent 详情
-magent agent:delete -a <id>                   # 删除 Agent
+magent agent:list   [-e <envId>]              # 列出所有 Agents
+magent agent:get    --id <id>   [-e <envId>]  # 查看 Agent 详情
+magent agent:delete --id <id>   [-e <envId>]  # 删除 Agent
 
 # ─── Agent 配置 ───────────────────────────────────────────
-magent agent:update  [-a <id>] [options]      # 更新配置（~8s，不重新部署）
+magent agent:update  [--id <id>] [options]   # 更新配置（~8s，不重新部署）
   --system <prompt>       更新 system prompt
   --model <model>         更新模型
   --name <name>           更新名称
@@ -371,7 +384,7 @@ magent agent:update  [-a <id>] [options]      # 更新配置（~8s，不重新�
   --mcp-servers <json>    替换 mcp_servers 数组
   --skills <json>         替换 skills 数组
 
-magent agent:export  [-a <id>] [-o <file>]    # 导出当前运行配置为 YAML
+magent agent:export  [--id <id>] [-o <file>] # 导出当前运行配置为 YAML
   -o, --output <path>     写入文件（省略则打印到 stdout）
 
 # ─── 对话 ─────────────────────────────────────────────────
@@ -380,10 +393,10 @@ magent chat  -s <id> -m "..."    # 向已有 session 发消息
 magent repl  -a <id>             # 交互式 REPL
 
 # ─── Session 管理 ─────────────────────────────────────────
-magent session:create -a <agent-id> [--title <title>]
-magent session:list   -a <agent-id>
-magent session:get    -i <session-id> -a <agent-id>
-magent session:delete -i <session-id> -a <agent-id>
+magent session:create --agent <id>
+magent session:list
+magent session:get    --id <session-id>
+magent session:delete --id <session-id>
 
 # ─── 透明代理（任意 tcb 命令）────────────────────────────
 magent functions:list -e <envId>    # 等效 tcb functions:list
@@ -393,11 +406,17 @@ magent storage:list                 # 等效 tcb storage:list
 
 ### 缺少 envId 时的行为
 
-若命令需要 `-e <envId>` 但未提供且未设置 `CLOUDBASE_ENV_ID`，`magent` 会尝试通过 `tcb env use --json` 自动检测当前环境。若检测失败，会报错提示：
+若命令需要 `-e <envId>` 但未提供且未设置 `CLOUDBASE_ENV_ID`，`magent` 会自动列出可用环境并给出提示：
 
 ```
-Error: could not detect CloudBase environment.
-Run `tcb env use` to select one, or pass -e <envId>
+Error: -e <envId> is required (or set CLOUDBASE_ENV_ID)
+
+Available CloudBase environments:
+┌─────────────────────────────────────────────────────────────────────────────────────────────────
+│ EnvId                          │ EnvName              │ Status    │ PackageName │ CreateTime          │
+├─────────────────────────────────────────────────────────────────────────────────────────────────
+│ prod-abc123                    │ 生产环境              │ NORMAL    │ postpay     │ 2024-01-01 ...      │
+└─────────────────────────────────────────────────────────────────────────────────────────────────
 ```
 
 ---
@@ -508,35 +527,29 @@ await client.sessions.delete(session.id);
 
 ## 部署详解
 
-### 部署类型
+### 部署类型（`runtime=managed`）
 
 | 类型 | 命令 | 耗时 | 适用场景 |
 |------|------|------|----------|
-| **TCBR 云托管**（推荐） | `--type tcbr` | ~3-5min | 生产环境，完整容器，事件流正常 |
-| SCF 云函数 | `--type scf`（默认） | ~60-90s | 快速原型，⚠️ zip 模式有已知事件流问题 |
+| **TCBR 云托管**（推荐） | `--type tcbr` | ~3–5 min | 生产；MCP / 流式事件正常 |
+| SCF 云函数 | 默认（省略 `--type`） | ~60–90s | 快速原型；zip 模式流式有已知限制 |
 
-> **推荐使用 TCBR**。SCF zip 模式部署会注入 diag patch，导致 `pumpEvents done: total=0`（模型响应了但事件没有转发给客户端）。TCBR 走 Dockerfile 构建，不经过 diag patch，事件流完全正常。详见 [docs/scf-debugging.md](docs/scf-debugging.md)。
+沙箱 Agent 使用 `runtime: harness`，见 [沙箱内 Agent](#沙箱内-agent) 与 [docs/harness-architecture.md](docs/harness-architecture.md)。
 
-### 首次部署（TCBR 云托管）
+### 首次部署（`magent agent:create`）
 
 ```bash
 # 1. 构建 runtime 代码
 cd packages/agent-runtime && npm run build && cd ../..
 
-# 2. 部署（推荐 --type tcbr）
-magent agent:create --name my-agent --type tcbr --file ./agent.yaml
+# 2. 部署
+magent agent:create --name my-agent --env <env-id>
 
-# 3. 等待就绪（容器构建约 3-5 分钟）
-magent agent:get -a <agent-id>
+# 3. 等待就绪
+magent agent:get --id <agent-id>
 ```
 
-### 首次部署（SCF 云函数）
-
-```bash
-magent agent:create --name my-agent --file ./agent.yaml
-```
-
-`agent:create` 会自动打包 `packages/agent-runtime` 代码并部署。
+`agent:create` 会自动打包 `packages/agent-runtime` 代码并部署为云函数。
 
 可通过 `--code` 指定自定义代码路径，`--file` 指定初始配置文件：
 
@@ -544,7 +557,8 @@ magent agent:create --name my-agent --file ./agent.yaml
 magent agent:create \
   --name my-agent \
   --file ./my-agent.yaml \
-  --code ./packages/agent-runtime
+  --code ./packages/agent-runtime \
+  --env <env-id>
 ```
 
 ### 配置更新（`magent agent:update`）
@@ -571,7 +585,7 @@ magent agent:create --name my-agent --env <env-id>
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `CLOUDBASE_ENV_ID` | CloudBase 环境 ID（未设置时自动从 tcb 检测） | - |
+| `CLOUDBASE_ENV_ID` | **必需**。CloudBase 环境 ID | - |
 | `AGENT_CONFIG_B64` | 完整 JSON 配置（Base64，由 `magent agent:update` 写入） | - |
 | `AGENT_CONFIG` | 完整 JSON 配置（明文，手动设置时可用） | - |
 | `AGENT_MODEL` | 覆盖模型名 | `hunyuan-t1-latest` |
@@ -609,25 +623,10 @@ cloudbase-managed-agent/
 │       │   └── hunyuan-agent.ts # AI Agent 核心逻辑
 │       ├── agent.yaml.example  # 配置模板（cp 为 agent.yaml 后生效，优先级最高）
 │       └── scf_bootstrap     # SCF 启动脚本
-├── lib/                      # CLI 模块（magent.mjs 拆分）
-│   ├── ui.mjs                # 颜色和打印函数
-│   ├── tcb.mjs               # tcb CLI wrapper
-│   ├── credentials.mjs       # 认证函数
-│   ├── api.mjs               # HTTP 和 Cloud API
-│   ├── acp.mjs               # ACP 协议
-│   ├── cloudrun.mjs          # CloudRun 部署
-│   ├── env.mjs               # 环境 ID 解析
-│   ├── alias.mjs             # 名称转 slug
-│   └── commands/             # 命令模块
-│       ├── agent.mjs
-│       ├── session.mjs
-│       ├── chat.mjs
-│       ├── env.mjs
-│       └── cloudrun.mjs
 ├── tests/
 │   ├── integration.ts        # SDK 集成测试（ACP 全流程）
 │   └── agui-integration.ts   # AG-UI 协议测试
-├── magent.mjs                # CLI 入口（~270 行）
+├── magent.mjs                # CLI 工具
 └── README.md
 ```
 
