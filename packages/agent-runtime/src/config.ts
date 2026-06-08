@@ -169,6 +169,8 @@ export function buildHarnessInstanceEnv(
     push("ENABLE_AGENT_OPENCODE_SERVE", "true");
   } else if (engine === "claude") {
     push("ENABLE_AGENT_CLAUDE_ACP", "true");
+    push("HARNESS_CLAUDE_SESSION_STORE", "1");
+    push("CLAUDE_CONFIG_DIR", "/tmp/.claude");
   } else {
     push("ENABLE_AGENT_CODEBUDDY_ACP", "true");
   }

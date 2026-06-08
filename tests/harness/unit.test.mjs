@@ -447,6 +447,43 @@ test("buildHarnessSandboxEnv maps LLM_* + OPENAI_BASE_URL for codebuddy engine",
   else process.env.LLM_MODEL = saved.model;
 });
 
+test("resolveAnthropicCompatProvider accepts ANTHROPIC_AUTH_TOKEN without LLM_API_KEY", async () => {
+  const { resolveAnthropicCompatProvider } = await import(
+    "../../packages/agent-runtime/dist/harness/llm-providers.js"
+  );
+  const saved = {
+    key: process.env.LLM_API_KEY,
+    tok: process.env.ANTHROPIC_AUTH_TOKEN,
+    url: process.env.ANTHROPIC_BASE_URL,
+    model: process.env.LLM_MODEL,
+  };
+  delete process.env.LLM_API_KEY;
+  process.env.ANTHROPIC_AUTH_TOKEN = "tp-test";
+  process.env.ANTHROPIC_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/anthropic";
+  process.env.LLM_MODEL = "mimo-v2.5-pro";
+  const p = resolveAnthropicCompatProvider({ name: "t", model: "m", system: "s" });
+  assert.ok(p);
+  assert.equal(p.apiKey, "tp-test");
+  assert.equal(p.baseUrl, "https://token-plan-sgp.xiaomimimo.com/anthropic");
+  if (saved.key === undefined) delete process.env.LLM_API_KEY;
+  else process.env.LLM_API_KEY = saved.key;
+  if (saved.tok === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN;
+  else process.env.ANTHROPIC_AUTH_TOKEN = saved.tok;
+  if (saved.url === undefined) delete process.env.ANTHROPIC_BASE_URL;
+  else process.env.ANTHROPIC_BASE_URL = saved.url;
+  if (saved.model === undefined) delete process.env.LLM_MODEL;
+  else process.env.LLM_MODEL = saved.model;
+});
+
+test("buildHarnessInstanceEnv enables claude SessionStore env", async () => {
+  const { buildHarnessInstanceEnv } = await import("../../packages/agent-runtime/dist/config.js");
+  const env = buildHarnessInstanceEnv({ name: "t", model: "m", system: "s" }, "claude");
+  const names = Object.fromEntries(env.map((e) => [e.Name, e.Value]));
+  assert.equal(names.ENABLE_AGENT_CLAUDE_ACP, "true");
+  assert.equal(names.HARNESS_CLAUDE_SESSION_STORE, "1");
+  assert.equal(names.CLAUDE_CONFIG_DIR, "/tmp/.claude");
+});
+
 test("buildHarnessSandboxEnv maps LLM_* + ANTHROPIC_BASE_URL for claude engine", () => {
   const saved = {
     key: process.env.LLM_API_KEY,

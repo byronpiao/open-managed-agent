@@ -3,6 +3,8 @@
  * 除 HARNESS_PUBLIC_MAGENT_IMAGE 外不设兜底魔法值。
  */
 
+import { resolveAnthropicApiKeyFromEnv } from "./llm-providers.js";
+
 /** 唯一允许内置的默认：公开 CCR magent 镜像（可用 HARNESS_SANDBOX_IMAGE 覆盖）。 */
 export const HARNESS_PUBLIC_MAGENT_IMAGE =
   "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260608-1829-dadc15-magent";
@@ -81,6 +83,30 @@ export function assertHarnessLlmEnv(): void {
 /** Host has custom OpenAI-compatible provider (Mimo tp/sk, etc.). */
 export function hasHarnessCustomLlmEnv(): boolean {
   return missingHarnessLlmEnv().length === 0;
+}
+
+const ANTHROPIC_LLM_HINT = "LLM_API_KEY";
+
+/** Claude / Mimo Anthropic Messages (engine=claude). */
+export function missingHarnessAnthropicLlmEnv(): string[] {
+  const missing: string[] = [];
+  if (!resolveAnthropicApiKeyFromEnv()) missing.push(ANTHROPIC_LLM_HINT);
+  if (!process.env.LLM_MODEL?.trim()) missing.push("LLM_MODEL");
+  if (!process.env.ANTHROPIC_BASE_URL?.trim()) missing.push("ANTHROPIC_BASE_URL");
+  return missing;
+}
+
+export function hasHarnessAnthropicLlmEnv(): boolean {
+  return missingHarnessAnthropicLlmEnv().length === 0;
+}
+
+export function assertHarnessAnthropicLlmEnv(): void {
+  const missing = missingHarnessAnthropicLlmEnv();
+  if (missing.length) {
+    throw new Error(
+      `Missing Anthropic LLM env for claude harness: ${missing.join(", ")}. See .env.harness.example`,
+    );
+  }
 }
 
 /** Custom LLM suite: CloudBase + LLM_* (probe / hitl / Mimo pong). Not required for test:full. */

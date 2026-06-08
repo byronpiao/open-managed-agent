@@ -42,6 +42,13 @@ export function loadEnv() {
   for (const [from, to] of ALIASES) {
     if (process.env[from] && !process.env[to]) process.env[to] = process.env[from];
   }
+  if (!process.env.LLM_API_KEY?.trim()) {
+    const anthropicKey =
+      process.env.ANTHROPIC_AUTH_TOKEN?.trim() ||
+      process.env.ANTHROPIC_API_KEY?.trim() ||
+      process.env.CLAUDE_API_KEY?.trim();
+    if (anthropicKey) process.env.LLM_API_KEY = anthropicKey;
+  }
   clearShellLeakedHarnessPins();
   const pinnedTool = pinnedHarnessToolId();
   if (pinnedTool) process.env.HARNESS_TOOL_ID = pinnedTool;

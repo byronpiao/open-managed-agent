@@ -8,7 +8,7 @@
 | 典型场景 | 轻量对话、平台模型 | 远程工作区、命令与文件操作 |
 | 配置 | 省略 `runtime` | `runtime: harness` + `engine: opencode` |
 
-> `runtime: harness` 即沙箱内 Agent。箱内引擎目前仅 **`opencode`**；`claude`、`codebuddy` 尚未开放。
+> `runtime: harness` 即沙箱内 Agent。箱内引擎：**`opencode`**（默认可用）、**`claude`**（Anthropic Messages / Mimo）；`codebuddy` 尚未开放。
 
 **延伸阅读：** [架构参考](./harness-architecture.md) · [环境变量](./harness-env.md)
 
@@ -134,7 +134,8 @@ OMA Runtime（SCF / 云托管）  ← 会话、审批、MCP 桥接
 | 字段 | 说明 |
 |------|------|
 | `runtime: harness` | 沙箱内 Agent |
-| `engine: opencode` | 箱内引擎（当前可用） |
+| `engine: opencode` | 箱内 OpenCode（默认） |
+| `engine: claude` | 箱内 Claude Code |
 | `model: zen` | OpenCode 内置模型，无需 API Key |
 
 配置变更：`magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"`（约数十秒；Runtime 代码变更需重新部署）。
@@ -242,19 +243,21 @@ SDK 流式事件中出现审批请求；客户端确认后继续 session。
 | `engine` | 状态 |
 |----------|------|
 | `opencode` | 可用 |
-| `claude` | 尚未开放 |
+| `claude` | 可用 |
 | `codebuddy` | 尚未开放 |
 
 ```yaml
 runtime: harness
-engine: opencode
+engine: opencode   # 或 claude
 ```
 
 ---
 
 ## 第十步：自定义 LLM（可选）
 
-在 `agent.yaml` 用 ModelSpec（随 `AGENT_CONFIG_B64` 下发）：
+### OpenCode（`engine: opencode`）
+
+**方式 A — yaml ModelSpec：**
 
 ```yaml
 runtime: harness
@@ -266,6 +269,42 @@ model:
 ```
 
 `apiBaseUrl` 为 OpenAI Chat Completions 兼容根路径（通常含 `/v1`）。
+
+**方式 B — Runtime 环境变量**（`magent agent:create` / 控制台，与方式 A 二选一）：
+
+```bash
+export LLM_API_KEY=tp-xxxxxxxx
+export LLM_MODEL=mimo-v2.5-pro
+export OPENAI_BASE_URL=https://token-plan-sgp.xiaomimimo.com/v1
+```
+
+### Claude（`engine: claude`）
+
+创建或更新 Agent 前，在 shell 或 CloudBase Runtime 环境配置：
+
+```bash
+export LLM_API_KEY=tp-xxxxxxxx
+export LLM_MODEL=mimo-v2.5-pro
+export ANTHROPIC_BASE_URL=https://token-plan-sgp.xiaomimimo.com/anthropic
+```
+
+```yaml
+runtime: harness
+engine: claude
+model: mimo-v2.5-pro
+system: |
+  You are a helpful coding assistant in a remote sandbox workspace.
+```
+
+```bash
+magent agent:create \
+  --name "my-claude-sandbox" \
+  --runtime harness \
+  --engine claude \
+  --file ./agent.sandbox.yaml \
+  --code ./packages/agent-runtime \
+  -e "$CLOUDBASE_ENV_ID"
+```
 
 ---
 

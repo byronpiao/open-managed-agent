@@ -136,6 +136,25 @@ session/delete → export + 可选 workspace/snapshot（COS）
 
 ---
 
+## 4b. Claude SessionStore（`engine=claude`）
+
+```text
+prompt 结束 → claude-agent-sdk SessionStore → harness_claude_session_entries（CloudBase）
+AGS TTL / re-acquire → session/load（replay:false）从 CloudBase 恢复 SDK 会话
+箱内进程：claude-acp-harness.js（HARNESS_CLAUDE_SESSION_STORE=1）
+```
+
+| 项 | 说明 |
+|----|------|
+| SoR | CloudBase `harness_claude_*`（非 `/tmp/.claude`） |
+| 箱内 config | `CLAUDE_CONFIG_DIR=/tmp/.claude`（ephemeral，仅 SDK 本地缓存） |
+| LLM | 宿主机 `LLM_API_KEY` + `ANTHROPIC_BASE_URL`（Mimo `…/anthropic`）→ 沙箱 `ANTHROPIC_*`（OMA 映射） |
+| 镜像 | magent 须含 `dist/agents/claude-acp-harness.js` + `@cloudbase/open-agent-kernel`（见 TRW `vendor/`） |
+
+OMA re-acquire 后 `claude-session-warm.ts` 调箱内 `session/load`（`replay:false`），与 opencode 的 `harness_sync_events` replay 互补。
+
+---
+
 ## 5. 能力清单
 
 | # | 能力 | 实现 | 验收 |

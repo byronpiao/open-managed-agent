@@ -656,6 +656,124 @@ async function testSyncPersistence() {
   await rpc("/acp", "session/delete", { sessionId });
 }
 
+function resolveClaudeAgentConfig() {
+  return {
+    ...BASE_AGENT_CONFIG,
+    model: process.env.LLM_MODEL?.trim() ?? "mimo-v2.5-pro",
+    engine: "claude",
+  };
+}
+
+async function testClaudeSessionPersistence() {
+  const { hasHarnessAnthropicLlmEnv } = await import(
+    "../../packages/agent-runtime/dist/harness/harness-env.js"
+  );
+  if (!hasHarnessAnthropicLlmEnv()) {
+    console.warn(
+      "⚠ claude SessionStore e2e skipped: set LLM_API_KEY + LLM_MODEL + ANTHROPIC_BASE_URL in .env.harness",
+    );
+    return;
+  }
+
+  assertHarnessCreds();
+  const envId = process.env.CLOUDBASE_ENV_ID;
+  const token = `CLD${Date.now().toString(36)}`;
+
+  stopRuntime();
+  await sleep(500);
+  await startRuntime({ useCloudDb: true, agentConfig: resolveClaudeAgentConfig() });
+
+  const sessionId = crypto.randomUUID();
+  await rpc("/acp", "session/new", { sessionId, meta: { userId: "e2e-claude-sync" } });
+
+  await waitSandboxReady(sessionId);
+  await sleep(8000);
+
+  let firstText = "";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(5000);
+    const first = await promptSessionText(
+      sessionId,
+      `Remember exactly this token: ${token}. Reply with OK only.`,
+      301 + attempt,
+    );
+    if (first.includes('"code":-32000')) {
+      console.warn(`claude sync: prompt attempt ${attempt + 1}: ${first.slice(0, 280)}`);
+      continue;
+    }
+    firstText = extractAllSseText(first);
+    if (firstText.trim().length > 0) break;
+  }
+  assert.ok(
+    firstText.trim().length > 0,
+    `claude: first prompt produced no LLM text (ANTHROPIC_* / magent image): ${firstText.slice(0, 200)}`,
+  );
+
+  const { getHarnessSessionStore } = await import(
+    "../../packages/agent-runtime/dist/harness/sandbox/session-store.js"
+  );
+  const { countHarnessClaudeSessionEntries } = await import(
+    "../../packages/agent-runtime/dist/harness/claude-session-probe.js"
+  );
+
+  let row = null;
+  for (let i = 0; i < 36; i++) {
+    row = await getHarnessSessionStore(envId).get(sessionId);
+    if (row?.engineSessionId) break;
+    await sleep(500);
+  }
+  assert.ok(row?.engineSessionId, "claude: expected engineSessionId after first prompt");
+
+  let entryCount = 0;
+  for (let i = 0; i < 36; i++) {
+    entryCount = await countHarnessClaudeSessionEntries(row.engineSessionId);
+    if (entryCount > 0) break;
+    await sleep(2000);
+  }
+  assert.ok(
+    entryCount > 0,
+    `expected harness_claude_session_entries for ${row.engineSessionId} (magent needs claude-acp-harness.js)`,
+  );
+
+  stopRuntime();
+  await sleep(800);
+  await startRuntime({ useCloudDb: true, agentConfig: resolveClaudeAgentConfig() });
+
+  const loadRes = await sandboxFetch(`${BASE}/acp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 302,
+      method: "session/load",
+      params: { sessionId, replay: true },
+    }),
+  });
+  const loadText = await loadRes.text();
+  assert.ok(!loadText.includes('"code":-32000'), `claude session/load failed: ${loadText.slice(0, 400)}`);
+
+  await waitSandboxReady(sessionId);
+  await sleep(8000);
+
+  let recallText = "";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(5000);
+    const recallBody = await promptSessionText(
+      sessionId,
+      `What is the exact token I asked you to remember? Reply with ONLY that token.`,
+      303 + attempt,
+    );
+    recallText = extractAllSseText(recallBody);
+    if (recallText.includes(token) || recallBody.includes(token)) break;
+  }
+  assert.ok(
+    recallText.includes(token),
+    `claude post-reload should recall token ${token}: ${recallText.slice(0, 300)}`,
+  );
+
+  await rpc("/acp", "session/delete", { sessionId });
+}
+
 async function testSandboxPrompt() {
   assertHarnessCreds();
   stopRuntime();
@@ -974,6 +1092,8 @@ async function main() {
           ? "✓ opencode sync export → CloudBase → hydrate → session/load → token recall"
           : "✓ opencode sync export → CloudBase → hydrate → session/load replay (zen)",
       );
+      await testClaudeSessionPersistence();
+      console.log("✓ claude SessionStore → CloudBase → runtime restart → token recall");
       await testSandboxPrompt();
       console.log("✓ session/prompt → AGS sandbox SSE");
       await testSandboxCustomToolLoop();

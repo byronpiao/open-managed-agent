@@ -31,10 +31,21 @@ export function resolveOpenAiCompatProvider(config: AgentConfig): CompatLlmProvi
   return { apiKey, baseUrl, model };
 }
 
-/** Anthropic Messages → claude ACP. Uses ANTHROPIC_BASE_URL (not OPENAI_BASE_URL). */
+/** Anthropic / Mimo tp-* key (Messages API). */
+export function resolveAnthropicApiKeyFromEnv(): string | undefined {
+  return (
+    process.env.LLM_API_KEY?.trim() ||
+    process.env.ANTHROPIC_AUTH_TOKEN?.trim() ||
+    process.env.ANTHROPIC_API_KEY?.trim() ||
+    process.env.CLAUDE_API_KEY?.trim() ||
+    undefined
+  );
+}
+
+/** Anthropic Messages → claude ACP. Uses ANTHROPIC_BASE_URL (e.g. Mimo `…/anthropic`). */
 export function resolveAnthropicCompatProvider(config: AgentConfig): CompatLlmProvider | null {
   if (process.env.HARNESS_FORCE_ZEN === "1") return null;
-  const apiKey = process.env.LLM_API_KEY?.trim();
+  const apiKey = resolveAnthropicApiKeyFromEnv();
   let baseUrl = process.env.ANTHROPIC_BASE_URL?.trim();
   const model = process.env.LLM_MODEL?.trim() ?? modelId(config);
   if (!apiKey || !model) return null;

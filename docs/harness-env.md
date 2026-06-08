@@ -89,6 +89,14 @@ Tool 名：`oma-harness-{env}-no-cos`；`HARNESS_COS_ENABLED=1` 时用 `oma-harn
 
 `agent.yaml` ModelSpec（对客部署）优先于 `LLM_*`。
 
+### claude LLM（`engine=claude`）
+
+| 变量 | 说明 |
+|------|------|
+| `LLM_API_KEY` | API Key（如 Mimo `tp-*`） |
+| `LLM_MODEL` | 模型 ID |
+| `ANTHROPIC_BASE_URL` | Anthropic Messages 兼容端点（Mimo 示例：`https://token-plan-sgp.xiaomimimo.com/anthropic`） |
+
 ---
 
 ## 相关
