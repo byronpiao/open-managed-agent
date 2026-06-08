@@ -40,7 +40,17 @@ node scripts/harness/load-env.mjs --check --probe-llm
 | ③ | `LLM_*`（仅 `harness -- cloud-tcbr` / `cloud-scf` custom） |
 | ④ | 沙箱镜像 / `HARNESS_TOOL_ID` |
 | ⑤ | `HARNESS_CLOUD_AGENT_ID` / `HARNESS_CLOUD_SCF_AGENT_ID` |
-| ⑥ | `HARNESS_COS_*` |
+| ⑥ | `HARNESS_COS_*`（工作区跨沙箱持久化，见下） |
+
+### ⑥ COS — 工作区 vs 对话
+
+| | 不启用 COS（默认） | 启用 `HARNESS_COS_ENABLED=1` |
+|--|-------------------|------------------------------|
+| **多轮对话** | `harness_sessions` + `harness_sync_events` replay | 同上 |
+| **沙箱内文件**（代码、build 产物等） | AGS TTL / re-acquire 后丢失 | COS mount + snapshot，**跨沙箱保留工作区现场** |
+| **验收** | `test:full` 不要求 COS | `harness -- local` 含 cos-e2e 硬门 |
+
+创箱时按 session 隔离 COS subpath；`session/delete` 触发 TRW `workspace/snapshot`（见 [harness-architecture.md §4](./harness-architecture.md)）。
 
 ---
 

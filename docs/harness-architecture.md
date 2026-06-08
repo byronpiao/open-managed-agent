@@ -96,9 +96,13 @@ cd ../open-managed-agent && ./scripts/harness/build-push-magent-public.sh
 
 tool update 后约 **120s** 再 start。
 
-### COS 探针
+### COS（可选 — 工作区跨沙箱）
 
-`.env.harness` 中 `HARNESS_COS_ENABLED=1` 且填齐 `HARNESS_COS_*` → `harness -- local` 执行 snapshot 探针。
+**默认不启用**：对话连续性靠 `harness_sync_events`（opencode sync replay）；沙箱本地磁盘随 AGS 实例 TTL 清空，属设计预期。
+
+**启用 COS**（`.env.harness` ⑥ 段）：AGS 挂载 COS 工作区，`session/delete` 时 `workspace/snapshot` → **跨沙箱 / re-acquire 保留文件现场**（与对话 replay 互补）。
+
+`.env.harness` 中 `HARNESS_COS_ENABLED=1` 且填齐 `HARNESS_COS_*` → `harness -- local` 执行 cos-e2e / `cos-probe` 探针。
 
 ---
 
