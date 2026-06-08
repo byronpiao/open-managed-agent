@@ -137,9 +137,13 @@ export function engineToDataPlaneSlug(engine: HarnessEngine): DataPlaneEngineSlu
   }
 }
 
+/** Env slug for AGS tool names (`oma-harness-{slug}-{no-cos|with-cos}`). */
+export function harnessEnvSlug(envId: string, maxLen = 40): string {
+  return envId.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, maxLen) || "default";
+}
+
 export function harnessToolNameForEnv(envId: string): string {
-  const slug = envId.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 48);
-  return `harness-${slug || "default"}`;
+  return `oma-harness-${harnessEnvSlug(envId)}-no-cos`;
 }
 
 /** AGS StartSandboxInstance CustomConfiguration.Env entries (F4 / D1). */

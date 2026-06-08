@@ -24,7 +24,7 @@ if (!image) {
 }
 if (!toolId) {
   console.error(
-    "HARNESS_TOOL_ID not set — orchestrator auto-ensures harness-{CLOUDBASE_ENV_ID}. " +
+    "HARNESS_TOOL_ID not set — orchestrator auto-ensures oma-harness-{env}-no-cos|with-cos. " +
       "Set HARNESS_TOOL_ID in .env.harness only when pinning an existing tool.",
   );
   process.exit(1);

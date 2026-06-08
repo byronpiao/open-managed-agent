@@ -38,7 +38,7 @@ else
   cat > "$HARNESS_ENV" <<EOF
 # Generated $(date +%Y-%m-%d) — magent preset public CCR (gitignored)
 HARNESS_SANDBOX_IMAGE=$FULL_IMAGE
-# HARNESS_TOOL_ID unset — orchestrator auto-ensures harness-{CLOUDBASE_ENV_ID}
+# HARNESS_TOOL_ID unset — orchestrator auto-ensures oma-harness-{env}-no-cos|with-cos
 EOF
   echo "Wrote $HARNESS_ENV (gitignored; loaded by scripts/harness/load-env.mjs)"
 fi

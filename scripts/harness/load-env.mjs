@@ -111,7 +111,10 @@ if (isCli) {
         console.log(`  COS=${cosMissing.length ? `missing ${cosMissing.join(",")}` : "ok"}`);
       }
       console.log(
-        `  HARNESS_TOOL_ID=${process.env.HARNESS_TOOL_ID ?? "(unset — auto harness-{CLOUDBASE_ENV_ID})"}`,
+        `  HARNESS_TOOL_ID=${process.env.HARNESS_TOOL_ID ?? "(unset — auto oma-harness-{env}-no-cos|with-cos)"}`,
+      );
+      console.log(
+        `  HARNESS_TOOL_ROLE_ARN=${process.env.HARNESS_TOOL_ROLE_ARN ? "(set)" : "(unset — required when auto-creating AGS tools)"}`,
       );
       console.log(`  HARNESS_CLOUD_AGENT_ID=${process.env.HARNESS_CLOUD_AGENT_ID ?? "(unset)"}`);
       console.log(`  HARNESS_CLOUD_SCF_AGENT_ID=${process.env.HARNESS_CLOUD_SCF_AGENT_ID ?? "(unset)"}`);

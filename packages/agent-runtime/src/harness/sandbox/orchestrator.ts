@@ -12,7 +12,11 @@ import {
   engineToDataPlaneSlug,
   type DataPlaneEngineSlug,
 } from "../../config.js";
-import { resolveHarnessSandboxImage, resolveHarnessToolRoleArn } from "../harness-env.js";
+import {
+  resolveCamControlPlaneCredentials,
+  resolveHarnessSandboxImage,
+  resolveHarnessToolRoleArn,
+} from "../harness-env.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 import { harnessTrace, harnessLog } from "../logging.js";
 import {
@@ -94,18 +98,10 @@ export interface AcquireHarnessSandboxArgs {
 
 function resolveCredentials(opts: OrchestratorOptions): ResolvedCredentials {
   const apiKey = opts.apiKey ?? process.env.TCB_API_KEY ?? "";
-  const secretId =
-    opts.secretId ??
-    process.env.TCB_SECRET_ID ??
-    process.env.TENCENTCLOUD_SECRETID ??
-    "";
-  const secretKey =
-    opts.secretKey ??
-    process.env.TCB_SECRET_KEY ??
-    process.env.TENCENTCLOUD_SECRETKEY ??
-    "";
-  const sessionToken =
-    opts.sessionToken ?? process.env.TCB_TOKEN ?? process.env.TENCENTCLOUD_SESSIONTOKEN;
+  const cam = resolveCamControlPlaneCredentials();
+  const secretId = opts.secretId ?? cam.secretId;
+  const secretKey = opts.secretKey ?? cam.secretKey;
+  const sessionToken = opts.sessionToken ?? cam.sessionToken;
 
   if (!apiKey) {
     throw new SandboxOrchestratorError(
@@ -575,6 +571,7 @@ export class AgsStatefulSandboxOrchestrator {
         await ensureCosSubPath(cos, {
           secretId: cred.secretId,
           secretKey: cred.secretKey,
+          sessionToken: cred.sessionToken,
         });
       }
 

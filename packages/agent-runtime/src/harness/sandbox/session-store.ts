@@ -4,6 +4,7 @@
  */
 
 import type { HarnessEngine } from "../../config.js";
+import { resolveCamControlPlaneCredentials } from "../harness-env.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 import { harnessTrace, harnessLog } from "../logging.js";
 
@@ -353,12 +354,10 @@ interface CloudBaseDocRef {
 }
 
 function resolveCloudBaseCredentials(envId: string): CloudBaseCredentials | null {
-  const secretId =
-    process.env.TCB_SECRET_ID ?? process.env.TENCENTCLOUD_SECRETID ?? "";
-  const secretKey =
-    process.env.TCB_SECRET_KEY ?? process.env.TENCENTCLOUD_SECRETKEY ?? "";
-  const sessionToken =
-    process.env.TCB_TOKEN ?? process.env.TENCENTCLOUD_SESSIONTOKEN ?? undefined;
+  const cam = resolveCamControlPlaneCredentials();
+  const secretId = cam.secretId;
+  const secretKey = cam.secretKey;
+  const sessionToken = cam.sessionToken;
   const region = process.env.TCB_REGION?.trim();
   if (!secretId || !secretKey || !region) return null;
   return {

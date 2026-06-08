@@ -3,6 +3,8 @@
  * 除 HARNESS_PUBLIC_MAGENT_IMAGE 外不设兜底魔法值。
  */
 
+import { getScfCamFromContext } from "./scf-cam-context.js";
+
 /** 唯一允许内置的默认：公开 CCR magent 镜像（可用 HARNESS_SANDBOX_IMAGE 覆盖）。 */
 export const HARNESS_PUBLIC_MAGENT_IMAGE =
   "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260608-1044-2d795e-magent";
@@ -114,6 +116,44 @@ export function assertHarnessCosEnv(): void {
       `HARNESS_COS_ENABLED=1 requires: ${missing.join(", ")}. See .env.harness.example`,
     );
   }
+}
+
+/** CAM control-plane creds for harness (DB, AGS, COS). SCF uses role temp keys (+ SessionToken). */
+export function resolveCamControlPlaneCredentials(): {
+  secretId: string;
+  secretKey: string;
+  sessionToken?: string;
+} {
+  if (isScfServerless()) {
+    const fromHeaders = getScfCamFromContext();
+    if (fromHeaders?.secretId && fromHeaders.secretKey) return fromHeaders;
+    return {
+      secretId:
+        process.env.TENCENTCLOUD_SECRETID?.trim() ??
+        process.env.TCB_SECRET_ID?.trim() ??
+        "",
+      secretKey:
+        process.env.TENCENTCLOUD_SECRETKEY?.trim() ??
+        process.env.TCB_SECRET_KEY?.trim() ??
+        "",
+      sessionToken:
+        process.env.TENCENTCLOUD_SESSIONTOKEN?.trim() ??
+        process.env.TCB_TOKEN?.trim(),
+    };
+  }
+  return {
+    secretId:
+      process.env.TCB_SECRET_ID?.trim() ??
+      process.env.TENCENTCLOUD_SECRETID?.trim() ??
+      "",
+    secretKey:
+      process.env.TCB_SECRET_KEY?.trim() ??
+      process.env.TENCENTCLOUD_SECRETKEY?.trim() ??
+      "",
+    sessionToken:
+      process.env.TCB_TOKEN?.trim() ??
+      process.env.TENCENTCLOUD_SESSIONTOKEN?.trim(),
+  };
 }
 
 /** True inside Tencent SCF zip/image web functions (stateless; no in-memory prewarm). */

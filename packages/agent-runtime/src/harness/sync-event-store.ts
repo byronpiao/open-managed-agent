@@ -2,6 +2,7 @@
  * harness_sync_events — authoritative opencode sync event log (CloudBase or memory).
  */
 
+import { resolveCamControlPlaneCredentials } from "./harness-env.js";
 import { harnessLog, harnessTrace } from "./logging.js";
 
 export const HARNESS_SYNC_EVENTS_COLLECTION = "harness_sync_events";
@@ -181,19 +182,14 @@ class CloudBaseHarnessSyncEventStore implements HarnessSyncEventStore {
 }
 
 function resolveCloudBaseCredentials(envId: string): CloudBaseCredentials | null {
-  const secretId =
-    process.env.TCB_SECRET_ID ?? process.env.TENCENTCLOUD_SECRETID ?? "";
-  const secretKey =
-    process.env.TCB_SECRET_KEY ?? process.env.TENCENTCLOUD_SECRETKEY ?? "";
-  const sessionToken =
-    process.env.TCB_TOKEN ?? process.env.TENCENTCLOUD_SESSIONTOKEN ?? undefined;
+  const cam = resolveCamControlPlaneCredentials();
   const region = process.env.TCB_REGION?.trim();
-  if (!secretId || !secretKey || !region) return null;
+  if (!cam.secretId || !cam.secretKey || !region) return null;
   return {
     envId,
-    secretId,
-    secretKey,
-    sessionToken,
+    secretId: cam.secretId,
+    secretKey: cam.secretKey,
+    sessionToken: cam.sessionToken,
     region,
   };
 }

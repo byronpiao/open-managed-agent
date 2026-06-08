@@ -329,6 +329,7 @@ export function normalizeAgentRuntime(
 
 /** Host env forwarded into cloud runtime container for orchestrator / LLM / COS. */
 const HARNESS_DEPLOY_ENV_KEYS = [
+  "HARNESS_TOOL_ROLE_ARN",
   "TCB_REGION",
   "LLM_API_KEY",
   "LLM_MODEL",

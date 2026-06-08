@@ -4,6 +4,7 @@
  */
 
 import COS from "cos-nodejs-sdk-v5";
+import { harnessEnvSlug } from "../../config.js";
 import { assertHarnessCosEnv, requireEnv } from "../harness-env.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 
@@ -30,8 +31,7 @@ function stripLeadingSlash(p: string): string {
 }
 
 export function harnessCosToolNameForEnv(envId: string): string {
-  const slug = envId.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 44);
-  return `harness-cos-${slug || "default"}`;
+  return `oma-harness-${harnessEnvSlug(envId, 38)}-with-cos`;
 }
 
 export function resolveHarnessCosConfig(args?: {
@@ -105,11 +105,12 @@ export function cosObjectKeyForSubPath(cos: HarnessCosConfig): string {
 /** Pre-create BucketPath/SubPath on COS (platform requires prefix before instance start). */
 export async function ensureCosSubPath(
   cos: HarnessCosConfig,
-  cred: { secretId: string; secretKey: string },
+  cred: { secretId: string; secretKey: string; sessionToken?: string },
 ): Promise<void> {
   const client = new COS({
     SecretId: cred.secretId,
     SecretKey: cred.secretKey,
+    ...(cred.sessionToken ? { SecurityToken: cred.sessionToken } : {}),
   });
   const Key = cosObjectKeyForSubPath(cos);
   await new Promise<void>((resolve, reject) => {

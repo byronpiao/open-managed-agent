@@ -27,8 +27,20 @@ node scripts/harness/load-env.mjs --check --probe-llm
 | `CLOUDBASE_ENV_ID` | 环境 ID |
 | `TCB_REGION` | 如 `ap-shanghai` |
 | `TCB_API_KEY` | AGS JWT |
-| `TCB_SECRET_ID` / `TCB_SECRET_KEY` | 腾讯云密钥 |
+| `TCB_SECRET_ID` / `TCB_SECRET_KEY` | 本地 CLI、**tcbr deploy**；**SCF 函数 env 不要 forward**（见下） |
 | `CLOUDBASE_ACCESS_KEY` | 网关 API |
+
+### 云上 CAM：tcbr vs SCF
+
+| | tcbr 容器 | SCF 云函数 |
+|--|-----------|------------|
+| 操作者 `TCB_SECRET_*` | `magent agent:create/update` 写入容器 env | **仅宿主机**（`tcb login` / shell）；**禁止**写入函数 env（`TENCENTCLOUD_*` 为平台预留） |
+| 运行时临时密钥 | 容器内 `TCB_SECRET_*`（或 STS） | 执行角色自动注入 `TENCENTCLOUD_SECRETID` / `SECRETKEY` / `SESSIONTOKEN` |
+| 参考 | [buildCloudRunEnvParam](../lib/cloudrun.mjs) | [腾讯云 SCF 环境变量](https://docs.cloudbase.net/cloud-function/function-configuration/env) |
+
+Harness 运行时（`resolveCamControlPlaneCredentials`）：SCF 内优先读请求头 `X-Scf-Secret-*`（Web 函数），其次 `TENCENTCLOUD_*`；COS `putObject` 必须带 `SessionToken`（角色临时密钥）。
+
+`agent:update`（SCF）会**整表替换**函数 env，须与 `agent:create` 共用同一套 `buildScfDeployEnvMap`（含 `TCB_REGION`、`HARNESS_TOOL_ROLE_ARN`、COS 段等）。
 
 ---
 
@@ -38,9 +50,11 @@ node scripts/harness/load-env.mjs --check --probe-llm
 |----|------|
 | ② | `CLOUDBASE_AGENT_ID` |
 | ③ | `LLM_*`（仅 `harness -- cloud-tcbr` / `cloud-scf` custom） |
-| ④ | 沙箱镜像 / `HARNESS_TOOL_ID` |
+| ④ | 沙箱镜像 / **`HARNESS_TOOL_ROLE_ARN`**（无 `HARNESS_TOOL_ID` 时创 AGS tool 必填）/ `HARNESS_TOOL_ID` |
 | ⑤ | `HARNESS_CLOUD_AGENT_ID` / `HARNESS_CLOUD_SCF_AGENT_ID` |
 | ⑥ | `HARNESS_COS_*`（工作区跨沙箱持久化，见下） |
+
+Tool 名：`oma-harness-{env}-no-cos`；`HARNESS_COS_ENABLED=1` 时用 `oma-harness-{env}-with-cos`（独立 tool + `StorageMounts`）。
 
 ### ⑥ COS — 工作区 vs 对话
 

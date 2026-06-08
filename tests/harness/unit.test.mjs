@@ -80,8 +80,11 @@ test("engineToDataPlaneSlug maps claude → claudecode", () => {
   assert.equal(engineToDataPlaneSlug("opencode"), "opencode");
 });
 
-test("harnessToolNameForEnv uses harness- prefix", () => {
-  assert.equal(harnessToolNameForEnv("test-6g2rfs50c69b7fb8"), "harness-test-6g2rfs50c69b7fb8");
+test("harnessToolNameForEnv uses oma-harness-…-no-cos suffix", () => {
+  assert.equal(
+    harnessToolNameForEnv("test-6g2rfs50c69b7fb8"),
+    "oma-harness-test-6g2rfs50c69b7fb8-no-cos",
+  );
 });
 
 test("buildManagedAgentClientMcpUrl embeds acpSessionId query param", () => {
@@ -552,8 +555,11 @@ test("harness sync event store append + hydrate round-trip", async () => {
   resetHarnessSyncEventStoreForTests();
 });
 
-test("harnessCosToolNameForEnv prefix", () => {
-  assert.equal(harnessCosToolNameForEnv("test-6g2rfs50c69b7fb8"), "harness-cos-test-6g2rfs50c69b7fb8");
+test("harnessCosToolNameForEnv uses oma-harness-…-with-cos suffix", () => {
+  assert.equal(
+    harnessCosToolNameForEnv("test-6g2rfs50c69b7fb8"),
+    "oma-harness-test-6g2rfs50c69b7fb8-with-cos",
+  );
 });
 
 test("resolveHarnessCosConfig returns null when disabled", () => {

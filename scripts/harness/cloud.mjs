@@ -35,7 +35,7 @@ function execOutputBlob(err) {
 
 /** tcbr redeploy may still hold the service lock when agent:update runs. */
 async function agentUpdateWithRetry(agentId, yamlPath, envId, opts = {}) {
-  const cmd = `node "${magent}" agent:update -i "${agentId}" -f "${yamlPath}" --runtime harness --engine opencode -e "${envId}"`;
+  const cmd = `node "${magent}" agent:update -a "${agentId}" -f "${yamlPath}" --runtime harness --engine opencode -e "${envId}"`;
   const maxAttempts = Number(process.env.HARNESS_CLOUD_UPDATE_RETRIES) || 12;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -129,14 +129,10 @@ async function deployCloudHarness(argv, backend = "tcbr") {
   let agentId = agentIdArg;
 
   if (agentId) {
-    if (backend === "tcbr") {
-      console.log(`=== magent cloudrun:redeploy ${agentId} ===`);
-      sh(`node "${magent}" cloudrun:redeploy -i "${agentId}" -e "${envId}" --code "${runtimeRoot}"`);
-      await agentUpdateWithRetry(agentId, yamlPath, envId, { afterRedeploy: true });
-    } else {
-      console.log(`=== magent agent:update (SCF harness ${agentId}) ===`);
-      await agentUpdateWithRetry(agentId, yamlPath, envId);
-    }
+    console.log(`=== magent agent:update (${backend} harness ${agentId}) ===`);
+    await agentUpdateWithRetry(agentId, yamlPath, envId, {
+      afterRedeploy: backend === "tcbr",
+    });
   } else if (backend === "tcbr") {
     console.log("=== magent agent:create (tcbr harness, ~3–5 min) ===");
     const createOut = execSync(
@@ -163,7 +159,7 @@ async function deployCloudHarness(argv, backend = "tcbr") {
   let base = process.env.CLOUDBASE_SERVER_URL?.trim();
   if (!base || base.includes("127.0.0.1") || base.includes("localhost")) {
     try {
-      const detail = execSync(`node "${magent}" agent:get -i "${agentId}" -e "${envId}"`, {
+      const detail = execSync(`node "${magent}" agent:get -a "${agentId}" -e "${envId}"`, {
         encoding: "utf-8",
       });
       const urlMatch = detail.match(/https:\/\/[^\s]+\.tcloudbase\.com[^\s]*/i);
