@@ -42,10 +42,10 @@ WORKDIR /app
 COPY package*.json ./
 COPY vendor ./vendor
 
-RUN npm install --omit=dev --no-audit --no-fund --legacy-peer-deps \
+RUN npm install --omit=dev --no-audit --no-fund \
         --os=linux --cpu=x64 --include=optional --force \
  && rm -f node_modules/.package-lock.json \
- && npm install --omit=dev --no-audit --no-fund --legacy-peer-deps \
+ && npm install --omit=dev --no-audit --no-fund \
         --os=linux --cpu=x64 --include=optional --force \
  && test -x node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude \
  || (echo "FATAL: claude-agent-sdk-linux-x64/claude binary missing" && exit 1)

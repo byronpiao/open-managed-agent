@@ -36,17 +36,9 @@ import expressLib from "express";
 import type { AgentConfig } from "./config.js";
 import { resolveRuntime } from "./config.js";
 import { mountHarnessAcpEndpoint } from "./harness/acp-endpoint.js";
-import {
-  isAcpUuid,
-  rpcError,
-  rpcResult,
-  sseDone,
-  sseSessionUpdate,
-  sseStart,
-  sseWrite,
-} from "./acp-shared.js";
 import type { MessageRecord } from "@cloudbase/open-agent-kernel";
 import {
+  abortKernelSession,
   dropKernelSession,
   getKernelAgent,
   getOrCreateKernelSession,
@@ -59,7 +51,56 @@ import {
   type StopReason,
 } from "./kernel-adapter.js";
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuid(s: string): boolean {
+  return UUID_RE.test(s);
+}
+
 const abortControllers = new Map<string, AbortController>();
+
+// ── JSON-RPC helpers ─────────────────────────────────────────────────────────
+
+function rpcResult(id: unknown, result: unknown) {
+  return { jsonrpc: "2.0", id, result };
+}
+
+function rpcError(id: unknown, code: number, message: string, data?: unknown) {
+  return { jsonrpc: "2.0", id, error: { code, message, ...(data ? { data } : {}) } };
+}
+
+// ── SSE helpers ──────────────────────────────────────────────────────────────
+
+function sseStart(res: Response) {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+}
+
+function sseWrite(res: Response, payload: unknown) {
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function sseDone(res: Response, sse?: { getAll?: () => string }) {
+  // SCF web-function: only res.end() content reaches the client.
+  // All intermediate res.write() are dropped by the gateway.
+  // Deliver the entire SSE body — buffered frames + [DONE] — in one call.
+  const all = sse?.getAll?.() ?? "";
+  res.end(`${all}data: [DONE]\n\n`);
+}
+
+function sseSessionUpdate(res: Response, sessionId: string, update: unknown) {
+  sseWrite(res, {
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId, update },
+  });
+}
 
 // ── Translate kernel MessageRecord[] → ACP history messages ─────────────────
 
@@ -161,7 +202,7 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
   // conversation id — non-UUID ids crash the SDK child process. So we enforce
   // UUID at the wire boundary: clients must use UUIDs (e.g. crypto.randomUUID()).
   if (reqSessionId) {
-    if (!isAcpUuid(reqSessionId)) {
+    if (!isUuid(reqSessionId)) {
       throw Object.assign(
         new Error(
           `Invalid sessionId: must be a UUID (got "${reqSessionId.slice(0, 64)}"). ` +
@@ -185,9 +226,11 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
   return { sessionId: session.id, hasHistory: false };
 }
 
-async function handleSessionList(_params: Record<string, unknown>, config: AgentConfig) {
+async function handleSessionList(params: Record<string, unknown>, config: AgentConfig) {
   const agent = getKernelAgent(config);
-  const summaries = await agent.sessions.list({ limit: 50 });
+  const limit = Math.min(Math.max(Number(params.limit) || 50, 1), 200);
+  const offset = Math.max(Number(params.offset) || 0, 0);
+  const summaries = await agent.sessions.list({ limit: 200 });
   // De-duplicate by sessionId. The store can legitimately end up with two
   // rows per session under a narrow race: kernel's own registerSession
   // (fire-and-forget) and our syncRegisterSession both run within ~1ms, both
@@ -211,7 +254,7 @@ async function handleSessionList(_params: Record<string, unknown>, config: Agent
   const deduped = Array.from(dedupedMap.values());
   // Sort newest first
   deduped.sort((a, b) => b.updatedAt - a.updatedAt);
-  const sessions = deduped.map((s) => ({
+  const mapped = deduped.map((s) => ({
     sessionId: s.conversationId,
     title: s.title ?? "",
     updatedAt: s.updatedAt,
@@ -220,7 +263,9 @@ async function handleSessionList(_params: Record<string, unknown>, config: Agent
       createdAt: s.createdAt,
     },
   }));
-  return { sessions, nextCursor: null };
+  const sessions = mapped.slice(offset, offset + limit);
+  const nextOffset = offset + limit < mapped.length ? offset + limit : null;
+  return { sessions, nextCursor: nextOffset !== null ? String(nextOffset) : null };
 }
 
 async function handleSessionLoad(
@@ -298,39 +343,6 @@ async function handleSessionPrompt(
 
   const session = await getOrCreateKernelSession(config, sessionId);
 
-  // SCF diagnostic: test streaming model API to verify connectivity and format.
-  const model = config.model;
-  if (typeof model === "object" && model.apiBaseUrl && model.apiKey) {
-    try {
-      const testRes = await fetch(`${model.apiBaseUrl}/v1/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": model.apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": "interleaved-thinking-2025-05-14",
-        },
-        body: JSON.stringify({
-          model: model.id,
-          max_tokens: 16000,
-          thinking: { type: "enabled", budget_tokens: 5000 },
-          stream: true,
-          messages: [{ role: "user", content: "hi" }],
-        }),
-      });
-      const streamText = await testRes.text();
-      // Count delta types
-      const textDeltaCount = (streamText.match(/"type":"text_delta"/g) || []).length;
-      const thinkingDeltaCount = (streamText.match(/"type":"thinking_delta"/g) || []).length;
-      console.error(`[direct-stream] status=${testRes.status} len=${streamText.length} text_deltas=${textDeltaCount} thinking_deltas=${thinkingDeltaCount}`);
-      if (textDeltaCount === 0) {
-        console.error(`[direct-stream] NO TEXT DELTAS! first500: ${streamText.slice(0, 500)}`);
-      }
-    } catch (e) {
-      console.error(`[direct-stream] FAILED: ${(e as Error).message}`);
-    }
-  }
-
   sseStart(res);
   const sse = makeSseSink(res);
   const abortController = new AbortController();
@@ -377,11 +389,7 @@ async function handleSessionPrompt(
         .filter((b) => b.type === "text" && typeof b.text === "string")
         .map((b) => b.text!)
         .join("");
-      console.log(`[ACP] session.send text="${userText.slice(0,20)}" uid=${process.getuid?.()}`);
-      sse.write({ _diag: "before_send", textLen: userText.length, sessionId });
       events = session.send(userText);
-      console.log(`[ACP] session.send returned`);
-      sse.write({ _diag: "after_send", eventsType: typeof events });
     }
 
     const result = await pumpEvents(events, session, {
@@ -414,10 +422,8 @@ async function handleSessionCancel(params: Record<string, unknown>) {
     ctrl.abort();
     abortControllers.delete(sessionId);
   }
-  // Best-effort: tell the kernel to abort.
-  // (kernel session.abort() returns Promise<void>; ignore errors)
-  // Note: we don't have a sync handle here without a per-session lookup map,
-  // so we leave the kernel side to react via session.abort caller below if any.
+  // Tell the kernel to abort the session (best-effort).
+  await abortKernelSession(sessionId);
 }
 
 async function handleSessionDelete(params: Record<string, unknown>, config: AgentConfig) {
@@ -441,9 +447,23 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
   return { sessionId, deleted: true };
 }
 
-// ── Mount (managed / OAK) ───────────────────────────────────────────────────
+async function handleSessionResume(params: Record<string, unknown>, config: AgentConfig) {
+  const sessionId = String(params.sessionId ?? "");
+  if (!sessionId) throw new Error("sessionId is required");
+
+  const agent = getKernelAgent(config);
+  const session = await agent.resumeSession(sessionId);
+  registerKernelSession(sessionId, session);
+  console.log(`[ACP] session.resume sessionId=${sessionId}`);
+  return { sessionId };
+}
+
+// ── Mount function ──────────────────────────────────────────────────────────
 
 function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
+  app.use("/acp", expressLib.json({ limit: "10mb" }));
+  app.use("/v1/aibot/bots", expressLib.json({ limit: "10mb" }));
+
   // CORS — let chat-playground (cross-origin) talk to us.
   const corsHandler = (req: Request, res: Response, next: () => void) => {
     const origin = req.headers.origin as string | undefined;
@@ -513,6 +533,9 @@ function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
 
         case "session/delete":
           return res.json(rpcResult(id, await handleSessionDelete(params, agentConfig)));
+
+        case "session/resume":
+          return res.json(rpcResult(id, await handleSessionResume(params, agentConfig)));
 
         default:
           if (isNotification) return res.status(200).end();

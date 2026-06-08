@@ -136,13 +136,13 @@ magent agent:list
 #### 查看 Agent 详情
 
 ```bash
-magent agent:get --id agent_xxx
+magent agent:get -a agent_xxx
 ```
 
 #### 删除 Agent
 
 ```bash
-magent agent:delete --id agent_xxx
+magent agent:delete -a agent_xxx
 ```
 
 ---
@@ -186,9 +186,9 @@ magent session:create \
 #### 列出 / 查看 / 删除
 
 ```bash
-magent session:list
-magent session:get    --id sess_xxx
-magent session:delete --id sess_xxx
+magent session:list   -a agent_xxx
+magent session:get    -i sess_xxx -a agent_xxx
+magent session:delete -i sess_xxx -a agent_xxx
 ```
 
 ---
@@ -392,10 +392,10 @@ magent chat \
   --message "迭代版本改为支持大数（超过64位），使用 Python 的 int"
 
 # Step 5: 查看会话状态
-magent session:get --id sess_task456
+magent session:get -i sess_task456 -a agent_code123
 
 # Step 6: 清理
-magent session:delete --id sess_task456
+magent session:delete -i sess_task456 -a agent_code123
 ```
 
 ### 场景：批量处理（多 Agent 并行）
@@ -530,16 +530,16 @@ export CLOUDBASE_ENV_ID=your-env-id
 # ── Agent ─────────────────────────────────────────────────
 magent agent:create  --name "Bot" --system "You are helpful"
 magent agent:list
-magent agent:delete  --id agent_xxx
+magent agent:delete  -a agent_xxx
 
 # ── 一次性任务 ────────────────────────────────────────────
 magent run --agent agent_xxx --message "做某件事"
 
 # ── 多轮对话 ──────────────────────────────────────────────
-magent session:create --agent agent_xxx --title "My task"
-magent chat --session sess_xxx --message "第一条消息"
-magent chat --session sess_xxx --message "继续..."
-magent session:delete --id sess_xxx
+magent session:create -a agent_xxx --title "My task"
+magent chat -s sess_xxx -m "第一条消息"
+magent chat -s sess_xxx -m "继续..."
+magent session:delete -i sess_xxx -a agent_xxx
 
 # ── 交互式 REPL ───────────────────────────────────────────
 magent repl --agent agent_xxx

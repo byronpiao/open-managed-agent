@@ -7,26 +7,22 @@
  * This tests the underlying AI infrastructure (model, streaming, etc.)
  *
  * Usage:
- *   cp .env.example .env && fill CLOUDBASE_* / TCB_API_KEY
  *   tsx tests/agui-integration.ts
  */
 
-import { loadProjectEnv } from "../scripts/env.mjs";
+// ── Configuration ─────────────────────────────────────────────────────────────
 
-loadProjectEnv();
+const ENV_ID = process.env.CLOUDBASE_ENV_ID ?? "";
+const AGENT_ID = process.env.CLOUDBASE_AGENT_ID ?? "";
+const API_KEY = process.env.CLOUDBASE_ACCESS_KEY ?? "";
 
-// ── Configuration (from .env — never hardcode tokens) ─────────────────────────
+if (!ENV_ID || !AGENT_ID || !API_KEY) {
+  console.error("Error: CLOUDBASE_ENV_ID, CLOUDBASE_AGENT_ID, and CLOUDBASE_ACCESS_KEY are required");
+  console.error("Set them in .env or export them before running tests");
+  process.exit(1);
+}
 
-const ENV_ID = process.env.CLOUDBASE_ENV_ID?.trim() ?? "";
-const AGENT_ID =
-  process.env.AGENT_ID?.trim() ||
-  process.env.CLOUDBASE_AGENT_ID?.trim() ||
-  "agent-cbscf-2gul72blf46052d5";
-const API_KEY =
-  process.env.CLOUDBASE_ACCESS_KEY?.trim() || process.env.TCB_API_KEY?.trim() || "";
-const BASE_URL = ENV_ID
-  ? `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}`
-  : "";
+const BASE_URL = `https://${ENV_ID}.api.tcloudbasegateway.com/v1/aibot/bots/${AGENT_ID}`;
 
 // ── Test Infrastructure ───────────────────────────────────────────────────────
 
@@ -119,15 +115,8 @@ async function sendMessage(
 async function main() {
   console.log("\n\x1b[1m CloudBase AG-UI Integration Tests (Fallback)\x1b[0m");
   console.log(`  Agent: ${AGENT_ID}`);
-  console.log(`  URL: ${BASE_URL ? `${BASE_URL}/send-message` : "(unset — need CLOUDBASE_ENV_ID in .env)"}`);
+  console.log(`  URL: ${BASE_URL}/send-message`);
   console.log();
-
-  if (!ENV_ID || !API_KEY) {
-    console.error(
-      "\x1b[33mSkipped: set CLOUDBASE_ENV_ID and CLOUDBASE_ACCESS_KEY (or TCB_API_KEY) in .env\x1b[0m",
-    );
-    process.exit(0);
-  }
 
   // ── Test 1: Basic SSE Streaming ───────────────────────────────────────────
   await runTest("1. AG-UI send-message returns SSE stream", async () => {

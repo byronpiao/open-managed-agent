@@ -32,8 +32,8 @@ const port = Number(process.env.PORT ?? 9000);
 async function main() {
   const rawConfig = await loadAgentConfig();
   const config = await resolveSkills(rawConfig);
-
   const { runtime, engine } = resolveRuntime(config);
+
   if (runtime === "harness") {
     initHarnessLogging();
     harnessLog({
@@ -71,9 +71,9 @@ async function main() {
       ok: true,
       name: config.name,
       model: config.model,
-      buildMarker: "oma-runtime-v1",
       runtime,
       engine: runtime === "harness" ? engine : undefined,
+      buildMarker: runtime === "harness" ? "oma-runtime-v1" : "syncRegisterSession-v3",
     };
     if (runtime === "harness") {
       const envId =
