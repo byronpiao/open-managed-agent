@@ -7,7 +7,7 @@ import { resolveRuntime } from "../../config.js";
 import { buildHarnessSandboxEnv } from "../deploy.js";
 import { harnessLog } from "../logging.js";
 import { warmClaudeEngineSession } from "../claude-session-warm.js";
-import { hydrateOpencodeSyncEvents } from "../opencode-sync.js";
+import { hydrateOpencodeSyncEvents, persistOpencodeSyncForSession } from "../opencode-sync.js";
 import { getHarnessSyncEventStore } from "../sync-event-store.js";
 import {
   createE2eStubSandboxHandle,
@@ -22,6 +22,8 @@ import { getHarnessSessionStore } from "./session-store.js";
 
 const prewarmInflight = new Map<string, Promise<{ syncHydrated: number }>>();
 const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Agent config per ACP session — used for idle-pause opencode export. */
+const sessionAgentConfigs = new Map<string, AgentConfig>();
 
 function envIdFromProcess(): string {
   const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "";
@@ -54,6 +56,7 @@ export async function bindSandboxForSession(
   config: AgentConfig,
   acpSessionId: string,
 ): Promise<{ syncHydrated: number }> {
+  sessionAgentConfigs.set(acpSessionId, config);
   const envId = envIdFromProcess();
   const store = getHarnessSessionStore(envId);
   let record = await store.get(acpSessionId);
@@ -175,6 +178,7 @@ export async function waitForSandboxPrewarm(acpSessionId: string): Promise<void>
 
 export function clearSandboxPrewarmState(acpSessionId: string): void {
   prewarmInflight.delete(acpSessionId);
+  sessionAgentConfigs.delete(acpSessionId);
   clearIdlePauseTimer(acpSessionId);
 }
 
@@ -215,6 +219,20 @@ async function pauseIdleSandbox(acpSessionId: string): Promise<void> {
     acpSessionId,
   });
   try {
+    const config = sessionAgentConfigs.get(acpSessionId);
+    if (config) {
+      await persistOpencodeSyncForSession({
+        acpSessionId,
+        config,
+        reason: "idle_pause",
+      }).catch((err) => {
+        harnessLog({
+          lane: "opencode_sync",
+          operation: "persist.idle_pause",
+          acpSessionId,
+        }).error(err);
+      });
+    }
     await handle.pause();
     wl.emit({ status: "ok" });
   } catch (err) {
@@ -237,6 +255,7 @@ export function getSandboxPrewarmStats(): { prewarmInFlight: number } {
 
 export function resetSandboxPrewarmForTests(): void {
   prewarmInflight.clear();
+  sessionAgentConfigs.clear();
   for (const timer of idleTimers.values()) clearTimeout(timer);
   idleTimers.clear();
 }

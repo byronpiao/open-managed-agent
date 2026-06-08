@@ -22,6 +22,8 @@ export interface HarnessSessionRecord {
   instanceId?: string;
   toolId?: string;
   engineSessionId?: string;
+  /** Set when opencode sync export last failed (ops / alert). */
+  syncExportFailedAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -44,6 +46,8 @@ export interface HarnessSessionStore {
   clearInstanceBinding(acpSessionId: string): Promise<void>;
   /** Backfill secretMasterKey for rows created before session-bound secrets. */
   ensureSecretMasterKey(acpSessionId: string): Promise<HarnessSessionRecord>;
+  /** Record or clear last opencode sync export failure timestamp. */
+  setSyncExportFailedAt(acpSessionId: string, failedAt: number | undefined): Promise<void>;
   remove(acpSessionId: string): Promise<void>;
 }
 
@@ -133,6 +137,18 @@ class InMemoryHarnessSessionStore implements HarnessSessionStore {
     if (!row) return;
     const { instanceId: _i, toolId: _t, ...rest } = row;
     this.rows.set(acpSessionId, { ...rest, updatedAt: Date.now() });
+  }
+
+  async setSyncExportFailedAt(acpSessionId: string, failedAt: number | undefined): Promise<void> {
+    const row = this.rows.get(acpSessionId);
+    if (!row) return;
+    const next = { ...row, updatedAt: Date.now() };
+    if (failedAt === undefined) {
+      delete next.syncExportFailedAt;
+    } else {
+      next.syncExportFailedAt = failedAt;
+    }
+    this.rows.set(acpSessionId, next);
   }
 
   async remove(acpSessionId: string): Promise<void> {
@@ -322,6 +338,20 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
     const collection = await this.col();
     await collection.doc(acpSessionId).update({ secretMasterKey, updatedAt });
     return { ...row, secretMasterKey, updatedAt };
+  }
+
+  async setSyncExportFailedAt(acpSessionId: string, failedAt: number | undefined): Promise<void> {
+    const collection = await this.col();
+    const database = await this.db();
+    const cmd = (database as { command?: { remove: () => unknown } }).command;
+    const patch: Record<string, unknown> = { updatedAt: Date.now() };
+    if (failedAt === undefined) {
+      patch.syncExportFailedAt = cmd?.remove?.() ?? null;
+    } else {
+      patch.syncExportFailedAt = failedAt;
+    }
+    await collection.doc(acpSessionId).update(patch);
+    harnessTrace("session_store.sync_export_failed_at", { acpSessionId, failedAt: failedAt ?? null });
   }
 
   async remove(acpSessionId: string): Promise<void> {

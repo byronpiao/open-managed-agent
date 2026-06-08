@@ -26,7 +26,7 @@ node scripts/harness/load-env.mjs --check --probe-llm
 |------|------|
 | `CLOUDBASE_ENV_ID` | 环境 ID |
 | `TCB_REGION` | 如 `ap-shanghai` |
-| `TCB_API_KEY` | AGS JWT |
+| `TCB_API_KEY` | 云开发**环境 API Key**（`tcb sandbox apikey create`）。**AGS 沙箱**数据面 + **默认 CloudBase AI**（`hy3-preview`）共用；与 `LLM_API_KEY`（第三方 BYOK）不同 |
 | `TCB_SECRET_ID` / `TCB_SECRET_KEY` | 本地 CLI、**tcbr deploy**；**SCF 函数 env 不要 forward**（见下） |
 | `CLOUDBASE_ACCESS_KEY` | 网关 API |
 
@@ -53,7 +53,7 @@ Harness 运行时（`resolveCamControlPlaneCredentials`）：SCF 内优先 `TENC
 | 段 | 内容 |
 |----|------|
 | ② | `CLOUDBASE_AGENT_ID` |
-| ③ | `LLM_*`（仅 `harness -- cloud-tcbr` / `cloud-scf` custom） |
+| ③ | `LLM_*`（仅 `harness -- cloud-scf` 自定义模型；local 用 ① `TCB_API_KEY`；tcbr 用 zen） |
 | ④ | 沙箱镜像 / **`HARNESS_TOOL_ROLE_ARN`**（无 `HARNESS_TOOL_ID` 时创 AGS tool 必填）/ `HARNESS_TOOL_ID` |
 | ⑤ | `HARNESS_CLOUD_AGENT_ID` / `HARNESS_CLOUD_SCF_AGENT_ID` |
 | ⑥ | `HARNESS_COS_*`（工作区跨沙箱持久化，见下） |
@@ -80,22 +80,18 @@ Tool 名：`oma-harness-{env}-no-cos`；`HARNESS_COS_ENABLED=1` 时用 `oma-harn
 | OMA Runtime | `AGENT_CONFIG`、`PORT` 等 |
 | TRW 沙箱 | OMA 起箱时注入 `OPENCODE_CONFIG_CONTENT`、`HARNESS_*` 等 |
 
-### opencode LLM
+### 模型（对客默认）
 
-| 宿主机 | 沙箱 |
-|--------|------|
-| 无 `LLM_*` | zen |
-| 有 `LLM_*` | `OPENCODE_CONFIG_CONTENT` |
+有 `CLOUDBASE_ENV_ID` + `TCB_API_KEY` 且未配置自定义 LLM 时，Runtime 自动使用 CloudBase AI（`hy3-preview`）。详见 [harness-opencode.md](./harness-opencode.md) / [harness-claude-code.md](./harness-claude-code.md)。
 
-`agent.yaml` ModelSpec（对客部署）优先于 `LLM_*`。
-
-### claude LLM（`engine=claude`）
+### 自定义 LLM（`.env.harness` ③ 段，研发 / BYOK）
 
 | 变量 | 说明 |
 |------|------|
-| `LLM_API_KEY` | API Key（如 Mimo `tp-*`） |
+| `LLM_API_KEY` | 第三方 API Key |
 | `LLM_MODEL` | 模型 ID |
-| `ANTHROPIC_BASE_URL` | Anthropic Messages 兼容端点（Mimo 示例：`https://token-plan-sgp.xiaomimimo.com/anthropic`） |
+| `OPENAI_BASE_URL` | OpenCode / codebuddy |
+| `ANTHROPIC_BASE_URL` | Claude Code |
 
 ---
 

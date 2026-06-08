@@ -1,0 +1,7 @@
+# Minimal sandbox agent — Claude Code + CloudBase AI (default hy3-preview).
+name: My Claude Sandbox Agent
+runtime: harness
+engine: claude
+system: |
+  You are a helpful coding assistant in a remote sandbox workspace.
+  Reply concisely.

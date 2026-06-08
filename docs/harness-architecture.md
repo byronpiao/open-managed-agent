@@ -1,6 +1,6 @@
 # 沙箱内 Agent — 架构参考
 
-> 环境变量：[harness-env.md](./harness-env.md) · 上手：[harness-tutorial.md](./harness-tutorial.md)
+> 环境变量：[harness-env.md](./harness-env.md) · 上手：[harness-tutorial.md](./harness-tutorial.md) · 会话外置：[harness-agent-session-storage.md](./harness-agent-session-storage.md)
 
 `runtime=harness`：思考循环在 **AGS 沙箱内 engine**（opencode / claude / codebuddy）跑 ACP；OMA Runtime 负责会话索引、sync、client tool 桥、MCP relay。
 
@@ -41,10 +41,10 @@ node scripts/harness/load-env.mjs --check
 
 | 场景 | 命令 |
 |------|------|
-| 合入 / 日常 | `npm run test:full`（= `npm test` + `harness -- local`） |
-| 云上（tcbr） | `npm run harness -- cloud-tcbr` |
-| 云上（SCF） | `npm run harness -- cloud-scf` |
-| **完整一条龙** | `test:full` + `cloud-tcbr` + `cloud-scf` |
+| 合入 / 日常 | `npm run test:full`（= `npm test` + `harness -- local`，**CloudBase AI**） |
+| 云上（tcbr） | `npm run harness -- cloud-tcbr`（**opencode zen**） |
+| 云上（SCF） | `npm run harness -- cloud-scf`（**自定义 LLM**，③ 段） |
+| **完整一条龙** | 上三行全跑 → 平台 + zen + BYOK |
 
 ```bash
 # 日常
@@ -124,7 +124,19 @@ tool update 后约 **120s** 再 start。
 
 ---
 
-## 4. OpenCode sync（`engine=opencode`）
+## 4. 默认 LLM（平台）
+
+| 条件 | 行为 |
+|------|------|
+| `TCB_API_KEY` + `CLOUDBASE_ENV_ID`，未配自定义 LLM | CloudBase AI `hy3-preview`（OpenAI / Anthropic 同一 gateway） |
+| `model: zen`（仅 opencode） | 箱内内置 zen，不走 CloudBase AI |
+| 自定义 `LLM_*` 或 ModelSpec | 第三方 provider |
+
+对客说明：[harness-opencode.md](./harness-opencode.md) · [harness-claude-code.md](./harness-claude-code.md)
+
+---
+
+## 4a. OpenCode sync（`engine=opencode`）
 
 ```text
 prompt 结束 → POST …/opencode/sync/history → harness_sync_events
@@ -134,21 +146,25 @@ session/delete → export + 可选 workspace/snapshot（COS）
 
 `harness_sessions`：`acpSessionId` ↔ `engineSessionId`。对话记录在 `harness_sync_events`（event `id` 幂等）。
 
+详见 [harness-agent-session-storage.md](./harness-agent-session-storage.md)。
+
 ---
 
 ## 4b. Claude SessionStore（`engine=claude`）
 
 ```text
-prompt 结束 → claude-agent-sdk SessionStore → harness_claude_session_entries（CloudBase）
+SDK turn 内 append → SessionStore → harness_claude_session_entries（CloudBase）
 AGS TTL / re-acquire → session/load（replay:false）从 CloudBase 恢复 SDK 会话
 箱内进程：claude-acp-harness.js（HARNESS_CLAUDE_SESSION_STORE=1）
 ```
+
+详见 [harness-agent-session-storage.md](./harness-agent-session-storage.md)。
 
 | 项 | 说明 |
 |----|------|
 | SoR | CloudBase `harness_claude_*`（非 `/tmp/.claude`） |
 | 箱内 config | `CLAUDE_CONFIG_DIR=/tmp/.claude`（ephemeral，仅 SDK 本地缓存） |
-| LLM | 宿主机 `LLM_API_KEY` + `ANTHROPIC_BASE_URL`（Mimo `…/anthropic`）→ 沙箱 `ANTHROPIC_*`（OMA 映射） |
+| LLM | 默认 `TCB_API_KEY` → CloudBase AI；自定义时宿主机 `LLM_*` → 箱内 `ANTHROPIC_*` |
 | 镜像 | magent 须含 `dist/agents/claude-acp-harness.js` + `@cloudbase/open-agent-kernel`（见 TRW `vendor/`） |
 
 OMA re-acquire 后 `claude-session-warm.ts` 调箱内 `session/load`（`replay:false`），与 opencode 的 `harness_sync_events` replay 互补。
@@ -169,7 +185,7 @@ OMA re-acquire 后 `claude-session-warm.ts` 调箱内 `session/load`（`replay:f
 | 8 | 外部 MCP | mcporter | matrix #8 |
 | 9 | CloudBase 箱内 MCP | `workspace/init` | matrix #9 |
 | 10 | Skills | `.agents/skills/` | matrix #10 |
-| 11 | 模型与密钥 | agent.yaml + Start env | zen / cloud probe |
+| 11 | 模型与密钥 | `TCB_API_KEY` + 默认 `hy3-preview`；可选 zen / BYOK | local + cloud probe |
 
 ---
 

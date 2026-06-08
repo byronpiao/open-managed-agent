@@ -6,9 +6,9 @@
 
 | 场景 | 命令 |
 |------|------|
-| 合入 / 日常 | `npm run test:full` |
-| 云上 tcbr | `npm run harness -- cloud-tcbr` |
-| 云上 SCF | `npm run harness -- cloud-scf` |
+| 合入 / 日常 | `npm run test:full`（local → **CloudBase AI**） |
+| 云上 tcbr | `npm run harness -- cloud-tcbr`（**zen**） |
+| 云上 SCF | `npm run harness -- cloud-scf`（**LLM_*** 自定义） |
 | **完整** | 上三行全跑 |
 
 ```bash

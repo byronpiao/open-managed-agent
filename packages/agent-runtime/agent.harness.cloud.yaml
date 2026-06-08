@@ -1,13 +1,13 @@
-# Harness cloud deploy template — default opencode zen (no API key burn).
+# Harness cloud deploy template — scripts/harness/cloud.mjs 按 backend 写 model：
 #
-#   cp agent.harness.cloud.yaml agent.harness.yaml  # optional; deploy script writes this
-#   npm run harness -- cloud-tcbr
+#   cloud-tcbr → model: zen（箱内 OpenCode 内置）
+#   cloud-scf  → ModelSpec from .env.harness ③ 段 LLM_*（须 OPENAI_BASE_URL）
 #
-# Custom LLM (e.g. Mimo): set in .env.harness:
+#   npm run harness -- cloud-tcbr   # zen，无需 ③ 段
+#   npm run harness -- cloud-scf    # ③ 段示例：
 #   LLM_API_KEY=tp-...
 #   LLM_MODEL=mimo-v2.5-pro
-#   OPENAI_BASE_URL=https://token-plan-cn.xiaomimimo.com/v1   # opencode Chat Completions
-#   ANTHROPIC_BASE_URL=https://token-plan-cn.xiaomimimo.com/anthropic  # only if engine=claude
+#   OPENAI_BASE_URL=https://token-plan-sgp.xiaomimimo.com/v1
 #
 # Host shell must export TCB_*; optional HARNESS_COS_* / HARNESS_TOOL_ID.
 # Do NOT set SECRET_MASTER_KEY or OAK_USE_MEMORY_STORE on cloud harness.
@@ -15,9 +15,8 @@
 name: OMA Harness Sandbox Agent
 runtime: harness
 engine: opencode
-model: zen
 system: You are a helpful coding assistant in a remote sandbox workspace.
-description: Sandbox Agent (harness) — default zen; override via .env.harness LLM_*.
+description: Sandbox Agent (harness) — cloud.mjs sets zen (tcbr) or custom LLM (scf).
 
 metadata:
   runtime: open-managed-agent

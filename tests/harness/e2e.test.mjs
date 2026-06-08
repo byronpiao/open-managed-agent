@@ -26,7 +26,7 @@ function sandboxFetch(url, init = {}) {
 
 const FULL = process.argv.includes("--full");
 const LLM_SUITE = process.argv.includes("--llm");
-const FORCE_ZEN = process.env.HARNESS_FORCE_ZEN === "1" || (FULL && !LLM_SUITE);
+const FORCE_ZEN = process.env.HARNESS_FORCE_ZEN === "1";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SKILL_FIXTURE_PATH = resolve(repoRoot, "tests/fixtures/skills/harness-e2e-demo.md");
 const E2E_PORT = 19090;
@@ -37,7 +37,6 @@ const E2E_SYNC_SEED_SYNTHETIC_ON_EMPTY = false;
 
 const BASE_AGENT_CONFIG = {
   name: "HarnessE2E",
-  model: "zen",
   system:
     "When asked to use echo_tool, you MUST call it before answering. " +
     "Harness e2e agent.",
@@ -72,17 +71,20 @@ function hasCustomLlmInEnv() {
   );
 }
 
-/** FULL e2e: zen by default; --llm merges host LLM_* into opencode openai-compat. */
+/** FULL e2e: CloudBase AI 默认（TCB_API_KEY）；--llm 或 host LLM_* → BYOK；HARNESS_FORCE_ZEN → zen。 */
 function resolveFullAgentConfig() {
-  if (FORCE_ZEN || (!LLM_SUITE && !hasCustomLlmInEnv())) {
+  if (FORCE_ZEN) {
     return { ...BASE_AGENT_CONFIG, model: "zen", engine: "opencode" };
+  }
+  if (!LLM_SUITE && !hasCustomLlmInEnv()) {
+    return { ...BASE_AGENT_CONFIG, engine: "opencode" };
   }
 
   const raw = process.env.AGENT_CONFIG?.trim();
   if (!raw) {
     return {
       ...BASE_AGENT_CONFIG,
-      model: process.env.LLM_MODEL?.trim() ?? BASE_AGENT_CONFIG.model,
+      model: process.env.LLM_MODEL?.trim() ?? "mimo-v2.5-pro",
       engine: "opencode",
     };
   }
@@ -105,7 +107,7 @@ function resolveFullAgentConfig() {
     }
     return cfg;
   } catch {
-    return { ...BASE_AGENT_CONFIG, model: process.env.LLM_MODEL?.trim() ?? BASE_AGENT_CONFIG.model };
+    return { ...BASE_AGENT_CONFIG, model: process.env.LLM_MODEL?.trim() ?? "mimo-v2.5-pro" };
   }
 }
 
@@ -657,20 +659,26 @@ async function testSyncPersistence() {
 }
 
 function resolveClaudeAgentConfig() {
-  return {
-    ...BASE_AGENT_CONFIG,
-    model: process.env.LLM_MODEL?.trim() ?? "mimo-v2.5-pro",
-    engine: "claude",
-  };
+  const cfg = { ...BASE_AGENT_CONFIG, engine: "claude" };
+  if (hasCustomLlmInEnv() || process.env.ANTHROPIC_BASE_URL?.trim()) {
+    cfg.model = process.env.LLM_MODEL?.trim() ?? "mimo-v2.5-pro";
+  }
+  return cfg;
+}
+
+function hasClaudeLlmForE2e() {
+  if (hasCustomLlmInEnv() && process.env.ANTHROPIC_BASE_URL?.trim()) return true;
+  return !!(
+    process.env.TCB_API_KEY?.trim() &&
+    (process.env.CLOUDBASE_ENV_ID?.trim() || process.env.TCB_ENV_ID?.trim()) &&
+    !FORCE_ZEN
+  );
 }
 
 async function testClaudeSessionPersistence() {
-  const { hasHarnessAnthropicLlmEnv } = await import(
-    "../../packages/agent-runtime/dist/harness/harness-env.js"
-  );
-  if (!hasHarnessAnthropicLlmEnv()) {
+  if (!hasClaudeLlmForE2e()) {
     console.warn(
-      "⚠ claude SessionStore e2e skipped: set LLM_API_KEY + LLM_MODEL + ANTHROPIC_BASE_URL in .env.harness",
+      "⚠ claude SessionStore e2e skipped: need TCB_API_KEY (platform) or LLM_* + ANTHROPIC_BASE_URL",
     );
     return;
   }
@@ -807,7 +815,10 @@ async function testSandboxPrompt() {
   if (text.includes('"code":-32000') || text.includes("opencode acp timeout")) {
     throw new Error(`session/prompt sandbox failed (opencode): ${text.slice(0, 400)}`);
   }
-  assert.ok(sseShowsLlmActivity(text), `expected LLM SSE from sandbox (zen): ${text.slice(0, 400)}`);
+  assert.ok(
+    sseShowsLlmActivity(text),
+    `expected LLM SSE from sandbox (platform/zen): ${text.slice(0, 400)}`,
+  );
   await rpc("/acp", "session/delete", { sessionId });
 }
 
@@ -1090,7 +1101,7 @@ async function main() {
       console.log(
         LLM_SUITE
           ? "✓ opencode sync export → CloudBase → hydrate → session/load → token recall"
-          : "✓ opencode sync export → CloudBase → hydrate → session/load replay (zen)",
+          : "✓ opencode sync export → CloudBase → hydrate → session/load replay (platform)",
       );
       await testClaudeSessionPersistence();
       console.log("✓ claude SessionStore → CloudBase → runtime restart → token recall");

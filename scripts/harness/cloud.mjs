@@ -23,9 +23,18 @@ function sleep(ms) {
 }
 
 /** Subprocess env for magent deploy — never forward shell-leaked HARNESS_TOOL_ID. */
-function harnessDeployEnv() {
+function harnessDeployEnv(backend = "tcbr") {
   const env = { ...process.env };
   if (!pinnedHarnessToolId()) delete env.HARNESS_TOOL_ID;
+  if (backend === "tcbr") {
+    delete env.LLM_API_KEY;
+    delete env.LLM_MODEL;
+    delete env.OPENAI_BASE_URL;
+    delete env.ANTHROPIC_BASE_URL;
+    env.HARNESS_FORCE_ZEN = "1";
+  } else {
+    delete env.HARNESS_FORCE_ZEN;
+  }
   return env;
 }
 
@@ -51,7 +60,7 @@ async function agentUpdateWithRetry(agentId, yamlPath, envId, opts = {}) {
       console.log(`\n=== magent agent:update ${agentId} (attempt ${attempt}/${maxAttempts}) ===\n`);
       execSync(cmd, {
         cwd: repoRoot,
-        env: opts.env ?? harnessDeployEnv(),
+        env: opts.env ?? harnessDeployEnv(opts.backend ?? "tcbr"),
         encoding: "utf-8",
         stdio: ["inherit", "pipe", "pipe"],
         maxBuffer: 20 * 1024 * 1024,
@@ -86,7 +95,7 @@ function hasFlag(argv, name) {
   return argv.includes(name);
 }
 
-async function buildAgentYaml() {
+async function buildAgentYaml(backend = "tcbr") {
   const templatePath = resolve(runtimeRoot, "agent.harness.cloud.yaml");
   const { parse, stringify } = await import("yaml");
   const doc = parse(readFileSync(templatePath, "utf8"));
@@ -94,12 +103,18 @@ async function buildAgentYaml() {
   const openaiBase = process.env.OPENAI_BASE_URL?.trim();
   const modelId = process.env.LLM_MODEL?.trim() || "mimo-v2.5-pro";
 
-  if (apiKey && openaiBase) {
+  if (backend === "scf") {
+    if (!apiKey || !openaiBase) {
+      throw new Error(
+        "cloud-scf 需要 .env.harness ③ 段：LLM_API_KEY + LLM_MODEL + OPENAI_BASE_URL（自定义 OpenAI-compat）。\n" +
+          "cloud-tcbr 走 opencode zen，无需 LLM_*。",
+      );
+    }
     doc.model = { id: modelId, apiKey };
-    console.log(`agent model: custom LLM ${modelId} (OPENAI_BASE_URL=${openaiBase})`);
+    console.log(`agent model: custom LLM ${modelId} (cloud-scf, OPENAI_BASE_URL=${openaiBase})`);
   } else {
     doc.model = "zen";
-    console.log("agent model: zen (no LLM_API_KEY + OPENAI_BASE_URL → built-in zen)");
+    console.log("agent model: zen (cloud-tcbr — 箱内 OpenCode 内置，不扣 CloudBase AI)");
   }
 
   const out = resolve(runtimeRoot, "agent.harness.yaml");
@@ -132,7 +147,7 @@ async function deployCloudHarness(argv, backend = "tcbr") {
   console.log(`=== build agent-runtime (backend=${backend}) ===`);
   sh("npm run build --workspace=packages/agent-runtime");
 
-  const yamlPath = await buildAgentYaml();
+  const yamlPath = await buildAgentYaml(backend);
   console.log(`Wrote ${yamlPath}`);
 
   let agentId = agentIdArg;
@@ -141,12 +156,13 @@ async function deployCloudHarness(argv, backend = "tcbr") {
     console.log(`=== magent agent:update (${backend} harness ${agentId}) ===`);
     await agentUpdateWithRetry(agentId, yamlPath, envId, {
       afterRedeploy: backend === "tcbr",
+      backend,
     });
   } else if (backend === "tcbr") {
     console.log("=== magent agent:create (tcbr harness, ~3–5 min) ===");
     const createOut = execSync(
       `node "${magent}" agent:create -n "OMA-Harness" --type tcbr --runtime harness --engine opencode -f "${yamlPath}" -e "${envId}"`,
-      { encoding: "utf-8", cwd: repoRoot, env: harnessDeployEnv(), maxBuffer: 20 * 1024 * 1024 },
+      { encoding: "utf-8", cwd: repoRoot, env: harnessDeployEnv(backend), maxBuffer: 20 * 1024 * 1024 },
     );
     console.log(createOut);
     agentId = createOut.match(/Agent created:\s*(agent-[a-z0-9-]+)/i)?.[1];
@@ -164,7 +180,7 @@ async function deployCloudHarness(argv, backend = "tcbr") {
     await sleep(SCF_CREATE_COOLDOWN_MS);
     const createOut = execSync(
       `node "${magent}" agent:create -n "OMA-Harness-SCF" --runtime harness --engine opencode -f "${yamlPath}" --code "${runtimeRoot}" -e "${envId}"`,
-      { encoding: "utf-8", cwd: repoRoot, env: harnessDeployEnv(), maxBuffer: 20 * 1024 * 1024 },
+      { encoding: "utf-8", cwd: repoRoot, env: harnessDeployEnv(backend), maxBuffer: 20 * 1024 * 1024 },
     );
     console.log(createOut);
     agentId = createOut.match(/Agent created:\s*(agent-[a-z0-9-]+)/i)?.[1];
@@ -194,7 +210,8 @@ async function deployCloudHarness(argv, backend = "tcbr") {
     sh(`curl -sf "${base}/healthz" | head -c 800`);
     console.log("\n");
     await agentUpdateWithRetry(agentId, yamlPath, envId, {
-      env: { ...process.env, CLOUDBASE_SERVER_URL: base },
+      env: { ...harnessDeployEnv(backend), CLOUDBASE_SERVER_URL: base },
+      backend,
     });
   } else {
     console.warn("WARN: set CLOUDBASE_SERVER_URL to public gateway for client-tool callback");
@@ -422,16 +439,21 @@ async function verifyCloudHarness(agentId) {
   console.log("\n✓ cloud verify ok");
 }
 
-/** Fail fast when .env.harness has custom LLM (Mimo tp/sk, etc.) before deploy. */
-async function maybeProbeCustomLlm() {
+/** cloud-scf：deploy 前 probe ③ 段 LLM_*。cloud-tcbr 固定 zen，跳过。 */
+async function maybeProbeCustomLlm(backend = "tcbr") {
+  if (backend === "tcbr") {
+    console.log("=== cloud-tcbr: LLM probe skipped（固定 opencode zen）===");
+    return;
+  }
   const { hasHarnessCustomLlmEnv } = await import(
     "../../packages/agent-runtime/dist/harness/harness-env.js"
   );
   if (!hasHarnessCustomLlmEnv()) {
-    console.log("=== cloud: LLM probe skipped（无 LLM_* → deploy 用 zen）===");
-    return;
+    throw new Error(
+      "cloud-scf 需要 .env.harness ③ 段 LLM_API_KEY + LLM_MODEL + OPENAI_BASE_URL",
+    );
   }
-  console.log("=== cloud: LLM probe（自定义 provider，deploy 前验 key）===");
+  console.log("=== cloud-scf: LLM probe（自定义 provider，deploy 前验 key）===");
   const { assertHarnessOpenAiLlmReachable } = await import(
     "../../packages/agent-runtime/dist/harness/llm-probe.js"
   );
@@ -448,7 +470,7 @@ export async function runCloudHarness(argv = [], opts = {}) {
   const deployOnly = hasFlag(argv, "--no-verify");
   const backend = resolveCloudBackend(argv, opts.backend);
 
-  await maybeProbeCustomLlm();
+  await maybeProbeCustomLlm(backend);
 
   let agentId =
     flagValue(argv, "--agent-id") || pinnedAgentId(backend);

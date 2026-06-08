@@ -2,7 +2,7 @@
 /**
  * Harness 验收入口：
  *
- *   npm run harness -- local    # stub → zen 真箱 e2e → 矩阵 →（COS 硬门）
+ *   npm run harness -- local    # stub → 真箱 e2e（CloudBase AI）→ 矩阵 →（COS 硬门）
  *   npm run harness -- cloud-tcbr  # 云托管 tcbr + smoke（另跑，不进 test:full）
  *   npm run harness -- cloud-scf  # SCF + smoke（完整一条龙时与 cloud-tcbr 都跑）
  */
@@ -16,12 +16,11 @@ const repoRoot = resolve(__dirname, "../..");
 
 const HELP = `Usage: npm run harness -- <local|cloud-tcbr|cloud-scf> [options]
 
-  local        stub e2e + 真 AGS（zen）+ 矩阵；HARNESS_COS_ENABLED=1 时 COS
-  cloud-tcbr   云托管 tcbr：deploy/redeploy → gateway ACP smoke（日常云上验收）
-  cloud-scf    SCF 云函数：agent:create/update → 同上 smoke（完整一条龙时必跑）
+  local        stub + 真 AGS（CloudBase AI hy3-preview，用 TCB_API_KEY）+ 矩阵
+  cloud-tcbr   云托管 tcbr：deploy opencode **zen** → gateway smoke
+  cloud-scf    SCF：deploy **自定义 LLM**（.env.harness ③ 段 LLM_*）→ smoke
 
-  cloud-tcbr / cloud-scf 共用：
-          有 LLM_* 时先 probe；无则 zen
+  cloud-scf  deploy 前 probe LLM_*；cloud-tcbr 固定 zen（忽略 ③ 段）
           --agent-id <id>   或 HARNESS_CLOUD_AGENT_ID / HARNESS_CLOUD_SCF_AGENT_ID
           --verify-only     只 smoke
           --no-verify       只 deploy
@@ -39,23 +38,23 @@ async function assertHarnessAgsRuntimeEnvSync() {
   assertHarnessAgsRuntimeEnv();
 }
 
-/** Strip host LLM_* so sandbox uses built-in opencode zen. */
-function envForZenHarness() {
+/** Local 主链：走 CloudBase AI（TCB_API_KEY），不用 zen / 不用 BYOK LLM_*。 */
+function envForPlatformHarness() {
   const env = { ...process.env };
   delete env.LLM_API_KEY;
   delete env.LLM_MODEL;
   delete env.OPENAI_BASE_URL;
   delete env.ANTHROPIC_BASE_URL;
-  env.HARNESS_FORCE_ZEN = "1";
+  delete env.HARNESS_FORCE_ZEN;
   return env;
 }
 
-function runNode(scriptRel, extraArgs = [], { zen = false } = {}) {
+function runNode(scriptRel, extraArgs = [], { platform = false } = {}) {
   const script = resolve(repoRoot, scriptRel);
   const r = spawnSync(process.execPath, [script, ...extraArgs], {
     cwd: repoRoot,
     stdio: "inherit",
-    env: zen ? envForZenHarness() : process.env,
+    env: platform ? envForPlatformHarness() : process.env,
   });
   if (r.status !== 0) process.exit(r.status ?? 1);
 }
@@ -70,15 +69,15 @@ async function runLocal() {
   runNode("tests/harness/e2e.test.mjs");
 
   loadEnv();
-  console.log("=== harness local: AGS env（CloudBase；主链 opencode zen，无需 LLM_*）===");
+  console.log("=== harness local: AGS env（CloudBase AI hy3-preview，TCB_API_KEY）===");
   await assertHarnessAgsRuntimeEnvSync();
 
-  console.log("=== harness local: e2e full（真 AGS + zen 对话 / custom tool / sync）===");
-  runNode("tests/harness/e2e.test.mjs", ["--full"], { zen: true });
+  console.log("=== harness local: e2e full（真 AGS + 平台模型 / custom tool / sync）===");
+  runNode("tests/harness/e2e.test.mjs", ["--full"], { platform: true });
 
   console.log("=== harness local: matrix parity（#1–#2 TRW #8 MCP #9 CloudBase #10 Skills）===");
   await assertHarnessAgsRuntimeEnvSync();
-  runNode("tests/harness/matrix-parity.test.mjs", [], { zen: true });
+  runNode("tests/harness/matrix-parity.test.mjs", [], { platform: true });
 
   if (truthyCos()) {
     const { assertHarnessCosEnv } = await import(

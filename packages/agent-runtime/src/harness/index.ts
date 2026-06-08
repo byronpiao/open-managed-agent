@@ -79,6 +79,7 @@ export {
   OPENCODE_SYNC_DIRECTORY,
   ensureOpencodeSyncStarted,
   exportOpencodeSyncEvents,
+  persistOpencodeSyncForSession,
   hydrateOpencodeSyncEvents,
   fetchOpencodeSyncHistory,
   replayOpencodeSyncEvents,

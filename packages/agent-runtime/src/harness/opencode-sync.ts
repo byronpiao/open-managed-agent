@@ -2,10 +2,21 @@
  * OpenCode serve /sync/* bridge: export events to CloudBase, replay on new sandbox.
  */
 
+import type { AgentConfig } from "../config.js";
+import { resolveRuntime } from "../config.js";
 import { DEFAULT_HARNESS_SANDBOX_CWD } from "./deploy.js";
 import { harnessLog } from "./logging.js";
+import { isE2eStubSandboxEnabled } from "./sandbox/e2e-stub.js";
+import { getCachedSandboxHandle } from "./sandbox/orchestrator.js";
+import { getHarnessSessionStore } from "./sandbox/session-store.js";
 import type { HarnessSandboxHandle } from "./sandbox/orchestrator.js";
+import { getHarnessSyncEventStore } from "./sync-event-store.js";
 import type { HarnessSyncEventStore, OpencodeSyncEventRow } from "./sync-event-store.js";
+
+/** Backoff between export retries (initial attempt has no leading delay). */
+const EXPORT_RETRY_DELAYS_MS = [0, 500, 1500] as const;
+
+export type OpencodeSyncExportReason = "prompt_end" | "idle_pause" | "session_delete";
 
 const OPENCODE_SERVE_PREFIX = "/api/agents/opencode";
 const OPENCODE_DIRECTORY_HEADER = "x-opencode-directory";
@@ -234,6 +245,99 @@ export async function hydrateOpencodeSyncEvents(args: {
     wl.emit({ status: "error", durationMs: Date.now() - startedAt });
     throw err;
   }
+}
+
+function envIdFromProcess(): string {
+  const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "";
+  if (!envId) {
+    throw new Error("CLOUDBASE_ENV_ID is required for opencode sync export");
+  }
+  return envId;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Export opencode sync events with retries; updates harness_sessions.syncExportFailedAt on failure.
+ */
+export async function persistOpencodeSyncForSession(args: {
+  acpSessionId: string;
+  config: AgentConfig;
+  reason: OpencodeSyncExportReason;
+}): Promise<{ ok: boolean; inserted?: number }> {
+  const wl = harnessLog({
+    lane: "opencode_sync",
+    operation: "persist",
+    acpSessionId: args.acpSessionId,
+    reason: args.reason,
+  });
+  const startedAt = Date.now();
+
+  const { engine } = resolveRuntime(args.config);
+  if (engine !== "opencode" || isE2eStubSandboxEnabled(args.config)) {
+    wl.emit({ status: "skip", durationMs: Date.now() - startedAt });
+    return { ok: true };
+  }
+
+  const envId = envIdFromProcess();
+  const sessionStore = getHarnessSessionStore(envId);
+  const row = await sessionStore.get(args.acpSessionId);
+  if (!row?.engineSessionId) {
+    wl.emit({ status: "skip", detail: "no_engine_session", durationMs: Date.now() - startedAt });
+    return { ok: true };
+  }
+
+  const handle = getCachedSandboxHandle(args.acpSessionId);
+  if (!handle) {
+    wl.emit({ status: "skip", detail: "no_sandbox_handle", durationMs: Date.now() - startedAt });
+    return { ok: true };
+  }
+
+  const syncStore = getHarnessSyncEventStore(envId);
+  let lastErr: unknown;
+
+  for (let attempt = 0; attempt < EXPORT_RETRY_DELAYS_MS.length; attempt++) {
+    const delay = EXPORT_RETRY_DELAYS_MS[attempt]!;
+    if (delay > 0) await sleep(delay);
+    try {
+      const { inserted } = await exportOpencodeSyncEvents({
+        handle,
+        syncStore,
+        acpSessionId: args.acpSessionId,
+        aggregateId: row.engineSessionId,
+      });
+      await sessionStore.setSyncExportFailedAt(args.acpSessionId, undefined);
+      wl.emit({
+        status: "ok",
+        attempt: attempt + 1,
+        inserted,
+        durationMs: Date.now() - startedAt,
+      });
+      return { ok: true, inserted };
+    } catch (err) {
+      lastErr = err;
+      wl.error(err);
+      wl.emit({
+        status: "retry",
+        attempt: attempt + 1,
+        durationMs: Date.now() - startedAt,
+      });
+    }
+  }
+
+  const failedAt = Date.now();
+  await sessionStore.setSyncExportFailedAt(args.acpSessionId, failedAt).catch((markErr) => {
+    wl.error(markErr);
+  });
+  wl.emit({
+    status: "error",
+    syncExportFailedAt: failedAt,
+    durationMs: Date.now() - startedAt,
+  });
+  if (lastErr instanceof Error) throw lastErr;
+  throw new Error("persistOpencodeSyncForSession failed");
 }
 
 /** TRW workspace snapshot (COS) when mount is configured. */

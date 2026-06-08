@@ -6,11 +6,11 @@
 |---|-------------------|--------------|
 | 思考与工具执行 | 网关 Runtime | **AGS 沙箱**内 engine |
 | 典型场景 | 轻量对话、平台模型 | 远程工作区、命令与文件操作 |
-| 配置 | 省略 `runtime` | `runtime: harness` + `engine: opencode` |
+| 配置 | 省略 `runtime` | `runtime: harness` + `engine: opencode` 或 `claude` |
 
-> `runtime: harness` 即沙箱内 Agent。箱内引擎：**`opencode`**（默认可用）、**`claude`**（Anthropic Messages / Mimo）；`codebuddy` 尚未开放。
+> `runtime: harness` 即沙箱内 Agent。箱内引擎：**`opencode`**、**`claude`**（默认可用）；`codebuddy` 尚未开放。
 
-**延伸阅读：** [架构参考](./harness-architecture.md) · [环境变量](./harness-env.md)
+**按引擎阅读：** [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md) · [架构参考](./harness-architecture.md) · [会话外置存储](./harness-agent-session-storage.md) · [环境变量](./harness-env.md)（研发验收）
 
 ---
 
@@ -18,6 +18,7 @@
 
 1. 已完成 [README 快速开始](../README.md#快速开始)（`magent login`、Node ≥ 20）。
 2. CloudBase 环境已开通 **AGS 沙箱**。
+3. 已创建环境 **API Key**（`TCB_API_KEY`），并在控制台启用 **CloudBase AI** 模型（默认体验模型 `hy3-preview`）。见 [接入大模型](https://docs.cloudbase.net/ai/model/model-access)。
 
 部署沙箱内 Agent 用 **`agent.yaml` + `magent`**；凭证写在 shell 环境或 CloudBase 控制台，**不需要** `.env.harness`（该文件仅研发 Harness 验收用）。
 
@@ -25,7 +26,9 @@
 
 ## 第一步：最小配置，跑通一次对话
 
-用箱内 OpenCode **zen** 模型完成首轮对话（无需 COS、无需自定义 LLM）。
+用箱内引擎 + **CloudBase AI** 默认模型（`hy3-preview`）完成首轮对话：只需环境 API Key（`TCB_API_KEY`），**无需**另填 `LLM_API_KEY` 或第三方 endpoint。无需 COS。
+
+以下示例为 **OpenCode**（`engine: opencode`）。若要用 **Claude Code**，将示例换为 [agent.sandbox.claude.min.yaml](./examples/agent.sandbox.claude.min.yaml) 并设 `engine: claude`，详见 [harness-claude-code.md](./harness-claude-code.md)。
 
 ### 1. 凭证
 
@@ -36,32 +39,33 @@ export CLOUDBASE_ENV_ID=your-env-id
 export TCB_REGION=ap-shanghai
 export TCB_SECRET_ID=your-secret-id
 export TCB_SECRET_KEY=your-secret-key
-export TCB_API_KEY=your-ags-jwt
+export TCB_API_KEY=your-env-api-key
 export CLOUDBASE_ACCESS_KEY=your-access-key
 ```
 
 | 变量 | 用途 |
 |------|------|
 | `TCB_SECRET_ID` / `TCB_SECRET_KEY` | 会话持久化；`agent:create` 时注入 Runtime |
-| `TCB_API_KEY` | AGS 沙箱 |
-| `CLOUDBASE_ACCESS_KEY` | `magent run` / SDK 访问网关 |
+| `TCB_API_KEY` | 云开发环境 API Key：**AGS 沙箱** + **默认 CloudBase AI 模型**（无需另填 LLM Key） |
+| `CLOUDBASE_ACCESS_KEY` | `magent run` / SDK 访问 Agent 网关 |
 
 字段说明见 [harness-env.md](./harness-env.md) ① 段（与 [`.env.harness.example`](../.env.harness.example) 相同）。
 
 ### 2. 最小 `agent.yaml`
 
 ```bash
-cp docs/examples/agent.sandbox.min.yaml ./agent.sandbox.yaml
+cp docs/examples/agent.sandbox.opencode.min.yaml ./agent.sandbox.yaml
 ```
 
 ```yaml
 name: My Sandbox Agent
 runtime: harness
 engine: opencode
-model: zen
 system: |
   You are a helpful coding assistant in a remote sandbox workspace.
 ```
+
+（默认使用 CloudBase AI `hy3-preview`；也可显式写 `model: hy3-preview`。）
 
 ### 3. 构建并部署
 
@@ -134,9 +138,9 @@ OMA Runtime（SCF / 云托管）  ← 会话、审批、MCP 桥接
 | 字段 | 说明 |
 |------|------|
 | `runtime: harness` | 沙箱内 Agent |
-| `engine: opencode` | 箱内 OpenCode（默认） |
-| `engine: claude` | 箱内 Claude Code |
-| `model: zen` | OpenCode 内置模型，无需 API Key |
+| `engine: opencode` | 箱内 OpenCode — [专篇](./harness-opencode.md) |
+| `engine: claude` | 箱内 Claude Code — [专篇](./harness-claude-code.md) |
+| 省略 `model` | 默认 CloudBase AI `hy3-preview`（需环境 API Key） |
 
 配置变更：`magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"`（约数十秒；Runtime 代码变更需重新部署）。
 
@@ -240,71 +244,13 @@ SDK 流式事件中出现审批请求；客户端确认后继续 session。
 
 ## 第九步：箱内引擎
 
-| `engine` | 状态 |
+| `engine` | 文档 |
 |----------|------|
-| `opencode` | 可用 |
-| `claude` | 可用 |
+| `opencode` | [harness-opencode.md](./harness-opencode.md) |
+| `claude` | [harness-claude-code.md](./harness-claude-code.md) |
 | `codebuddy` | 尚未开放 |
 
-```yaml
-runtime: harness
-engine: opencode   # 或 claude
-```
-
----
-
-## 第十步：自定义 LLM（可选）
-
-### OpenCode（`engine: opencode`）
-
-**方式 A — yaml ModelSpec：**
-
-```yaml
-runtime: harness
-engine: opencode
-model:
-  id: your-model-id
-  apiKey: your-api-key
-  apiBaseUrl: https://your-openai-compatible-endpoint/v1
-```
-
-`apiBaseUrl` 为 OpenAI Chat Completions 兼容根路径（通常含 `/v1`）。
-
-**方式 B — Runtime 环境变量**（`magent agent:create` / 控制台，与方式 A 二选一）：
-
-```bash
-export LLM_API_KEY=tp-xxxxxxxx
-export LLM_MODEL=mimo-v2.5-pro
-export OPENAI_BASE_URL=https://token-plan-sgp.xiaomimimo.com/v1
-```
-
-### Claude（`engine: claude`）
-
-创建或更新 Agent 前，在 shell 或 CloudBase Runtime 环境配置：
-
-```bash
-export LLM_API_KEY=tp-xxxxxxxx
-export LLM_MODEL=mimo-v2.5-pro
-export ANTHROPIC_BASE_URL=https://token-plan-sgp.xiaomimimo.com/anthropic
-```
-
-```yaml
-runtime: harness
-engine: claude
-model: mimo-v2.5-pro
-system: |
-  You are a helpful coding assistant in a remote sandbox workspace.
-```
-
-```bash
-magent agent:create \
-  --name "my-claude-sandbox" \
-  --runtime harness \
-  --engine claude \
-  --file ./agent.sandbox.yaml \
-  --code ./packages/agent-runtime \
-  -e "$CLOUDBASE_ENV_ID"
-```
+默认模型与自定义 LLM 配置见各引擎专篇。
 
 ---
 
@@ -331,13 +277,18 @@ magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID"
 | `MISSING_CREDENTIALS` | 创建/更新 Agent 前 export `TCB_SECRET_*` |
 | 沙箱无法启动 | 检查 `TCB_API_KEY` 与 AGS 开通状态 |
 | yaml 不生效 | `magent agent:update -f ...`；容器内 `agent.yaml` 优先于环境变量 |
-| 使用混元 / DeepSeek | 托管 Agent 走 TokenHub；沙箱内 Agent 在 yaml 中为 engine 配置 ModelSpec |
+| 模型 401 / 额度 | 检查控制台 AI 模型开关与 Token；默认走 `hy3-preview` |
+| 第三方 LLM（Mimo 等） | 见 [harness-opencode.md](./harness-opencode.md) / [harness-claude-code.md](./harness-claude-code.md) 自定义一节 |
+| OpenCode 内置 zen | yaml 写 `model: zen`（不扣 CloudBase AI），见 [harness-opencode.md](./harness-opencode.md) |
 
 ---
 
 ## 相关文档
 
+- [harness-opencode.md](./harness-opencode.md)
+- [harness-claude-code.md](./harness-claude-code.md)
 - [README](../README.md)
 - [product-guide.md](./product-guide.md)
 - [harness-architecture.md](./harness-architecture.md)
+- [harness-agent-session-storage.md](./harness-agent-session-storage.md)
 - [harness-env.md](./harness-env.md)

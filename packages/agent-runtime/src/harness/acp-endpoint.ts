@@ -47,10 +47,9 @@ import {
 import { isScfServerless } from "./harness-env.js";
 import { harnessLog, runWithHarnessRequestContext } from "./logging.js";
 import {
-  exportOpencodeSyncEvents,
+  persistOpencodeSyncForSession,
   snapshotWorkspaceIfAvailable,
 } from "./opencode-sync.js";
-import { getHarnessSyncEventStore } from "./sync-event-store.js";
 
 const abortControllers = new Map<string, AbortController>();
 
@@ -420,28 +419,18 @@ async function pipeSandboxSseToClient(
     unregisterActivePrompt(acpSessionId);
     sseDone(res, sse);
     touchSandboxActivity(acpSessionId);
-    void maybeExportOpencodeSync(acpSessionId, config).catch(() => {});
+    void persistOpencodeSyncForSession({
+      acpSessionId,
+      config,
+      reason: "prompt_end",
+    }).catch((err) => {
+      harnessLog({
+        lane: "opencode_sync",
+        operation: "persist.prompt_end",
+        acpSessionId,
+      }).error(err);
+    });
   }
-}
-
-async function maybeExportOpencodeSync(
-  acpSessionId: string,
-  config: AgentConfig,
-): Promise<void> {
-  const { engine } = resolveRuntime(config);
-  if (engine !== "opencode" || isE2eStubSandboxEnabled(config)) return;
-  const envId = envIdFromConfig();
-  const store = getHarnessSessionStore(envId);
-  const row = await store.get(acpSessionId);
-  if (!row?.engineSessionId) return;
-  const handle = getCachedSandboxHandle(acpSessionId);
-  if (!handle) return;
-  await exportOpencodeSyncEvents({
-    handle,
-    syncStore: getHarnessSyncEventStore(envId),
-    acpSessionId,
-    aggregateId: row.engineSessionId,
-  });
 }
 
 async function handleSessionNew(params: Record<string, unknown>, config: AgentConfig) {
@@ -748,11 +737,16 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
   if (handle) {
     try {
       if (row.engine === "opencode" && row.engineSessionId && !isE2eStubSandboxEnabled(config)) {
-        await exportOpencodeSyncEvents({
-          handle,
-          syncStore: getHarnessSyncEventStore(envId),
+        await persistOpencodeSyncForSession({
           acpSessionId: sessionId,
-          aggregateId: row.engineSessionId,
+          config,
+          reason: "session_delete",
+        }).catch((err) => {
+          harnessLog({
+            lane: "opencode_sync",
+            operation: "persist.session_delete",
+            acpSessionId: sessionId,
+          }).error(err);
         });
         await snapshotWorkspaceIfAvailable(handle);
       }
