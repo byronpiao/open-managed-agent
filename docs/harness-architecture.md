@@ -156,17 +156,25 @@ session/delete → export + 可选 workspace/snapshot（COS）
 
 ## 6. 排障
 
-| 层 | 日志位置 |
-|----|----------|
-| OMA Runtime | 容器 stdout（`harnessLog`） |
-| TRW | 沙箱 `/var/log/trw/` NDJSON |
-| opencode | stderr → TRW；状态 `~/.opencode` |
+| 层 | 日志位置 | 关联字段 |
+|----|----------|----------|
+| OMA Runtime | tcbr/SCF **stdout**（`harnessLog` / evlog） | `requestId`, `acpSessionId`, `instanceId`, `lane`, `phase` |
+| TRW | `/var/log/trw/*.ndjson` + stdout | `request_id`, `harness_acp_session_id`, `event=agent_acp` |
+| opencode | stderr → TRW `agent_stderr` | `agent=opencode-acp` |
 
 ```bash
-sudo tail -n 100 /var/log/trw/*.ndjson 2>/dev/null | tail -20
+# OMA（SCF）
+tcb fn log <agent-id> -e "$CLOUDBASE_ENV_ID" | rg 'phase|session\.new|orchestrator'
+
+# TRW（进 AGS 实例）
+sudo tail -n 200 /var/log/trw/*.ndjson | rg 'agent_acp|harness_acp_session_id'
+
+# 本地
 LOG_LEVEL=debug npm run harness -- local
-node scripts/harness/load-env.mjs --check --probe-llm
+curl -s localhost:9000/healthz | jq .sandbox   # cachedHandles, prewarmInFlight
 ```
+
+云上 orchestrator **里程碑**（`milestone` → info）：`tool.ensure` / `cos.ensure_subpath` / `instance_start` / `token.acquire`。`session/new` 结束打 `instanceId` + `durationMs`。
 
 | 现象 | 处理 |
 |------|------|
@@ -174,6 +182,10 @@ node scripts/harness/load-env.mjs --check --probe-llm
 | create 后 `magent run` 404 | 等待 gateway 路由；cloud 脚本 poll ACP |
 | cloud prompt 504 | prewarm / 网关限时 |
 | custom LLM 401/429 | 检查 key 与区划 |
+| SCF `cos.ensure_subpath` InvalidAccessKeyId | 角色 `TENCENTCLOUD_*` + SessionToken；函数 env 勿 forward `TCB_SECRET_*` |
+| cloud-scf HTTP 435 | SCF 函数 Deleting；等 90s 或 pin `HARNESS_CLOUD_SCF_AGENT_ID` |
+| tool/常量镜像 tag 不一致 | `load-env.mjs --check` → `sync-tool.mjs` |
+| shell `export HARNESS_TOOL_ID` | 只写 `.env.harness`；`load-env` 清泄漏 |
 
 OpenCode 箱内路径：`/home/user/.opencode` · `OPENCODE_CONFIG_CONTENT` · `~/.local/share/opencode/auth.json`
 

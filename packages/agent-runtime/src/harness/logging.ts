@@ -2,7 +2,10 @@
  * Harness runtime logging (evlog). Managed runtime uses console, not this module.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createRequestLogger, initLogger, log } from "evlog";
+
+const requestContext = new AsyncLocalStorage<{ requestId?: string }>();
 
 const REDACT_KEY = /secret|password|token|authorization|apikey|api_key|b64|credential/i;
 
@@ -46,14 +49,61 @@ export function sanitizeHarnessLogFields(
 export interface HarnessLogHandle {
   set(fields: Record<string, unknown>): void;
   phase(name: string, fields?: Record<string, unknown>): void;
+  /** Always info — cloud milestones (orchestrator phases, session.new). */
+  milestone(name: string, fields?: Record<string, unknown>): void;
   error(err: unknown, fields?: Record<string, unknown>): void;
   emit(extra?: Record<string, unknown>): void;
+}
+
+function headerOne(
+  headers: Record<string, string | string[] | undefined>,
+  name: string,
+): string {
+  const raw = headers[name] ?? headers[name.toLowerCase()];
+  if (Array.isArray(raw)) return raw[0]?.trim() ?? "";
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
+/** Gateway / SCF request id for cross-layer correlation. */
+export function resolveHarnessRequestId(
+  headers: Record<string, string | string[] | undefined>,
+): string | undefined {
+  for (const key of [
+    "x-request-id",
+    "x-scf-request-id",
+    "x-cloudbase-request-id",
+    "x-trace-id",
+  ]) {
+    const v = headerOne(headers, key);
+    if (v) return v;
+  }
+  return undefined;
+}
+
+export function harnessRequestId(): string | undefined {
+  return requestContext.getStore()?.requestId;
+}
+
+export async function runWithHarnessRequestContext<T>(
+  headers: Record<string, string | string[] | undefined>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const requestId = resolveHarnessRequestId(headers);
+  if (!requestId) return fn();
+  return requestContext.run({ requestId }, fn);
 }
 
 /** One wide event per logical operation (ACP RPC, acquire, MCP call, …). */
 export function harnessLog(scope: Record<string, unknown>): HarnessLogHandle {
   initHarnessLogging();
-  const wl = createRequestLogger(sanitizeHarnessLogFields({ component: "harness", ...scope }));
+  const rid = harnessRequestId();
+  const wl = createRequestLogger(
+    sanitizeHarnessLogFields({
+      component: "harness",
+      ...(rid ? { requestId: rid } : {}),
+      ...scope,
+    }),
+  );
   return {
     set(fields) {
       wl.set(sanitizeHarnessLogFields(fields));
@@ -62,9 +112,26 @@ export function harnessLog(scope: Record<string, unknown>): HarnessLogHandle {
       wl.set(sanitizeHarnessLogFields({ phase: name, ...fields }));
       if (isHarnessLogDebug()) {
         log.debug(
-          sanitizeHarnessLogFields({ component: "harness", phase: name, ...scope, ...fields }),
+          sanitizeHarnessLogFields({
+            component: "harness",
+            phase: name,
+            ...(rid ? { requestId: rid } : {}),
+            ...scope,
+            ...fields,
+          }),
         );
       }
+    },
+    milestone(name, fields) {
+      const payload = sanitizeHarnessLogFields({
+        component: "harness",
+        phase: name,
+        ...(rid ? { requestId: rid } : {}),
+        ...scope,
+        ...fields,
+      });
+      wl.set(payload);
+      log.info(payload);
     },
     error(err, fields) {
       const error = err instanceof Error ? err : new Error(String(err));

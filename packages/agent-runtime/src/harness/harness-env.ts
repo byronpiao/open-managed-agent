@@ -5,7 +5,7 @@
 
 /** 唯一允许内置的默认：公开 CCR magent 镜像（可用 HARNESS_SANDBOX_IMAGE 覆盖）。 */
 export const HARNESS_PUBLIC_MAGENT_IMAGE =
-  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260608-1044-2d795e-magent";
+  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260608-1829-dadc15-magent";
 
 export function requireEnv(name: string, hint?: string): string {
   const value = process.env[name]?.trim();
@@ -132,9 +132,7 @@ export function resolveCamControlPlaneCredentials(): {
         process.env.TENCENTCLOUD_SECRETKEY?.trim() ??
         process.env.TCB_SECRET_KEY?.trim() ??
         "",
-      sessionToken:
-        process.env.TENCENTCLOUD_SESSIONTOKEN?.trim() ??
-        process.env.TCB_TOKEN?.trim(),
+      sessionToken: resolveCamSessionToken(),
     };
   }
   return {
@@ -146,10 +144,16 @@ export function resolveCamControlPlaneCredentials(): {
       process.env.TCB_SECRET_KEY?.trim() ??
       process.env.TENCENTCLOUD_SECRETKEY?.trim() ??
       "",
-    sessionToken:
-      process.env.TCB_TOKEN?.trim() ??
-      process.env.TENCENTCLOUD_SESSIONTOKEN?.trim(),
+    sessionToken: resolveCamSessionToken(),
   };
+}
+
+function resolveCamSessionToken(): string | undefined {
+  return (
+    process.env.TCB_TOKEN?.trim() ??
+    process.env.TENCENTCLOUD_SESSIONTOKEN?.trim() ??
+    process.env.TENCENTCLOUD_TOKEN?.trim()
+  );
 }
 
 /** True inside Tencent SCF zip/image web functions (stateless; no in-memory prewarm). */

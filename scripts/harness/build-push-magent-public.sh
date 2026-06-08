@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Build TRW magent preset and push to public CCR (see harness/README.md §4).
-# Requires: docker, colima|docker desktop, tcb login, pnpm in tcb-remote-workspace.
+# Build TRW magent preset, push public CCR, sync OMA defaults + AGS tool.
 set -euo pipefail
 
 export PATH="/opt/homebrew/Cellar/docker/29.5.3/bin:/opt/homebrew/bin:${PATH:-}"
@@ -16,10 +15,10 @@ echo "TRW_ROOT=$TRW_ROOT"
 echo "IMAGE=$FULL_IMAGE"
 
 OMA_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+HARNESS_ENV_TS="${OMA_ROOT}/packages/agent-runtime/src/harness/harness-env.ts"
 
 cd "$TRW_ROOT"
 pnpm build:prod
-# OMA .env may set PORT=3001; TRW unit tests expect default 9000.
 unset PORT HOST
 pnpm test:unit
 PRESET="$PRESET" ./scripts/build.sh --preset "$PRESET" --platform linux/amd64 --load
@@ -38,14 +37,36 @@ else
   cat > "$HARNESS_ENV" <<EOF
 # Generated $(date +%Y-%m-%d) — magent preset public CCR (gitignored)
 HARNESS_SANDBOX_IMAGE=$FULL_IMAGE
-# HARNESS_TOOL_ID unset — orchestrator auto-ensures oma-harness-{env}-no-cos|with-cos
 EOF
-  echo "Wrote $HARNESS_ENV (gitignored; loaded by scripts/harness/load-env.mjs)"
+  echo "Wrote $HARNESS_ENV"
 fi
-echo "See scripts/harness/README.md"
-if [[ -n "${HARNESS_TOOL_ID:-}" ]]; then
-  node "$OMA_ROOT/scripts/harness/sync-tool.mjs"
-else
-  echo "(no HARNESS_TOOL_ID — skip sync-tool; image applied on next ensureHarnessTool)"
+
+if [[ -f "$HARNESS_ENV_TS" ]]; then
+  node -e "
+const fs = require('fs');
+const p = process.argv[1];
+const img = process.argv[2];
+const s = fs.readFileSync(p, 'utf8');
+const next = 'export const HARNESS_PUBLIC_MAGENT_IMAGE =\\n  \"' + img + '\";';
+const out = s.replace(/export const HARNESS_PUBLIC_MAGENT_IMAGE =\\n\\s*\"[^\"]+\";/, next);
+if (out === s || !out.includes(img)) {
+  console.error('Failed to patch HARNESS_PUBLIC_MAGENT_IMAGE in', p);
+  process.exit(1);
+}
+fs.writeFileSync(p, out);
+" "$HARNESS_ENV_TS" "$FULL_IMAGE"
+  echo "Updated HARNESS_PUBLIC_MAGENT_IMAGE in harness-env.ts"
 fi
+
+cd "$OMA_ROOT"
+npm run build:runtime
+
+node scripts/harness/sync-tool.mjs || true
+
+echo ""
 echo "Pushed: $FULL_IMAGE"
+echo "Next (before cloud harness):"
+echo "  sleep 120   # AGS tool image pull"
+echo "  npm run test:full"
+echo "  npm run harness -- cloud-tcbr"
+echo "  npm run harness -- cloud-scf"

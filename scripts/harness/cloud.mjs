@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pinnedHarnessToolId } from "../../lib/harness-env-file.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
@@ -15,9 +16,17 @@ const runtimeRoot = resolve(repoRoot, "packages/agent-runtime");
 const magent = resolve(repoRoot, "magent.mjs");
 
 const DEFAULT_GATEWAY_READY_MS = 5 * 60_000;
+const SCF_CREATE_COOLDOWN_MS = Number(process.env.HARNESS_SCF_CREATE_COOLDOWN_MS) || 90_000;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Subprocess env for magent deploy — never forward shell-leaked HARNESS_TOOL_ID. */
+function harnessDeployEnv() {
+  const env = { ...process.env };
+  if (!pinnedHarnessToolId()) delete env.HARNESS_TOOL_ID;
+  return env;
 }
 
 function gatewayAcpUrl(envId, agentId) {
@@ -42,7 +51,7 @@ async function agentUpdateWithRetry(agentId, yamlPath, envId, opts = {}) {
       console.log(`\n=== magent agent:update ${agentId} (attempt ${attempt}/${maxAttempts}) ===\n`);
       execSync(cmd, {
         cwd: repoRoot,
-        env: opts.env ?? process.env,
+        env: opts.env ?? harnessDeployEnv(),
         encoding: "utf-8",
         stdio: ["inherit", "pipe", "pipe"],
         maxBuffer: 20 * 1024 * 1024,
@@ -137,15 +146,25 @@ async function deployCloudHarness(argv, backend = "tcbr") {
     console.log("=== magent agent:create (tcbr harness, ~3–5 min) ===");
     const createOut = execSync(
       `node "${magent}" agent:create -n "OMA-Harness" --type tcbr --runtime harness --engine opencode -f "${yamlPath}" -e "${envId}"`,
-      { encoding: "utf-8", cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
+      { encoding: "utf-8", cwd: repoRoot, env: harnessDeployEnv(), maxBuffer: 20 * 1024 * 1024 },
     );
     console.log(createOut);
     agentId = createOut.match(/Agent created:\s*(agent-[a-z0-9-]+)/i)?.[1];
   } else {
-    console.log("=== magent agent:create (SCF harness, ~60–90s) ===");
+    const pinnedScf = process.env.HARNESS_CLOUD_SCF_AGENT_ID?.trim();
+    if (pinnedScf) {
+      console.log(
+        `Tip: set HARNESS_CLOUD_SCF_AGENT_ID in .env.harness to reuse ${pinnedScf} (update+verify) instead of create.`,
+      );
+    }
+    console.log(
+      `=== magent agent:create (SCF harness, ~60–90s; cooldown ${Math.round(SCF_CREATE_COOLDOWN_MS / 1000)}s) ===`,
+    );
+    console.log("(avoid SCF Deleting-state 435 — waiting before create…)");
+    await sleep(SCF_CREATE_COOLDOWN_MS);
     const createOut = execSync(
       `node "${magent}" agent:create -n "OMA-Harness-SCF" --runtime harness --engine opencode -f "${yamlPath}" --code "${runtimeRoot}" -e "${envId}"`,
-      { encoding: "utf-8", cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
+      { encoding: "utf-8", cwd: repoRoot, env: harnessDeployEnv(), maxBuffer: 20 * 1024 * 1024 },
     );
     console.log(createOut);
     agentId = createOut.match(/Agent created:\s*(agent-[a-z0-9-]+)/i)?.[1];

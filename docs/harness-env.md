@@ -38,9 +38,13 @@ node scripts/harness/load-env.mjs --check --probe-llm
 | 运行时临时密钥 | 容器内 `TCB_SECRET_*`（或 STS） | 执行角色自动注入 `TENCENTCLOUD_SECRETID` / `SECRETKEY` / `SESSIONTOKEN` |
 | 参考 | [buildCloudRunEnvParam](../lib/cloudrun.mjs) | [腾讯云 SCF 环境变量](https://docs.cloudbase.net/cloud-function/function-configuration/env) |
 
-Harness 运行时（`resolveCamControlPlaneCredentials`）：SCF 内优先 `TENCENTCLOUD_*`（角色注入），勿用误配的 `TCB_SECRET_*`；COS `putObject` 须带 `SessionToken`。
+Harness 运行时（`resolveCamControlPlaneCredentials`）：SCF 内优先 `TENCENTCLOUD_*`（角色注入），勿用误配的 `TCB_SECRET_*`；COS `putObject` 须带 `SessionToken`（含 `TENCENTCLOUD_TOKEN` fallback）。
 
-`agent:update`（SCF）会**整表替换**函数 env，须与 `agent:create` 共用同一套 `buildScfDeployEnvMap`（含 `TCB_REGION`、`HARNESS_TOOL_ROLE_ARN`、COS 段等）。
+`agent:update`（SCF）会**整表替换**函数 env，须与 `agent:create` 共用同一套 `buildScfDeployEnvMap`（含 `TCB_REGION`、`HARNESS_TOOL_ROLE_ARN`、COS 段等）。**`agent:update` 不重传 SCF 代码包** — 坏包须删函数重建或复用 ⑤ pin agent。
+
+**`HARNESS_TOOL_ID`**：仅写在 `.env.harness`；`load-env.mjs` / `lib/harness-env-file.mjs` 会忽略 shell `export` 泄漏。未 pin 时 orchestrator 自动 `ensureHarnessTool`；镜像推送后用 `scripts/harness/sync-tool.mjs`（按 `oma-harness-{env}-*` 名解析 tool）。
+
+**镜像 tag 三处对齐**：`HARNESS_PUBLIC_MAGENT_IMAGE`（源码常量）= `.env.harness` `HARNESS_SANDBOX_IMAGE` = AGS tool `Image`。`./scripts/harness/build-push-magent-public.sh` 一次更新前两处并 `sync-tool`；`load-env.mjs --check` 校验。
 
 ---
 

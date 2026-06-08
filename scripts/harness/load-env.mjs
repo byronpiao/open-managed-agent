@@ -6,9 +6,17 @@
  *   node scripts/harness/load-env.mjs --check [--probe-llm]
  */
 
+import { execSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import {
+  clearShellLeakedHarnessPins,
+  expectedHarnessToolName,
+  harnessCosEnabledFromMap,
+  pinnedHarnessToolId,
+  readHarnessEnvMap,
+} from "../../lib/harness-env-file.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
@@ -65,6 +73,9 @@ export function loadEnv() {
   for (const [from, to] of ALIASES) {
     if (process.env[from] && !process.env[to]) process.env[to] = process.env[from];
   }
+  clearShellLeakedHarnessPins();
+  const pinnedTool = pinnedHarnessToolId();
+  if (pinnedTool) process.env.HARNESS_TOOL_ID = pinnedTool;
 }
 
 export function missingHarnessCreds() {
@@ -120,6 +131,40 @@ if (isCli) {
       console.log(`  HARNESS_CLOUD_SCF_AGENT_ID=${process.env.HARNESS_CLOUD_SCF_AGENT_ID ?? "(unset)"}`);
       console.log(`  LLM_API_KEY=${process.env.LLM_API_KEY ? "(set)" : "(unset)"}`);
       console.log(`  HARNESS_COS_ENABLED=${process.env.HARNESS_COS_ENABLED ?? "(unset)"}`);
+      const publicTag = HARNESS_PUBLIC_MAGENT_IMAGE.split(":").pop();
+      const sandboxTag = image.split(":").pop();
+      if (publicTag !== sandboxTag) {
+        console.warn(
+          `  WARN: HARNESS_PUBLIC_MAGENT_IMAGE tag (${publicTag}) != HARNESS_SANDBOX_IMAGE (${sandboxTag}) — run build-push or align harness-env.ts`,
+        );
+      }
+      try {
+        const envId = process.env.CLOUDBASE_ENV_ID?.trim();
+        if (envId) {
+          const envMap = readHarnessEnvMap();
+          const toolName = expectedHarnessToolName(envId, harnessCosEnabledFromMap(envMap));
+          const listRaw = execSync("tcb sandbox tool list --json", {
+            encoding: "utf-8",
+            maxBuffer: 20 * 1024 * 1024,
+          });
+          const tools = JSON.parse(listRaw.slice(listRaw.indexOf("{"))).data?.SandboxToolSet ?? [];
+          const pinned = pinnedHarnessToolId();
+          const tool = pinned
+            ? tools.find((t) => t.ToolId === pinned)
+            : tools.find((t) => t.ToolName === toolName);
+          if (tool) {
+            const toolTag = tool.CustomConfiguration?.Image?.split(":").pop();
+            console.log(`  AGS tool: ${tool.ToolName} (${tool.ToolId}) image tag=${toolTag ?? "?"}`);
+            if (toolTag && toolTag !== sandboxTag) {
+              console.warn(`  WARN: tool image tag != HARNESS_SANDBOX_IMAGE — run: node scripts/harness/sync-tool.mjs`);
+            }
+          } else {
+            console.log(`  AGS tool: (none yet for ${toolName})`);
+          }
+        }
+      } catch (err) {
+        console.warn(`  AGS tool check skipped: ${err.message ?? err}`);
+      }
       if (process.argv.includes("--probe-llm")) {
         if (llmMissing.length) {
           console.error(`Cannot probe LLM: missing ${llmMissing.join(", ")}`);

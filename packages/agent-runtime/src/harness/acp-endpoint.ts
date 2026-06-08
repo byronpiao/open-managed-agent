@@ -45,7 +45,7 @@ import {
   type HarnessSessionRecord,
 } from "./sandbox/session-store.js";
 import { isScfServerless } from "./harness-env.js";
-import { harnessLog } from "./logging.js";
+import { harnessLog, runWithHarnessRequestContext } from "./logging.js";
 import {
   exportOpencodeSyncEvents,
   snapshotWorkspaceIfAvailable,
@@ -445,6 +445,7 @@ async function maybeExportOpencodeSync(
 }
 
 async function handleSessionNew(params: Record<string, unknown>, config: AgentConfig) {
+  const startedAt = Date.now();
   const reqSessionId =
     (params.conversationId as string | undefined) ??
     (params.sessionId as string | undefined);
@@ -470,6 +471,18 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
       } else {
         startSandboxPrewarm(config, acpSessionId);
       }
+      const row = await store.get(acpSessionId);
+      harnessLog({
+        lane: "acp",
+        operation: "session.new",
+        acpSessionId,
+      }).emit({
+        status: "ok",
+        reused: true,
+        instanceId: row?.instanceId ?? null,
+        sandboxReady: isSandboxReadyForSession(acpSessionId),
+        durationMs: Date.now() - startedAt,
+      });
       return { sessionId: acpSessionId, hasHistory: existing.status === "active" };
     }
   } else {
@@ -482,6 +495,19 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
   } else {
     startSandboxPrewarm(config, acpSessionId);
   }
+  const row = await store.get(acpSessionId);
+  harnessLog({
+    lane: "acp",
+    operation: "session.new",
+    acpSessionId,
+  }).emit({
+    status: "ok",
+    reused: false,
+    instanceId: row?.instanceId ?? null,
+    engineSessionId: row?.engineSessionId ?? null,
+    sandboxReady: isSandboxReadyForSession(acpSessionId),
+    durationMs: Date.now() - startedAt,
+  });
   return { sessionId: acpSessionId, hasHistory: false };
 }
 
@@ -770,6 +796,7 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
   };
 
   const harnessHandler = async (req: Request, res: Response) => {
+    await runWithHarnessRequestContext(req.headers, async () => {
     const body = req.body as {
       jsonrpc?: string;
       id?: unknown;
@@ -858,6 +885,7 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
         rpcLog.emit({ status: "ok", durationMs });
       }
     }
+    });
   };
 
   app.post("/acp", corsHandler, harnessHandler);

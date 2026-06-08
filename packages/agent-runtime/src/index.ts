@@ -26,6 +26,8 @@ import {
   harnessLog,
 } from "./harness/index.js";
 import { getHarnessStoreDiag } from "./harness/sandbox/session-store.js";
+import { getHarnessSandboxCacheStats } from "./harness/sandbox/orchestrator.js";
+import { getSandboxPrewarmStats } from "./harness/sandbox/sandbox-prewarm.js";
 
 const port = Number(process.env.PORT ?? 9000);
 
@@ -81,7 +83,14 @@ async function main() {
         process.env.TCB_ENV_ID?.trim() ??
         "default";
       const harnessStore = await getHarnessStoreDiag(envId);
-      res.json({ ...base, harnessStore });
+      res.json({
+        ...base,
+        harnessStore,
+        sandbox: {
+          ...getHarnessSandboxCacheStats(),
+          ...getSandboxPrewarmStats(),
+        },
+      });
       return;
     }
     res.json({ ...base, store: getStoreDiag() });

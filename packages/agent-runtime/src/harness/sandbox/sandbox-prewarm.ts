@@ -223,6 +223,10 @@ export function isSandboxPrewarmInFlight(acpSessionId: string): boolean {
   return prewarmInflight.has(acpSessionId);
 }
 
+export function getSandboxPrewarmStats(): { prewarmInFlight: number } {
+  return { prewarmInFlight: prewarmInflight.size };
+}
+
 export function resetSandboxPrewarmForTests(): void {
   prewarmInflight.clear();
   for (const timer of idleTimers.values()) clearTimeout(timer);

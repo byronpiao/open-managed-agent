@@ -544,8 +544,17 @@ export class AgsStatefulSandboxOrchestrator {
       instanceEnv = mergeCosInstanceEnv(instanceEnv, cos);
     }
 
+    const milestonePhases = new Set([
+      "tool.ensure",
+      "cos.ensure_subpath",
+      "instance_start",
+      "token.acquire",
+      "template_warmup",
+    ]);
     const onProgress = (msg: { phase: string; message: string }) => {
-      wl.phase(msg.phase, { detail: msg.message });
+      const fields = { detail: msg.message };
+      if (milestonePhases.has(msg.phase)) wl.milestone(msg.phase, fields);
+      else wl.phase(msg.phase, fields);
       args.onProgress?.(msg);
     };
 
@@ -554,7 +563,7 @@ export class AgsStatefulSandboxOrchestrator {
     let headers: Record<string, string> = {};
 
     try {
-      wl.phase("tool.ensure");
+      wl.milestone("tool.ensure");
       const ensured = await ensureHarnessTool(args.envId, cred, cos, onProgress);
       toolId = ensured.toolId;
       wl.set({
@@ -596,7 +605,7 @@ export class AgsStatefulSandboxOrchestrator {
       });
       wl.set({ instanceId });
 
-      wl.phase("token.acquire");
+      wl.milestone("token.acquire");
       const accessToken = await acquireInstanceToken(instanceId, cred, args.envId);
       headers = buildDataPlaneHeaders({
         apiKey: cred.apiKey,
@@ -845,4 +854,9 @@ export function cacheSandboxHandle(acpSessionId: string, handle: HarnessSandboxH
 
 export function dropCachedSandboxHandle(acpSessionId: string): void {
   handleBySession.delete(acpSessionId);
+}
+
+/** /healthz — cached sandbox handles per ACP session. */
+export function getHarnessSandboxCacheStats(): { cachedHandles: number } {
+  return { cachedHandles: handleBySession.size };
 }
