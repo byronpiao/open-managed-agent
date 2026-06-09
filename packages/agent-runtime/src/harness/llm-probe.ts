@@ -4,6 +4,10 @@
  */
 
 import { assertHarnessLlmEnv, missingHarnessLlmEnv } from "./harness-env.js";
+import {
+  HARNESS_CLOUDBASE_DEFAULT_MODEL,
+  cloudBaseAiGatewayBaseUrl,
+} from "./llm-providers.js";
 
 export interface HarnessLlmProbeResult {
   ok: boolean;
@@ -52,7 +56,9 @@ export async function probeHarnessOpenAiLlm(options?: {
   const apiKey = process.env.LLM_API_KEY!.trim();
   const model = process.env.LLM_MODEL!.trim();
   const endpoint = openAiChatCompletionsUrl(process.env.OPENAI_BASE_URL!);
-  const timeoutMs = options?.timeoutMs ?? 30_000;
+  const timeoutMs =
+    options?.timeoutMs ??
+    (Number(process.env.HARNESS_PLATFORM_PROBE_TIMEOUT_MS) || 30_000);
   const started = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -134,6 +140,110 @@ export async function probeHarnessOpenAiLlm(options?: {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** CloudBase AI gateway (TCB_API_KEY + envId) — local harness tier ①, ~30s fail-fast. */
+export async function probeCloudBasePlatformLlm(options?: {
+  timeoutMs?: number;
+  maxTokens?: number;
+}): Promise<HarnessLlmProbeResult> {
+  const envId = process.env.CLOUDBASE_ENV_ID?.trim() || process.env.TCB_ENV_ID?.trim();
+  const apiKey = process.env.TCB_API_KEY?.trim();
+  // Tier ① platform probe — never use BYOK LLM_MODEL from .env.harness ③ 段.
+  const model = HARNESS_CLOUDBASE_DEFAULT_MODEL;
+  if (!envId || !apiKey) {
+    return {
+      ok: false,
+      httpStatus: 0,
+      model,
+      endpoint: "",
+      latencyMs: 0,
+      error: "missing CLOUDBASE_ENV_ID or TCB_API_KEY",
+    };
+  }
+  const endpoint = openAiChatCompletionsUrl(cloudBaseAiGatewayBaseUrl(envId));
+  const timeoutMs =
+    options?.timeoutMs ??
+    (Number(process.env.HARNESS_PLATFORM_PROBE_TIMEOUT_MS) || 30_000);
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "Reply with exactly: pong" }],
+        max_tokens: options?.maxTokens ?? 16,
+      }),
+      signal: controller.signal,
+    });
+    const latencyMs = Date.now() - started;
+    const raw = await res.text();
+    let body: unknown;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      body = raw;
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        httpStatus: res.status,
+        model,
+        endpoint,
+        latencyMs,
+        error: probeErrorMessage(body, raw.slice(0, 300)),
+      };
+    }
+    const snippet =
+      (body as { choices?: Array<{ message?: { content?: string } }> })?.choices?.[0]?.message
+        ?.content ?? "";
+    return {
+      ok: !!snippet.trim(),
+      httpStatus: res.status,
+      model,
+      endpoint,
+      latencyMs,
+      replySnippet: snippet.slice(0, 80),
+      error: snippet.trim() ? undefined : "empty reply from platform model",
+    };
+  } catch (err) {
+    const message =
+      err instanceof Error && err.name === "AbortError"
+        ? `timeout after ${timeoutMs}ms`
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    return {
+      ok: false,
+      httpStatus: 0,
+      model,
+      endpoint,
+      latencyMs: Date.now() - started,
+      error: message,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function assertHarnessPlatformLlmReachable(): Promise<HarnessLlmProbeResult> {
+  const result = await probeCloudBasePlatformLlm();
+  if (!result.ok) {
+    const status = result.httpStatus ? `HTTP ${result.httpStatus}` : "request failed";
+    throw new Error(
+      `Platform LLM probe failed (${status}): ${result.error ?? "unknown"}. ` +
+        `model=${result.model} endpoint=${result.endpoint || "(unset)"}. ` +
+        `Check CloudBase AI console: hy3-preview enabled + quota. ` +
+        `Preflight: node scripts/harness/load-env.mjs --check`,
+    );
+  }
+  return result;
 }
 
 /** Hard gate — use before `harness -- local` full / hitl / LLM sync. */

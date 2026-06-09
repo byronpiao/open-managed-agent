@@ -123,14 +123,16 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 
 ## 沙箱内 Agent
 
-远程 AGS 沙箱内运行 **OpenCode** 或 **Claude Code**，支持 bash、读写项目文件。默认使用环境 API Key（`TCB_API_KEY`）调用 **CloudBase AI**（`hy3-preview`），无需自填 LLM Key。
+远程 AGS 沙箱内运行 **OpenCode** 或 **Claude Code**，支持 bash、读写项目文件。
+
+**模型（由简到繁）**：默认 **CloudBase AI `hy3-preview`**（`TCB_API_KEY`）→ 可选内置 **`model: zen`**（不扣 CloudBase AI 额度）→ 可选 **BYOK** 自有 LLM Key。见 [使用指南](./docs/harness-tutorial.md)。
 
 | 项 | 说明 |
 |----|------|
 | 文档 | [使用指南](./docs/harness-tutorial.md) · [OpenCode](./docs/harness-opencode.md) · [Claude Code](./docs/harness-claude-code.md) |
 | 配置 | `runtime: harness` + `engine: opencode` 或 `claude` |
 | 凭证 | `TCB_API_KEY`（沙箱 + 默认 LLM）· `TCB_SECRET_*`（会话）· `CLOUDBASE_ACCESS_KEY`（`magent run`） |
-| 参考 | [架构](./docs/harness-architecture.md) · [环境变量](./docs/harness-env.md) |
+| 参考 | [架构](./docs/harness-architecture.md) · [环境变量](./docs/harness-env.md)（研发验收） |
 
 ```bash
 cp docs/examples/agent.sandbox.opencode.min.yaml ./agent.sandbox.yaml

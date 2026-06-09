@@ -32,6 +32,48 @@ const REQUIRED_FOR_AGS = [
   "TCB_REGION",
 ];
 
+const BYOK_LLM_KEYS = [
+  "LLM_API_KEY",
+  "LLM_MODEL",
+  "OPENAI_BASE_URL",
+  "ANTHROPIC_BASE_URL",
+  "HARNESS_FORCE_ZEN",
+];
+
+/** Harness 三层 LLM：local=platform(hy3) | cloud-tcbr=zen | cloud-scf=BYOK(③段). */
+export function applyHarnessLlmTier(tier, target = process.env) {
+  for (const k of BYOK_LLM_KEYS) delete target[k];
+  if (tier === "platform") {
+    target.HARNESS_LLM_TIER = "platform";
+    return;
+  }
+  if (tier === "zen") {
+    target.HARNESS_FORCE_ZEN = "1";
+    target.HARNESS_LLM_TIER = "zen";
+    return;
+  }
+  if (tier === "byok") {
+    const map = readHarnessEnvMap();
+    for (const k of ["LLM_API_KEY", "LLM_MODEL", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"]) {
+      const v = map.get(k)?.trim();
+      if (v) target[k] = v;
+    }
+    target.HARNESS_LLM_TIER = "byok";
+    return;
+  }
+  throw new Error(`unknown HARNESS LLM tier: ${tier}`);
+}
+
+/** 验收阶段默认短超时（生产箱内 relay 仍可用 300000）。 */
+export function applyHarnessTestDefaults(target = process.env) {
+  if (!target.HARNESS_OPENCODE_ACP_TIMEOUT_MS?.trim()) {
+    target.HARNESS_OPENCODE_ACP_TIMEOUT_MS = "90000";
+  }
+  if (!target.HARNESS_PLATFORM_PROBE_TIMEOUT_MS?.trim()) {
+    target.HARNESS_PLATFORM_PROBE_TIMEOUT_MS = "30000";
+  }
+}
+
 /** Load `.env.harness` only. */
 export function loadEnv() {
   if (!loadHarnessEnvIntoProcess()) {

@@ -522,6 +522,14 @@ test("resolveCloudBasePlatformLlm from TCB_API_KEY + envId only", async () => {
   const anthropic = resolveAnthropicCompatProvider(cfg);
   assert.equal(anthropic?.baseUrl, platform.baseUrl);
   assert.equal(resolveOpenAiCompatProvider({ name: "t", model: "zen", system: "s" }), null);
+  const ocRaw = buildHarnessOpencodeConfigContent(cfg);
+  assert.ok(ocRaw);
+  const oc = JSON.parse(ocRaw);
+  assert.equal(
+    oc.provider["openai-compat"].options.baseURL,
+    "https://test-env-abc.api.tcloudbasegateway.com/v1/ai/cloudbase/v1",
+  );
+  assert.equal(oc.provider["openai-compat"].options.apiKey, "tcb-jwt-key");
   if (saved.env === undefined) delete process.env.CLOUDBASE_ENV_ID;
   else process.env.CLOUDBASE_ENV_ID = saved.env;
   if (saved.tcb === undefined) delete process.env.TCB_API_KEY;

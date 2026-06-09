@@ -9,7 +9,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { loadEnv } from "./load-env.mjs";
+import { loadEnv, applyHarnessLlmTier, applyHarnessTestDefaults } from "./load-env.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
@@ -38,23 +38,19 @@ async function assertHarnessAgsRuntimeEnvSync() {
   assertHarnessAgsRuntimeEnv();
 }
 
-/** Local 主链：走 CloudBase AI（TCB_API_KEY），不用 zen / 不用 BYOK LLM_*。 */
-function envForPlatformHarness() {
+function envForHarnessTier(tier) {
   const env = { ...process.env };
-  delete env.LLM_API_KEY;
-  delete env.LLM_MODEL;
-  delete env.OPENAI_BASE_URL;
-  delete env.ANTHROPIC_BASE_URL;
-  delete env.HARNESS_FORCE_ZEN;
+  applyHarnessLlmTier(tier, env);
+  applyHarnessTestDefaults(env);
   return env;
 }
 
-function runNode(scriptRel, extraArgs = [], { platform = false } = {}) {
+function runNode(scriptRel, extraArgs = [], { tier } = {}) {
   const script = resolve(repoRoot, scriptRel);
   const r = spawnSync(process.execPath, [script, ...extraArgs], {
     cwd: repoRoot,
     stdio: "inherit",
-    env: platform ? envForPlatformHarness() : process.env,
+    env: tier ? envForHarnessTier(tier) : process.env,
   });
   if (r.status !== 0) process.exit(r.status ?? 1);
 }
@@ -72,12 +68,24 @@ async function runLocal() {
   console.log("=== harness local: AGS env（CloudBase AI hy3-preview，TCB_API_KEY）===");
   await assertHarnessAgsRuntimeEnvSync();
 
-  console.log("=== harness local: e2e full（真 AGS + 平台模型 / custom tool / sync）===");
-  runNode("tests/harness/e2e.test.mjs", ["--full"], { platform: true });
+  console.log("=== harness local: platform LLM probe（30s，失败不进入 300s×N 真箱）===");
+  const { assertHarnessPlatformLlmReachable } = await import(
+    "../../packages/agent-runtime/dist/harness/llm-probe.js"
+  );
+  const platformProbe = await assertHarnessPlatformLlmReachable();
+  console.log(
+    `✓ platform LLM ${platformProbe.latencyMs}ms model=${platformProbe.model} reply=${platformProbe.replySnippet ?? "(empty)"}`,
+  );
+
+  applyHarnessLlmTier("platform");
+  applyHarnessTestDefaults();
+
+  console.log("=== harness local: e2e full（真 AGS + 平台 hy3-preview / sync）===");
+  runNode("tests/harness/e2e.test.mjs", ["--full"], { tier: "platform" });
 
   console.log("=== harness local: matrix parity（#1–#2 TRW #8 MCP #9 CloudBase #10 Skills）===");
   await assertHarnessAgsRuntimeEnvSync();
-  runNode("tests/harness/matrix-parity.test.mjs", [], { platform: true });
+  runNode("tests/harness/matrix-parity.test.mjs", [], { tier: "platform" });
 
   if (truthyCos()) {
     const { assertHarnessCosEnv } = await import(

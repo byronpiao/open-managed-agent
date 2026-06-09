@@ -70,7 +70,9 @@ export {
 
 export {
   assertHarnessOpenAiLlmReachable,
+  assertHarnessPlatformLlmReachable,
   openAiChatCompletionsUrl,
+  probeCloudBasePlatformLlm,
   probeHarnessOpenAiLlm,
   type HarnessLlmProbeResult,
 } from "./llm-probe.js";

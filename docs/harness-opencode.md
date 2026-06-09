@@ -58,27 +58,39 @@ magent run -a "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID" \
 
 ---
 
-## 模型说明
+## 模型说明（循序渐进）
 
-| 配置 | 说明 |
-|------|------|
-| 省略 `model` 或 `model: hy3-preview` | **默认**：CloudBase AI 体验模型（需环境已开通 AI 能力与 API Key） |
-| `model: zen` | 箱内 OpenCode **内置**模型，不消耗 CloudBase AI 额度，适合无 AI 套餐或本地演示 |
-| 自定义模型（见下） | 使用你自己的 OpenAI 兼容 endpoint 与 API Key |
+| 顺序 | 配置 | 说明 |
+|------|------|------|
+| 1 | 省略 `model` 或 `model: hy3-preview` | **默认起步**：CloudBase AI 体验模型（`TCB_API_KEY`） |
+| 2 | `model: zen` | 箱内 **内置**模型，**不消耗** CloudBase AI 额度 |
+| 3 | 自定义（见下） | **BYOK**：自有 OpenAI 兼容 Key（NVIDIA、Mimo 等） |
 
-CloudBase AI 双协议说明见官方文档：[OpenAI SDK 调用](https://docs.cloudbase.net/ai/model/openai-sdk-access)。
+CloudBase AI 双协议：[OpenAI SDK 调用](https://docs.cloudbase.net/ai/model/openai-sdk-access)。
+
+### 使用 zen
+
+```yaml
+runtime: harness
+engine: opencode
+model: zen
+```
+
+更新 Agent：`magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"`。
 
 ---
 
-## 自定义模型（可选）
+## 自定义模型（BYOK，可选）
 
-需要自有 LLM（如 Mimo、DeepSeek 代理）时，在创建 Agent 前配置 Runtime 环境变量：
+在 `magent agent:create` / `agent:update` 前配置 Runtime 环境变量。OpenAI 兼容示例（NVIDIA Integrate）：
 
 ```bash
-export LLM_API_KEY=your-api-key
-export LLM_MODEL=your-model-id
-export OPENAI_BASE_URL=https://your-openai-compatible-endpoint/v1
+export LLM_API_KEY=your-nvapi-key
+export LLM_MODEL=moonshotai/kimi-k2.6
+export OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
 ```
+
+Mimo（Token Plan）等其它厂商同样使用 `LLM_API_KEY` + `LLM_MODEL` + `OPENAI_BASE_URL`。
 
 或在 `agent.yaml` 使用 ModelSpec：
 

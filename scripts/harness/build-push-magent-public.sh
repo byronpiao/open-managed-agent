@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if ! command -v docker >/dev/null 2>&1; then
-  echo "docker not found in PATH — install Docker Desktop/Colima or export PATH" >&2
+  echo "docker not found in PATH — brew link docker && colima start" >&2
   exit 1
 fi
 if [[ -z "${DOCKER_HOST:-}" && -S "${HOME}/.colima/default/docker.sock" ]]; then
@@ -23,6 +23,17 @@ OMA_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HARNESS_ENV_TS="${OMA_ROOT}/packages/agent-runtime/src/harness/harness-env.ts"
 
 cd "$TRW_ROOT"
+OAK_VENDOR="${OMA_ROOT}/packages/agent-runtime/vendor/cloudbase-open-agent-kernel-0.1.0-alpha.0.tgz"
+TRW_VENDOR="${TRW_ROOT}/vendor/cloudbase-open-agent-kernel-0.1.0-alpha.0.tgz"
+if [[ ! -f "$TRW_VENDOR" && -f "$OAK_VENDOR" ]]; then
+  mkdir -p "${TRW_ROOT}/vendor"
+  cp -f "$OAK_VENDOR" "$TRW_VENDOR"
+  echo "Synced OAK vendor tgz → TRW vendor/"
+fi
+if [[ ! -f "$TRW_VENDOR" ]]; then
+  echo "Missing $TRW_VENDOR (copy from open-managed-agent/packages/agent-runtime/vendor/)" >&2
+  exit 1
+fi
 pnpm build:prod
 unset PORT HOST
 pnpm test:unit

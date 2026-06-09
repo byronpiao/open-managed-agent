@@ -20,7 +20,19 @@
 2. CloudBase 环境已开通 **AGS 沙箱**。
 3. 已创建环境 **API Key**（`TCB_API_KEY`），并在控制台启用 **CloudBase AI** 模型（默认体验模型 `hy3-preview`）。见 [接入大模型](https://docs.cloudbase.net/ai/model/model-access)。
 
-部署沙箱内 Agent 用 **`agent.yaml` + `magent`**；凭证写在 shell 环境或 CloudBase 控制台，**不需要** `.env.harness`（该文件仅研发 Harness 验收用）。
+部署沙箱内 Agent 用 **`agent.yaml` + `magent`**；凭证写在 shell 环境或 CloudBase 控制台，**不需要** `.env.harness`（该文件仅研发内部验收用）。
+
+### 模型怎么选（建议顺序）
+
+| 阶段 | 配置 | 适用 |
+|------|------|------|
+| **① 默认（推荐起步）** | 省略 `model` 或 `model: hy3-preview` | 已开通 CloudBase AI，用环境 API Key（`TCB_API_KEY`）调体验模型 |
+| **② 内置 zen** | `model: zen` | 不想消耗 CloudBase AI 额度，或先做功能演示 |
+| **③ 自带模型（BYOK）** | `model` + 自有 `apiKey` / `apiBaseUrl`，或 Runtime 环境变量 `LLM_*` | 使用 NVIDIA、Mimo 等第三方 OpenAI 兼容服务 |
+
+三条路径共用同一套 `runtime: harness` 与部署命令，**只需改 `agent.yaml` 或 Runtime 环境变量**。OpenCode 细节见 [harness-opencode.md](./harness-opencode.md)。
+
+> **关于 `HARNESS_TOOL_ROLE_ARN`**：对客部署**不需要** `.env.harness`。仅当本环境**尚未有** AGS 沙箱工具、且 Runtime 需**首次自动创建**工具时，在 `magent agent:create` 前 export 该角色 ARN（CAM 中沙箱实例执行角色，一次性）。环境内已有沙箱工具时可省略。研发验收见 [Harness一条龙.md](../../Harness一条龙.md)。
 
 ---
 
@@ -104,7 +116,36 @@ magent run -a "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID" \
 
 首次对话可能显示 `Warming sandbox...`，等待 1–3 分钟。
 
-### 6. 用 SDK（可选）
+### 6. 改用内置 zen（可选，不扣 CloudBase AI）
+
+在 `agent.yaml` 增加一行即可，无需第三方 LLM Key：
+
+```yaml
+runtime: harness
+engine: opencode
+model: zen
+system: |
+  You are a helpful coding assistant in a remote sandbox workspace.
+```
+
+```bash
+magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"
+magent run -a "$CLOUDBASE_AGENT_ID" -m "Reply with exactly: OK"
+```
+
+### 7. 自带模型 BYOK（可选）
+
+在创建或更新 Agent 前配置 OpenAI 兼容 endpoint（示例为 NVIDIA Integrate API）：
+
+```bash
+export LLM_API_KEY=your-nvapi-key
+export LLM_MODEL=moonshotai/kimi-k2.6
+export OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
+```
+
+或在 yaml 写 ModelSpec（见 [harness-opencode.md](./harness-opencode.md)）。然后 `magent agent:create` / `agent:update` 与第一步相同。
+
+### 8. 用 SDK（可选）
 
 ```typescript
 import ManagedAgents from "open-managed-agent-sdk";
@@ -278,8 +319,9 @@ magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID"
 | 沙箱无法启动 | 检查 `TCB_API_KEY` 与 AGS 开通状态 |
 | yaml 不生效 | `magent agent:update -f ...`；容器内 `agent.yaml` 优先于环境变量 |
 | 模型 401 / 额度 | 检查控制台 AI 模型开关与 Token；默认走 `hy3-preview` |
-| 第三方 LLM（Mimo 等） | 见 [harness-opencode.md](./harness-opencode.md) / [harness-claude-code.md](./harness-claude-code.md) 自定义一节 |
-| OpenCode 内置 zen | yaml 写 `model: zen`（不扣 CloudBase AI），见 [harness-opencode.md](./harness-opencode.md) |
+| 不想用 CloudBase AI 额度 | yaml 写 `model: zen`（见上文 §6） |
+| 第三方 LLM（NVIDIA / Mimo 等） | 见上文 §7 与 [harness-opencode.md](./harness-opencode.md) |
+| 首次起箱报 RoleArn / 创 tool 失败 | 环境需已开通 AGS；必要时 export `HARNESS_TOOL_ROLE_ARN` 后重新 `agent:create` |
 
 ---
 

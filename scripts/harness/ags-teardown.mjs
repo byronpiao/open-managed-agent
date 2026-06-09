@@ -9,8 +9,8 @@ import { loadEnv, assertHarnessCreds } from "./load-env.mjs";
 
 const dryRun = process.argv.includes("--dry-run");
 
+/** Caller must have loaded `.env.harness` (and applied LLM tier if needed). */
 export async function teardownHarnessSandboxes() {
-  loadEnv();
   assertHarnessCreds();
   const envId = process.env.CLOUDBASE_ENV_ID;
   const { getSandboxOrchestrator } = await import(
@@ -37,6 +37,7 @@ export async function teardownHarnessSandboxes() {
 }
 
 if (process.argv[1]?.endsWith("ags-teardown.mjs")) {
+  loadEnv();
   teardownHarnessSandboxes().catch((err) => {
     console.error(err);
     process.exit(1);

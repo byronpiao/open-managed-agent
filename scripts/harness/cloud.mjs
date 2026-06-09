@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pinnedHarnessToolId } from "../../lib/harness-env-file.mjs";
+import { applyHarnessLlmTier, applyHarnessTestDefaults } from "./load-env.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
@@ -27,14 +28,11 @@ function harnessDeployEnv(backend = "tcbr") {
   const env = { ...process.env };
   if (!pinnedHarnessToolId()) delete env.HARNESS_TOOL_ID;
   if (backend === "tcbr") {
-    delete env.LLM_API_KEY;
-    delete env.LLM_MODEL;
-    delete env.OPENAI_BASE_URL;
-    delete env.ANTHROPIC_BASE_URL;
-    env.HARNESS_FORCE_ZEN = "1";
+    applyHarnessLlmTier("zen", env);
   } else {
-    delete env.HARNESS_FORCE_ZEN;
+    applyHarnessLlmTier("byok", env);
   }
+  applyHarnessTestDefaults(env);
   return env;
 }
 

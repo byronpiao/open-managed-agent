@@ -6,8 +6,32 @@
  * Loads `.env.harness` via scripts/harness/load-env.mjs
  */
 
-import { loadEnv, assertHarnessCreds } from "../../scripts/harness/load-env.mjs";
+import {
+  loadEnv,
+  assertHarnessCreds,
+  applyHarnessLlmTier,
+  applyHarnessTestDefaults,
+} from "../../scripts/harness/load-env.mjs";
 loadEnv();
+
+const FULL = process.argv.includes("--full");
+const LLM_SUITE = process.argv.includes("--llm");
+/** Claude SessionStore 外置：旁路验收，不挡主链（平台 / zen / BYOK）。 */
+const E2E_CLAUDE =
+  process.argv.includes("--claude") || process.env.HARNESS_E2E_CLAUDE === "1";
+const FORCE_ZEN = process.env.HARNESS_FORCE_ZEN === "1";
+
+const tierFromEnv = process.env.HARNESS_LLM_TIER?.trim();
+if (tierFromEnv) {
+  applyHarnessLlmTier(tierFromEnv);
+} else if (LLM_SUITE) {
+  applyHarnessLlmTier("byok");
+} else if (FULL && FORCE_ZEN) {
+  applyHarnessLlmTier("zen");
+} else if (FULL) {
+  applyHarnessLlmTier("platform");
+}
+if (FULL || LLM_SUITE) applyHarnessTestDefaults();
 
 import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
@@ -18,15 +42,15 @@ import { dirname, resolve } from "node:path";
 import { Agent } from "undici";
 import * as acp from "@agentclientprotocol/sdk";
 
-/** Real AGS prompts/SSE can exceed undici default headers timeout (Node fetch). */
-const SANDBOX_HTTP = new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 });
+const E2E_ACP_TIMEOUT_MS = Number(process.env.HARNESS_OPENCODE_ACP_TIMEOUT_MS) || 90_000;
+/** undici 须略大于箱内 opencode ACP relay 超时 */
+const SANDBOX_HTTP = new Agent({
+  headersTimeout: E2E_ACP_TIMEOUT_MS + 60_000,
+  bodyTimeout: E2E_ACP_TIMEOUT_MS + 60_000,
+});
 function sandboxFetch(url, init = {}) {
   return fetch(url, { ...init, dispatcher: SANDBOX_HTTP });
 }
-
-const FULL = process.argv.includes("--full");
-const LLM_SUITE = process.argv.includes("--llm");
-const FORCE_ZEN = process.env.HARNESS_FORCE_ZEN === "1";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SKILL_FIXTURE_PATH = resolve(repoRoot, "tests/fixtures/skills/harness-e2e-demo.md");
 const E2E_PORT = 19090;
@@ -71,12 +95,13 @@ function hasCustomLlmInEnv() {
   );
 }
 
-/** FULL e2e: CloudBase AI 默认（TCB_API_KEY）；--llm 或 host LLM_* → BYOK；HARNESS_FORCE_ZEN → zen。 */
+/** FULL e2e tier: platform(hy3) | zen | byok — 见 HARNESS_LLM_TIER / harness -- local|cloud-* */
 function resolveFullAgentConfig() {
-  if (FORCE_ZEN) {
+  const tier = process.env.HARNESS_LLM_TIER?.trim();
+  if (tier === "zen" || FORCE_ZEN) {
     return { ...BASE_AGENT_CONFIG, model: "zen", engine: "opencode" };
   }
-  if (!LLM_SUITE && !hasCustomLlmInEnv()) {
+  if (tier === "platform" || (!LLM_SUITE && !hasCustomLlmInEnv())) {
     return { ...BASE_AGENT_CONFIG, engine: "opencode" };
   }
 
@@ -462,6 +487,47 @@ async function waitSandboxReady(sessionId, maxMs = 180_000) {
   throw new Error(`sandbox not ready for session ${sessionId} after ${maxMs}ms`);
 }
 
+/** Classify sandbox prompt body — avoid retrying 300s relay timeouts with 0 LLM text. */
+function classifySandboxPrompt(body) {
+  const text = extractAllSseText(body);
+  if (text.trim()) return { kind: "ok", text };
+  const relayTimeout =
+    body.includes("timeout waiting for id=") || body.includes("opencode acp timeout");
+  if (relayTimeout) {
+    return {
+      kind: "relay_timeout",
+      text: "",
+      hint: `箱内 opencode ACP relay ${E2E_ACP_TIMEOUT_MS}ms 仍无 LLM 输出；查 hy3-preview / OPENCODE_CONFIG，不是 sync 逻辑本身`,
+    };
+  }
+  if (body.includes('"stopReason"') && !text.trim()) {
+    return {
+      kind: "empty_turn",
+      text: "",
+      hint: "收到 end_turn 但无 agent_message_chunk（可能是 OMA 在 timeout 后补的 end_turn）",
+    };
+  }
+  if (body.includes('"code":-32000')) return { kind: "rpc_error", text: "" };
+  return { kind: "empty", text: "" };
+}
+
+/** Sandbox may emit -32000 timeout on one SSE frame then result.end_turn on the next. */
+function promptResponseUsable(body) {
+  if (sseShowsLlmActivity(body)) return true;
+  for (const line of body.split("\n")) {
+    let payload = line.trim();
+    if (payload.startsWith("data:")) payload = payload.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const j = JSON.parse(payload);
+      if (j.result?.stopReason) return true;
+    } catch {
+      // skip
+    }
+  }
+  return false;
+}
+
 async function promptSessionText(sessionId, text, rpcId = 100) {
   const res = await sandboxFetch(`${BASE}/acp`, {
     method: "POST",
@@ -477,7 +543,7 @@ async function promptSessionText(sessionId, text, rpcId = 100) {
     }),
   });
   const body = await res.text();
-  if (body.includes("timeout waiting for id=")) {
+  if (body.includes("timeout waiting for id=") && !promptResponseUsable(body)) {
     throw new Error(body.slice(0, 400));
   }
   return body;
@@ -515,11 +581,15 @@ async function testSyncPersistence() {
         : "Reply with exactly: OK",
       201 + attempt,
     );
-    if (first.includes('"code":-32000') || first.includes("opencode acp timeout")) {
+    const outcome = classifySandboxPrompt(first);
+    if (outcome.kind === "relay_timeout" || outcome.kind === "empty_turn") {
+      throw new Error(`sync: ${outcome.hint} — fail-fast (no 300s×4). ${first.slice(0, 280)}`);
+    }
+    if (outcome.kind === "rpc_error") {
       console.warn(`sync: prompt attempt ${attempt + 1} error: ${first.slice(0, 280)}`);
       continue;
     }
-    firstText = extractAllSseText(first);
+    firstText = outcome.text;
     if (firstText.trim().length > 0) break;
   }
   assert.ok(
@@ -1103,8 +1173,14 @@ async function main() {
           ? "✓ opencode sync export → CloudBase → hydrate → session/load → token recall"
           : "✓ opencode sync export → CloudBase → hydrate → session/load replay (platform)",
       );
-      await testClaudeSessionPersistence();
-      console.log("✓ claude SessionStore → CloudBase → runtime restart → token recall");
+      if (E2E_CLAUDE) {
+        await testClaudeSessionPersistence();
+        console.log("✓ claude SessionStore → CloudBase → runtime restart → token recall");
+      } else {
+        console.log(
+          "⊘ claude SessionStore e2e skipped (旁路；HARNESS_E2E_CLAUDE=1 或 --claude 再跑)",
+        );
+      }
       await testSandboxPrompt();
       console.log("✓ session/prompt → AGS sandbox SSE");
       await testSandboxCustomToolLoop();

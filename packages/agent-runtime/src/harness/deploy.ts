@@ -10,8 +10,10 @@ import {
   anthropicCompatToTrwEnv,
   codebuddyCompatToTrwEnv,
   resolveAnthropicCompatProvider,
+  resolveCloudBasePlatformLlm,
   resolveCodebuddyProvider,
   resolveOpenAiCompatProvider,
+  openAiCompatBaseUrlForHarness,
 } from "./llm-providers.js";
 import { buildHarnessOpencodePermission } from "./opencode-permissions.js";
 
@@ -52,7 +54,10 @@ export function buildHarnessOpencodeConfigContent(config: AgentConfig): string |
       [OPENCODE_PROVIDER_ID]: {
         npm: "@ai-sdk/openai-compatible",
         name: "OpenAI-compatible",
-        options: { baseURL: provider.baseUrl, apiKey: provider.apiKey },
+        options: {
+          baseURL: openAiCompatBaseUrlForHarness(provider),
+          apiKey: provider.apiKey,
+        },
         models: { [model]: { name: model } },
       },
     };
@@ -275,6 +280,18 @@ export function buildHarnessSandboxEnv(args: {
         merged.push({ Name: "OPENCODE_CONFIG_CONTENT", Value: opencodeCfg });
       }
     }
+    const platform = resolveCloudBasePlatformLlm(args.config);
+    if (platform?.apiKey && !merged.some((e) => e.Name === "TCB_API_KEY")) {
+      merged.push({ Name: "TCB_API_KEY", Value: platform.apiKey });
+    }
+    const byokKey = process.env.LLM_API_KEY?.trim();
+    if (
+      byokKey &&
+      !platform &&
+      !merged.some((e) => e.Name === "LLM_API_KEY")
+    ) {
+      merged.push({ Name: "LLM_API_KEY", Value: byokKey });
+    }
   }
   const customTools = buildManagedAgentClientTools(args.config);
   if (customTools.length) {
@@ -282,6 +299,10 @@ export function buildHarnessSandboxEnv(args: {
       Name: "HARNESS_CLIENT_TOOLS_JSON",
       Value: JSON.stringify(customToolsToMcpToolSchemas(customTools)),
     });
+  }
+  const relayTimeout = process.env.HARNESS_OPENCODE_ACP_TIMEOUT_MS?.trim();
+  if (relayTimeout) {
+    merged.push({ Name: "HARNESS_OPENCODE_ACP_TIMEOUT_MS", Value: relayTimeout });
   }
   if (args.extraEnv?.length) merged.push(...args.extraEnv);
   return merged;
