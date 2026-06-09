@@ -11,6 +11,19 @@ export { SessionsResource } from "./sessions.js";
 export { EventsResource, EventStream } from "./events.js";
 export { AcpClient } from "./acp-client.js";
 export type { AcpSessionInfo, AcpSessionDetail, AcpStreamEvent, AcpCapabilities } from "./acp-client.js";
+export {
+  ManagedAgentsClient,
+  createManagedAgentsClient,
+  MANAGED_AGENTS_BETA_HEADER_NAME,
+  MANAGED_AGENTS_BETA_HEADER_VALUE,
+} from "./managed-agents-client.js";
+export type {
+  ManagedAgentsAgentRecord,
+  ManagedAgentsEnvironmentRecord,
+  ManagedAgentsSessionRecord,
+  ManagedAgentsSessionEventRecord,
+  ManagedAgentsInboundEvent,
+} from "./managed-agents-client.js";
 
 export class ManagedAgents {
   readonly agents: AgentsResource;
@@ -24,7 +37,6 @@ export class ManagedAgents {
     if (!config.agentId) {
       throw new Error("ManagedAgents: agentId is required");
     }
-    // Auto-generate baseURL if not provided
     if (!config.baseURL) {
       config.baseURL = `https://${config.envId}.api.tcloudbasegateway.com/v1/aibot/bots/${config.agentId}`;
     }

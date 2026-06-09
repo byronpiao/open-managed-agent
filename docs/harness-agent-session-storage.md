@@ -5,6 +5,8 @@
 
 沙箱内 Agent（`runtime=harness`）的思考与工具在 **AGS 沙箱**里执行；箱内磁盘随实例 TTL 清空。要让对话跨沙箱回收、re-acquire 后仍能续聊，必须把会话「真相」写到箱外。
 
+**双层存储（Managed Agents）**：Layer A（`managed_agents_session_events`）记录协议事件供客户端 SSE 重连；Layer B（下文 `harness_*`）是引擎恢复 SoR。两层并列，互不替代。详见 [managed-agents-http.md](./managed-agents-http.md)。
+
 本文说明 **OpenCode** 与 **Claude Code** 两条链路：写到哪里、何时写、增量还是全量、以及 FlexDB 读写风险。
 
 ---

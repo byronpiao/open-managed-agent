@@ -8,7 +8,8 @@
 | 适合 | 轻量对话、MCP | bash、改文件、完整编码环境 |
 | 配置 | 省略 `runtime` | `runtime: harness` + `engine: opencode` 或 `claude` |
 
-**按引擎阅读：** [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md)
+**按引擎阅读：** [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md)  
+**按协议阅读：** [Managed Agents HTTP 使用指南](./managed-agents-guide.md)（SDK / `/v1/sessions`，与 `magent run` 的 ACP 不同）
 
 ---
 

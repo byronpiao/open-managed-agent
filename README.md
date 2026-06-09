@@ -164,6 +164,8 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 
 完整步骤：[使用指南](./docs/harness-tutorial.md) · [OpenCode](./docs/harness-opencode.md) · [Claude Code](./docs/harness-claude-code.md)
 
+**按官方 Managed Agents HTTP 集成**（`/v1/sessions` + SSE，非 `magent run` 的 ACP）：见 [Managed Agents 使用指南](./docs/managed-agents-guide.md)。
+
 ### 最小部署
 
 ```bash

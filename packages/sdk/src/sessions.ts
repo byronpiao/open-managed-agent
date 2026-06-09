@@ -1,15 +1,5 @@
 /**
- * SessionsResource - 对外接口不变，内部走 ACP JSON-RPC 2.0
- *
- * 用法：
- *   const client = new ManagedAgents({
- *     baseURL: "https://<env>.service.tcloudbase.com/v1/aibot/bots/<agentId>",
- *   });
- *
- *   const session = await client.sessions.create({ title: "My task" });
- *   for await (const event of client.sessions.prompt(session.id, "Hello")) {
- *     if (event.type === "chunk") process.stdout.write(event.text);
- *   }
+ * SessionsResource — Managed Agents HTTP (/v1/sessions).
  */
 
 import type {
@@ -17,174 +7,166 @@ import type {
   CreateSessionParams,
   ListResponse,
   ManagedAgentsConfig,
+  AgentEvent,
 } from "./types.js";
-import type { AcpStreamEvent } from "./acp-client.js";
-import { AcpClient } from "./acp-client.js";
+import { ManagedAgentsClient } from "./managed-agents-client.js";
+
+function toSession(record: {
+  id: string;
+  agentId: string;
+  environmentId?: string;
+  status: string;
+  createdAt: string;
+  metadata?: Record<string, string>;
+}): Session {
+  return {
+    id: record.id,
+    object: "session",
+    agent: record.agentId,
+    environment_id: record.environmentId,
+    title: record.metadata?.title ?? "",
+    status: record.status as Session["status"],
+    created_at: Math.floor(Date.parse(record.createdAt) / 1000) || Math.floor(Date.now() / 1000),
+  };
+}
+
+function outboundToAgentEvent(record: {
+  event: { type: string; session_id?: string; [key: string]: unknown };
+  sessionId: string;
+}): AgentEvent | null {
+  const ev = record.event;
+  if (!ev?.type) return null;
+  const session_id = ev.session_id ?? record.sessionId;
+  return { ...ev, session_id } as AgentEvent;
+}
 
 export class SessionsResource {
-  private acp: AcpClient;
-  private initialized = false;
+  private client: ManagedAgentsClient;
 
-  constructor(private config: ManagedAgentsConfig) {
-    this.acp = new AcpClient(config);
+  constructor(config: ManagedAgentsConfig) {
+    this.client = new ManagedAgentsClient(config);
   }
-
-  // Lazy initialize (only once per instance)
-  private async ensureInit() {
-    if (!this.initialized) {
-      await this.acp.initialize();
-      this.initialized = true;
-    }
-  }
-
-  // ── create ────────────────────────────────────────────────────────────────
 
   async create(params: CreateSessionParams = {}): Promise<Session> {
-    await this.ensureInit();
-    const { sessionId } = await this.acp.sessionNew(params.cwd ?? "/");
-    return {
-      id:             sessionId,
-      object:         "session",
-      agent:          params.agent ?? "",
-      environment_id: params.environment_id,
-      title:          params.title ?? "",
-      status:         "idle",
-      created_at:     Math.floor(Date.now() / 1000),
-    };
+    if (!params.agent) {
+      throw new Error("sessions.create() requires params.agent (Managed Agents agent id)");
+    }
+    const record = await this.client.createSession({
+      agentId: params.agent,
+      environmentId: params.environment_id,
+    });
+    return toSession(record);
   }
-
-  // ── retrieve ──────────────────────────────────────────────────────────────
 
   async retrieve(sessionId: string): Promise<Session> {
-    await this.ensureInit();
-    const detail = await this.acp.getSession(sessionId);
-    return {
-      id:          detail.sessionId,
-      object:      "session",
-      agent:       "",
-      title:       "",
-      status:      "idle",
-      created_at:  detail.createdAt,
-    };
+    return toSession(await this.client.getSession(sessionId));
   }
-
-  // ── list ──────────────────────────────────────────────────────────────────
 
   async list(): Promise<ListResponse<Session>> {
-    await this.ensureInit();
-    const sessions = await this.acp.sessionList();
+    throw new Error("sessions.list() is not supported by Managed Agents HTTP; use retrieve(sessionId)");
+  }
+
+  async delete(sessionId: string): Promise<{ id: string; deleted: boolean }> {
+    return this.client.deleteSession(sessionId);
+  }
+
+  async resume(sessionId: string): Promise<{ sessionId: string }> {
+    await this.client.getSession(sessionId);
+    return { sessionId };
+  }
+
+  async history(sessionId: string) {
+    const session = await this.client.getSession(sessionId);
+    const events = await this.client.listSessionEvents(sessionId);
     return {
-      object:   "list",
-      has_more: false,
-      data: sessions.map((s) => ({
-        id:         s.sessionId,
-        object:     "session" as const,
-        agent:      "",
-        title:      "",
-        status:     "idle" as const,
-        created_at: s.createdAt,
-      })),
+      sessionId: session.id,
+      model: "",
+      system: "",
+      messages: events
+        .filter((e) => e.direction === "outbound")
+        .map((e) => ({ id: e.id, role: "assistant", content: JSON.stringify(e.event), timestamp: 0 })),
+      createdAt: Math.floor(Date.parse(session.createdAt) / 1000),
+      updatedAt: Math.floor(Date.parse(session.updatedAt) / 1000),
     };
   }
 
-  // ── delete ────────────────────────────────────────────────────────────────
-
-  async delete(sessionId: string): Promise<{ id: string; deleted: boolean }> {
-    await this.ensureInit();
-    await this.acp.deleteSession(sessionId);
-    return { id: sessionId, deleted: true };
+  prompt(sessionId: string, text: string): AsyncGenerator<AgentEvent> {
+    return this._runTurn(sessionId, {
+      type: "user.message",
+      commandId: crypto.randomUUID(),
+      requestId: crypto.randomUUID(),
+      runId: crypto.randomUUID(),
+      text,
+    });
   }
 
-  // ── resume — load existing session (replays history) ─────────────────────
-
-  async resume(sessionId: string): Promise<{ sessionId: string }> {
-    await this.ensureInit();
-    return this.acp.sessionResume(sessionId);
-  }
-
-  // ── history — get full message history ────────────────────────────────────
-
-  async history(sessionId: string) {
-    await this.ensureInit();
-    return this.acp.getSession(sessionId);
-  }
-
-  // ── prompt — send message, stream response ────────────────────────────────
-  // Replaces the old events.stream() + events.send() split API.
-  // Returns an async generator of AcpStreamEvent.
-
-  prompt(sessionId: string, text: string): AsyncGenerator<AcpStreamEvent> {
-    // ensureInit is called lazily inside; but since prompt is sync-return,
-    // we wrap in an async generator to handle initialization transparently.
-    return this._prompt(sessionId, text);
-  }
-
-  private async *_prompt(sessionId: string, text: string): AsyncGenerator<AcpStreamEvent> {
-    await this.ensureInit();
-    yield* this.acp.sessionPrompt(sessionId, text);
-  }
-
-  /**
-   * Resume a paused turn by submitting a tool_result for a pending client-side
-   * tool call. Use after the previous prompt() generator yielded a `done`
-   * event with stopReason='tool_use'.
-   */
   promptToolResult(
     sessionId: string,
-    toolUseId: string,
+    _toolUseId: string,
     content: string,
-    isError = false,
-  ): AsyncGenerator<AcpStreamEvent> {
-    return this._promptToolResult(sessionId, toolUseId, content, isError);
+    _isError = false,
+  ): AsyncGenerator<AgentEvent> {
+    return this._runTurn(sessionId, {
+      type: "user.custom_tool_result",
+      commandId: crypto.randomUUID(),
+      requestId: crypto.randomUUID(),
+      serverId: "client",
+      toolName: "client_tool",
+      argumentsJson: content,
+    });
   }
 
-  private async *_promptToolResult(
-    sessionId: string,
-    toolUseId: string,
-    content: string,
-    isError: boolean,
-  ): AsyncGenerator<AcpStreamEvent> {
-    await this.ensureInit();
-    yield* this.acp.sessionPromptToolResult(sessionId, toolUseId, content, isError);
-  }
-
-  /**
-   * Resume a paused turn by submitting a permission decision for a pending
-   * approval request (stopReason='awaiting_permission'). `decision` is the
-   * optionId (e.g. 'allow-once', 'reject-once') or 'cancelled'.
-   */
   promptPermission(
     sessionId: string,
-    toolUseId: string,
-    decision: string,
-  ): AsyncGenerator<AcpStreamEvent> {
-    return this._promptPermission(sessionId, toolUseId, decision);
+    requestId: string,
+    decision: "allow_once" | "reject_once",
+  ): AsyncGenerator<AgentEvent> {
+    return this._runTurn(sessionId, {
+      type: "user.tool_confirmation",
+      commandId: crypto.randomUUID(),
+      requestId,
+      decision,
+    });
   }
 
-  private async *_promptPermission(
+  private async *_runTurn(
     sessionId: string,
-    toolUseId: string,
-    decision: string,
-  ): AsyncGenerator<AcpStreamEvent> {
-    await this.ensureInit();
-    yield* this.acp.sessionPromptPermission(sessionId, toolUseId, decision);
-  }
+    inbound: Record<string, unknown>,
+  ): AsyncGenerator<AgentEvent> {
+    const stream = this.client.streamSessionEvents(sessionId);
+    const accepted = this.client.sendSessionEvent(sessionId, inbound);
 
-  // ── cancel ────────────────────────────────────────────────────────────────
+    for await (const record of stream) {
+      const agentEvent = outboundToAgentEvent(record);
+      if (agentEvent) {
+        yield agentEvent;
+        if (
+          agentEvent.type === "session.status_idle" ||
+          agentEvent.type === "session.status_terminated"
+        ) {
+          break;
+        }
+      }
+    }
+    await accepted;
+  }
 
   async cancel(sessionId: string): Promise<void> {
-    await this.ensureInit();
-    await this.acp.sessionCancel(sessionId);
+    await this.client.sendSessionEvent(sessionId, {
+      type: "user.interrupt",
+      commandId: crypto.randomUUID(),
+    });
   }
 
-  // ── loadHistory — stream history replay ──────────────────────────────────
-
-  loadHistory(sessionId: string): AsyncGenerator<AcpStreamEvent> {
+  loadHistory(sessionId: string): AsyncGenerator<AgentEvent> {
     return this._loadHistory(sessionId);
   }
 
-  private async *_loadHistory(sessionId: string): AsyncGenerator<AcpStreamEvent> {
-    await this.ensureInit();
-    yield* this.acp.sessionLoad(sessionId);
+  private async *_loadHistory(sessionId: string): AsyncGenerator<AgentEvent> {
+    const events = await this.client.listSessionEvents(sessionId);
+    for (const record of events) {
+      const ev = outboundToAgentEvent(record);
+      if (ev) yield ev;
+    }
   }
 }
