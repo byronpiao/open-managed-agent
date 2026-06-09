@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * MA HTTP cloud acceptance — requires deployed harness agent + .env.harness credentials.
+ * Managed Agents HTTP protocol — cloud acceptance on deployed harness agent.
  *
- *   node scripts/harness/ma-acceptance.mjs
- *   node scripts/harness/ma-acceptance.mjs --base-url https://...
+ *   node scripts/harness/managed-agents-protocol.mjs
+ *   node scripts/harness/managed-agents-protocol.mjs --base-url https://...
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -30,7 +30,7 @@ function parseArgs() {
 }
 
 async function runStory(client, label) {
-  console.log(`\n=== MA acceptance: ${label} ===`);
+  console.log(`\n=== managed-agents-protocol: ${label} ===`);
 
   const environment = await client.createEnvironment({
     name: `${label}-env`,
@@ -85,9 +85,12 @@ async function main() {
   await hydrateTcbApiKeyFromCam();
 
   const envId = process.env.CLOUDBASE_ENV_ID?.trim();
-  const agentId = process.env.HARNESS_CLOUD_AGENT_ID?.trim() ?? process.env.CLOUDBASE_AGENT_ID?.trim();
+  const agentId =
+    process.env.HARNESS_CLOUD_AGENT_ID?.trim() ?? process.env.CLOUDBASE_AGENT_ID?.trim();
   if (!envId) throw new Error("CLOUDBASE_ENV_ID required");
-  if (!agentId) throw new Error("HARNESS_CLOUD_AGENT_ID or CLOUDBASE_AGENT_ID required (harness deployment)");
+  if (!agentId) {
+    throw new Error("HARNESS_CLOUD_AGENT_ID or CLOUDBASE_AGENT_ID required (harness deployment)");
+  }
 
   const token = await getAccessToken(envId);
   const { createManagedAgentsClient } = await import(
@@ -95,17 +98,15 @@ async function main() {
   );
 
   const { baseUrl: baseOverride } = parseArgs();
-  const gatewayBase = baseOverride ?? `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}`;
+  const gatewayBase =
+    baseOverride ?? `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}`;
 
-  const clientOpts = {
-    envId,
-    agentId,
-    accessKey: token,
-  };
+  await runStory(
+    createManagedAgentsClient({ envId, agentId, accessKey: token, baseURL: gatewayBase }),
+    "gateway",
+  );
 
-  await runStory(createManagedAgentsClient({ ...clientOpts, baseURL: gatewayBase }), "gateway");
-
-  console.log("\n✓ MA HTTP cloud acceptance complete");
+  console.log("\n✓ managed-agents-protocol complete");
 }
 
 main().catch((err) => {

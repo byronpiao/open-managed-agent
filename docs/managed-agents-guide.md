@@ -268,4 +268,4 @@ MA Session               → 一次运行（起 AGS 沙箱 + 对话）
 
 **SDK：** `runtime: "harness"` 走 MA HTTP；`runtime: "managed"`（默认）走 ACP。
 
-验收步骤见 [acceptance-checklist.md](./acceptance-checklist.md)。
+云上协议验收：`node scripts/harness/managed-agents-protocol.mjs`（见 [acceptance-checklist.md](./acceptance-checklist.md)）。

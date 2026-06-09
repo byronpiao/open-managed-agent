@@ -16,9 +16,6 @@ loadEnv();
 
 const FULL = process.argv.includes("--full");
 const LLM_SUITE = process.argv.includes("--llm");
-/** Claude SessionStore 外置：旁路验收，不挡主链（平台 / zen / BYOK）。 */
-const E2E_CLAUDE =
-  process.argv.includes("--claude") || process.env.HARNESS_E2E_CLAUDE === "1";
 const FORCE_ZEN = process.env.HARNESS_FORCE_ZEN === "1";
 
 const tierFromEnv = process.env.HARNESS_LLM_TIER?.trim();
@@ -1173,14 +1170,8 @@ async function main() {
           ? "✓ opencode sync export → CloudBase → hydrate → session/load → token recall"
           : "✓ opencode sync export → CloudBase → hydrate → session/load replay (platform)",
       );
-      if (E2E_CLAUDE) {
-        await testClaudeSessionPersistence();
-        console.log("✓ claude SessionStore → CloudBase → runtime restart → token recall");
-      } else {
-        console.log(
-          "⊘ claude SessionStore e2e skipped (旁路；HARNESS_E2E_CLAUDE=1 或 --claude 再跑)",
-        );
-      }
+      await testClaudeSessionPersistence();
+      console.log("✓ claude SessionStore → CloudBase → runtime restart → token recall");
       await testSandboxPrompt();
       console.log("✓ session/prompt → AGS sandbox SSE");
       await testSandboxCustomToolLoop();
