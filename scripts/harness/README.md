@@ -2,14 +2,15 @@
 
 验收入口：`npm run harness -- <cmd>`（实现：`index.mjs`）。
 
-## 一条龙
+## 一条龙（场景矩阵见 `scenarios/README.md`）
 
-| 场景 | 命令 |
-|------|------|
-| 合入 / 日常 | `npm run test:full`（local → **CloudBase AI**） |
-| 云上 tcbr | `npm run harness -- cloud-tcbr`（**zen**） |
-| 云上 SCF | `npm run harness -- cloud-scf`（**LLM_*** 自定义） |
-| **完整** | 上三行全跑 |
+| 场景 | 命令 | COS tool |
+|------|------|----------|
+| 对客冒烟 | `npm run harness:quickstart` | no-cos |
+| 合入 / 日常 | `npm run test:full` | ⑥ 开 → with-cos |
+| 云上 tcbr | `npm run harness -- cloud-tcbr` | **strip** no-cos |
+| 云上 SCF | `npm run harness -- cloud-scf` | **strip** no-cos |
+| **交付** | `npm run test:delivery` | 每步自动 |
 
 ```bash
 cp .env.harness.example .env.harness
@@ -33,6 +34,9 @@ node scripts/harness/load-env.mjs --check
 | 脚本 | 用途 |
 |------|------|
 | `index.mjs` | 入口：`local` / `cloud-tcbr` / `cloud-scf` |
+| `delivery.mjs` | 交付一条龙 |
+| `quickstart.mjs` | tutorial 冒烟 |
+| `scenarios/README.md` | agent.yaml × env × tool |
 | `cloud.mjs` | 云上 deploy + gateway ACP smoke |
 | `load-env.mjs` | 只读 `.env.harness`，`--check`（tool 镜像对齐） |
 | `cos-e2e.mjs` | COS 写→快照→恢复（`local` 在 `HARNESS_COS_ENABLED=1` 时调用） |

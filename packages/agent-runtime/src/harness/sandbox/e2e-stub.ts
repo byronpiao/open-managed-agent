@@ -153,6 +153,9 @@ export function createE2eStubSandboxHandle(acpSessionId: string): HarnessSandbox
         ),
       );
     },
+    async refreshInstanceAccessToken() {
+      return undefined;
+    },
     async stop() {},
     async pause() {},
     async resumeIfPaused() {},

@@ -99,6 +99,28 @@ test("harnessToolNameForEnv uses oma-harness-{env} without cos suffix by default
   if (prev) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prev;
 });
 
+test("applyHarnessScenario cloud-scf strips COS and sets BYOK tier", async () => {
+  const { applyHarnessScenario, HARNESS_COS_ENV_KEYS } = await import(
+    "../../scripts/harness/load-env.mjs"
+  );
+  const prevSuffix = process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+  process.env.HARNESS_TOOL_COS_NAME_SUFFIX = "1";
+  const env = {
+    CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8",
+    HARNESS_COS_ENABLED: "1",
+    HARNESS_COS_BUCKET: "bucket",
+    LLM_API_KEY: "should-stay-from-map-only",
+  };
+  const meta = applyHarnessScenario("cloud-scf", env);
+  if (prevSuffix !== undefined) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prevSuffix;
+  else delete process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+  assert.equal(meta.scenario, "cloud-scf");
+  assert.equal(meta.cosEnabled, false);
+  assert.ok(meta.toolName.endsWith("-no-cos"));
+  for (const k of HARNESS_COS_ENV_KEYS) assert.equal(env[k], undefined);
+  assert.equal(env.HARNESS_LLM_TIER, "byok");
+});
+
 test("resolveHarnessToolName uses -no-cos|-with-cos when HARNESS_TOOL_COS_NAME_SUFFIX=1", () => {
   const prev = process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
   process.env.HARNESS_TOOL_COS_NAME_SUFFIX = "1";
@@ -875,6 +897,29 @@ test("buildHarnessOpencodeConfigContent embeds permission in OPENCODE_CONFIG", (
     ],
   });
   assert.ok(raw?.includes('"edit":"ask"') || raw?.includes('"edit": "ask"'));
+});
+
+test("platform probe quota failure is classified and documented", async () => {
+  const {
+    classifyPlatformProbeFailure,
+    formatPlatformProbeFailureGuide,
+    isPlatformQuotaExceeded,
+  } = await import("../../packages/agent-runtime/dist/harness/llm-probe.js");
+  const quota = {
+    ok: false,
+    httpStatus: 429,
+    model: "hy3-preview",
+    endpoint: "https://env.api.tcloudbasegateway.com/v1/ai/cloudbase/v1/chat/completions",
+    latencyMs: 12,
+    error: "Token usage exceeded quota limit",
+    errorCode: "EXCEED_TOKEN_QUOTA_LIMIT",
+  };
+  assert.equal(classifyPlatformProbeFailure(quota), "quota_exceeded");
+  assert.equal(isPlatformQuotaExceeded(quota), true);
+  const guide = formatPlatformProbeFailureGuide(quota);
+  assert.match(guide, /EXCEED_TOKEN_QUOTA_LIMIT|quota/i);
+  assert.match(guide, /auto-falls back to opencode zen/i);
+  assert.match(guide, /cloud-tcbr/);
 });
 
 test("resolveHarnessSandboxIdlePauseMs defaults to 20 minutes", () => {

@@ -22,6 +22,13 @@ export function resolveHarnessSandboxImage(): string {
   return process.env.HARNESS_SANDBOX_IMAGE?.trim() || HARNESS_PUBLIC_MAGENT_IMAGE;
 }
 
+/** AGS instance auth — production uses TOKEN (sit_* via X-Access-Token); NONE is debug-only. */
+export function resolveHarnessSandboxAuthMode(): "TOKEN" | "NONE" {
+  const raw = process.env.HARNESS_SANDBOX_AUTH_MODE?.trim().toUpperCase();
+  if (raw === "NONE") return "NONE";
+  return "TOKEN";
+}
+
 /** CreateSandboxTool RoleArn — 必须显式配置，禁止写死测试 UIN。 */
 export function resolveHarnessToolRoleArn(): string {
   return requireEnv(
@@ -40,7 +47,6 @@ export function missingHarnessCloudCreds(): string[] {
   if (!process.env.CLOUDBASE_ENV_ID?.trim() && !process.env.TCB_ENV_ID?.trim()) {
     missing.push("CLOUDBASE_ENV_ID");
   }
-  if (!process.env.TCB_API_KEY?.trim()) missing.push("TCB_API_KEY");
   if (
     !process.env.TCB_SECRET_ID?.trim() &&
     !process.env.TENCENTCLOUD_SECRETID?.trim()

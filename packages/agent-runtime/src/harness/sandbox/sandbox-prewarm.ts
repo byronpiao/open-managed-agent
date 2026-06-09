@@ -70,6 +70,10 @@ export async function bindSandboxForSession(
   const existing = getCachedSandboxHandle(acpSessionId);
   if (existing) {
     await existing.resumeIfPaused();
+    const token = existing.instanceAccessToken;
+    if (token) {
+      await store.setInstanceAccessToken(acpSessionId, token);
+    }
     return { syncHydrated: 0 };
   }
 
@@ -129,6 +133,7 @@ export async function bindSandboxForSession(
     await store.bindInstance(acpSessionId, {
       instanceId: handle.instanceId,
       toolId: handle.toolId,
+      instanceAccessToken: handle.instanceAccessToken,
     });
   }
 

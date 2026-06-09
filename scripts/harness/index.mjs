@@ -9,14 +9,20 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { loadEnv, applyHarnessLlmTier, applyHarnessTestDefaults } from "./load-env.mjs";
+import {
+  loadEnv,
+  hydrateTcbApiKeyFromCam,
+  applyHarnessLlmTier,
+  applyHarnessScenario,
+  logHarnessScenario,
+} from "./load-env.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
 
 const HELP = `Usage: npm run harness -- <local|cloud-tcbr|cloud-scf> [options]
 
-  local        stub + 真 AGS（CloudBase AI hy3-preview，用 TCB_API_KEY）+ 矩阵
+  local        stub + 真 AGS（CloudBase AI hy3-preview，CAM 鉴权）+ 矩阵
   cloud-tcbr   云托管 tcbr：deploy opencode **zen** → gateway smoke
   cloud-scf    SCF：deploy **自定义 LLM**（.env.harness ③ 段 LLM_*）→ smoke
 
@@ -61,31 +67,55 @@ function truthyCos() {
 }
 
 async function runLocal() {
+  loadEnv();
+  const scenarioMeta = applyHarnessScenario("local");
+  logHarnessScenario(scenarioMeta);
+
   console.log("=== harness local: e2e stub（网关 + 假沙箱）===");
   runNode("tests/harness/e2e.test.mjs");
 
-  loadEnv();
-  console.log("=== harness local: AGS env（CloudBase AI hy3-preview，TCB_API_KEY）===");
+  await hydrateTcbApiKeyFromCam();
+  console.log("=== harness local: AGS env（CloudBase AI hy3-preview，CAM）===");
   await assertHarnessAgsRuntimeEnvSync();
 
   console.log("=== harness local: platform LLM probe（30s，失败不进入 300s×N 真箱）===");
-  const { assertHarnessPlatformLlmReachable } = await import(
-    "../../packages/agent-runtime/dist/harness/llm-probe.js"
-  );
-  const platformProbe = await assertHarnessPlatformLlmReachable();
-  console.log(
-    `✓ platform LLM ${platformProbe.latencyMs}ms model=${platformProbe.model} reply=${platformProbe.replySnippet ?? "(empty)"}`,
-  );
+  const {
+    probeCloudBasePlatformLlm,
+    formatPlatformProbeFailureGuide,
+    isPlatformQuotaExceeded,
+  } = await import("../../packages/agent-runtime/dist/harness/llm-probe.js");
 
-  applyHarnessLlmTier("platform");
+  let localTier = "platform";
+  const platformProbe = await probeCloudBasePlatformLlm();
+  if (!platformProbe.ok) {
+    if (isPlatformQuotaExceeded(platformProbe)) {
+      console.warn(
+        "⚠ hy3-preview quota exhausted (HTTP 429) — local harness continues with opencode zen.\n" +
+          "  Sandbox / CAM / AGS path still runs; this run does NOT validate CloudBase AI platform LLM.\n" +
+          "  To test hy3 again: recharge quota in console, then re-run test:full.\n",
+      );
+      localTier = "zen";
+    } else {
+      console.error(formatPlatformProbeFailureGuide(platformProbe));
+      process.exit(1);
+    }
+  } else {
+    console.log(
+      `✓ platform LLM ${platformProbe.latencyMs}ms model=${platformProbe.model} reply=${platformProbe.replySnippet ?? "(empty)"}`,
+    );
+  }
+
+  applyHarnessLlmTier(localTier);
   applyHarnessTestDefaults();
 
-  console.log("=== harness local: e2e full（真 AGS + 平台 hy3-preview / sync）===");
-  runNode("tests/harness/e2e.test.mjs", ["--full"], { tier: "platform" });
+  console.log(
+    `=== harness local: e2e full（真 AGS + ${localTier === "zen" ? "opencode zen" : "平台 hy3-preview"} / sync）===`,
+  );
+  runNode("tests/harness/e2e.test.mjs", ["--full"], { tier: localTier });
 
   console.log("=== harness local: matrix parity（#1–#2 TRW #8 MCP #9 CloudBase #10 Skills）===");
   await assertHarnessAgsRuntimeEnvSync();
-  runNode("tests/harness/matrix-parity.test.mjs", [], { tier: "platform" });
+  runNode("tests/harness/matrix-parity.test.mjs", [], { tier: localTier });
 
   if (truthyCos()) {
     const { assertHarnessCosEnv } = await import(
@@ -115,6 +145,8 @@ async function main() {
     case "cloud-tcbr":
     case "cloud-scf": {
       loadEnv();
+      const scenario = cmd === "cloud-scf" ? "cloud-scf" : "cloud-tcbr";
+      logHarnessScenario(applyHarnessScenario(scenario));
       const { runCloudHarness } = await import("./cloud.mjs");
       const backend = cmd === "cloud-scf" ? "scf" : "tcbr";
       await runCloudHarness(args.slice(1), { backend });

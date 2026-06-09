@@ -62,10 +62,15 @@ async function main() {
   console.log(`=== sandbox LLM diag (tier=${tier}) ===`);
 
   if (tier === "platform") {
-    const { assertHarnessPlatformLlmReachable } = await import(
-      "../../packages/agent-runtime/dist/harness/llm-probe.js"
-    );
-    const p = await assertHarnessPlatformLlmReachable();
+    const {
+      probeCloudBasePlatformLlm,
+      formatPlatformProbeFailureGuide,
+    } = await import("../../packages/agent-runtime/dist/harness/llm-probe.js");
+    const p = await probeCloudBasePlatformLlm();
+    if (!p.ok) {
+      console.error(formatPlatformProbeFailureGuide(p));
+      process.exit(1);
+    }
     console.log(`host platform probe: ${p.latencyMs}ms ${p.model} ${p.replySnippet}`);
   } else {
     const { probeHarnessOpenAiLlm } = await import(

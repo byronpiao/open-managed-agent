@@ -18,6 +18,115 @@ export interface HarnessLlmProbeResult {
   latencyMs: number;
   replySnippet?: string;
   error?: string;
+  /** CloudBase AI error code when present (e.g. EXCEED_TOKEN_QUOTA_LIMIT). */
+  errorCode?: string;
+}
+
+export type PlatformProbeFailureKind =
+  | "quota_exceeded"
+  | "auth"
+  | "timeout"
+  | "missing_credentials"
+  | "other";
+
+function parseProbeErrorBody(raw: string): { message: string; code?: string } {
+  try {
+    const body = JSON.parse(raw) as {
+      message?: string;
+      code?: string;
+      error?: { message?: string; code?: string };
+    };
+    const code = body.code ?? body.error?.code;
+    const message =
+      body.message ??
+      body.error?.message ??
+      (typeof body.error === "string" ? body.error : undefined);
+    return { message: message ?? raw.slice(0, 300), code };
+  } catch {
+    return { message: raw.slice(0, 300) };
+  }
+}
+
+/** Classify platform (hy3-preview) probe failure for actionable logs. */
+export function classifyPlatformProbeFailure(
+  result: HarnessLlmProbeResult,
+): PlatformProbeFailureKind {
+  if (result.error?.includes("missing CLOUDBASE_ENV_ID")) return "missing_credentials";
+  if (result.error?.includes("timeout after")) return "timeout";
+  const code = result.errorCode?.toUpperCase() ?? "";
+  const err = (result.error ?? "").toLowerCase();
+  if (
+    result.httpStatus === 429 ||
+    code.includes("EXCEED_TOKEN_QUOTA") ||
+    err.includes("quota") ||
+    err.includes("exceed_token")
+  ) {
+    return "quota_exceeded";
+  }
+  if (result.httpStatus === 401 || result.httpStatus === 403) return "auth";
+  return "other";
+}
+
+export function isPlatformQuotaExceeded(result: HarnessLlmProbeResult): boolean {
+  return classifyPlatformProbeFailure(result) === "quota_exceeded";
+}
+
+/** Multi-line operator guide — does not mutate probe behavior. */
+export function formatPlatformProbeFailureGuide(result: HarnessLlmProbeResult): string {
+  const kind = classifyPlatformProbeFailure(result);
+  const status = result.httpStatus ? `HTTP ${result.httpStatus}` : "request failed";
+  const lines = [
+    "",
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    "Platform LLM preflight failed (harness local tier ①)",
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    `  model:    ${result.model}`,
+    `  status:   ${status}`,
+    ...(result.errorCode ? [`  code:     ${result.errorCode}`] : []),
+    `  detail:   ${result.error ?? "unknown"}`,
+    ...(result.endpoint ? [`  endpoint: ${result.endpoint}`] : []),
+    "",
+  ];
+
+  if (kind === "quota_exceeded") {
+    lines.push(
+      "What this means:",
+      "  CloudBase AI free / experience quota for hy3-preview is exhausted.",
+      "  test:full intentionally probes hy3 BEFORE starting real AGS boxes (fail-fast).",
+      "",
+      "This is NOT a sandbox or CAM bug — gateway auth succeeded; the model billing gate refused.",
+      "",
+      "Options (pick one):",
+      "  1. Console: enable hy3-preview + purchase Token pack / raise quota",
+      "     https://docs.cloudbase.net/ai/model/openai-sdk-access",
+      "  2. Skip platform path: npm run harness -- cloud-tcbr   (opencode zen, no hy3)",
+      "  3. Product demo with zen: agent.yaml model: zen + magent run (see harness-tutorial)",
+      "  4. npm run test:full auto-falls back to opencode zen on 429 (logs a warning; hy3 not validated)",
+      "",
+    );
+  } else if (kind === "missing_credentials") {
+    lines.push(
+      "Fix: set CLOUDBASE_ENV_ID + TCB_SECRET_* (or magent login), then:",
+      "  node scripts/harness/load-env.mjs --check",
+      "",
+    );
+  } else if (kind === "auth") {
+    lines.push(
+      "Fix: verify CAM / login can derive gateway token:",
+      "  node scripts/harness/load-env.mjs --check",
+      "  (expect: gateway token=ok (CAM-derived))",
+      "",
+    );
+  } else {
+    lines.push(
+      "Check CloudBase AI console: hy3-preview enabled.",
+      "  node scripts/harness/load-env.mjs --check",
+      "",
+    );
+  }
+
+  lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "");
+  return lines.join("\n");
 }
 
 /** Normalize OPENAI_BASE_URL → `…/v1/chat/completions`. */
@@ -28,11 +137,21 @@ export function openAiChatCompletionsUrl(baseUrl: string): string {
 }
 
 function probeErrorMessage(body: unknown, fallback: string): string {
-  if (body && typeof body === "object" && "error" in body) {
-    const err = (body as { error?: { message?: string } }).error;
-    if (err?.message) return err.message;
+  if (typeof body === "string") return body;
+  if (body && typeof body === "object") {
+    const top = body as { message?: string; code?: string; error?: { message?: string } };
+    if (top.message) return top.message;
+    if (top.error?.message) return top.error.message;
   }
   return fallback;
+}
+
+function probeErrorCode(body: unknown): string | undefined {
+  if (body && typeof body === "object") {
+    const top = body as { code?: string; error?: { code?: string } };
+    return top.code ?? top.error?.code;
+  }
+  return undefined;
 }
 
 /** One minimal chat/completions round-trip (default prompt: reply pong). */
@@ -92,13 +211,15 @@ export async function probeHarnessOpenAiLlm(options?: {
     }
 
     if (!res.ok) {
+      const parsed = typeof body === "string" ? parseProbeErrorBody(raw) : null;
       return {
         ok: false,
         httpStatus: res.status,
         model,
         endpoint,
         latencyMs,
-        error: probeErrorMessage(body, raw.slice(0, 240) || `HTTP ${res.status}`),
+        error: parsed?.message ?? probeErrorMessage(body, raw.slice(0, 240) || `HTTP ${res.status}`),
+        errorCode: parsed?.code ?? probeErrorCode(body),
       };
     }
 
@@ -158,7 +279,7 @@ export async function probeCloudBasePlatformLlm(options?: {
       model,
       endpoint: "",
       latencyMs: 0,
-      error: "missing CLOUDBASE_ENV_ID or TCB_API_KEY",
+      error: "missing CLOUDBASE_ENV_ID or gateway token (set TCB_SECRET_* or run magent login)",
     };
   }
   const endpoint = openAiChatCompletionsUrl(cloudBaseAiGatewayBaseUrl(envId));
@@ -191,13 +312,15 @@ export async function probeCloudBasePlatformLlm(options?: {
       body = raw;
     }
     if (!res.ok) {
+      const parsed = parseProbeErrorBody(raw);
       return {
         ok: false,
         httpStatus: res.status,
         model,
         endpoint,
         latencyMs,
-        error: probeErrorMessage(body, raw.slice(0, 300)),
+        error: parsed.message || probeErrorMessage(body, raw.slice(0, 300)),
+        errorCode: parsed.code ?? probeErrorCode(body),
       };
     }
     const snippet =
@@ -235,13 +358,11 @@ export async function probeCloudBasePlatformLlm(options?: {
 export async function assertHarnessPlatformLlmReachable(): Promise<HarnessLlmProbeResult> {
   const result = await probeCloudBasePlatformLlm();
   if (!result.ok) {
-    const status = result.httpStatus ? `HTTP ${result.httpStatus}` : "request failed";
-    throw new Error(
-      `Platform LLM probe failed (${status}): ${result.error ?? "unknown"}. ` +
-        `model=${result.model} endpoint=${result.endpoint || "(unset)"}. ` +
-        `Check CloudBase AI console: hy3-preview enabled + quota. ` +
-        `Preflight: node scripts/harness/load-env.mjs --check`,
-    );
+    const err = new Error(
+      `Platform LLM probe failed: see formatted guide below (model=${result.model})`,
+    ) as Error & { probeResult?: HarnessLlmProbeResult };
+    err.probeResult = result;
+    throw err;
   }
   return result;
 }
@@ -255,7 +376,7 @@ export async function assertHarnessOpenAiLlmReachable(): Promise<HarnessLlmProbe
     throw new Error(
       `LLM probe failed (${status}): ${result.error ?? "unknown"}. ` +
         `model=${result.model} endpoint=${result.endpoint || "(unset)"}. ` +
-        `Shared Mimo keys often 401 when expired or over quota — update .env.harness. ` +
+        `Check LLM_API_KEY / endpoint / quota. ` +
         `Preflight: node scripts/harness/load-env.mjs --check --probe-llm`,
     );
   }

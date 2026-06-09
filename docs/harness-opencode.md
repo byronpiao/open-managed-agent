@@ -6,7 +6,7 @@
 
 ## 快速开始
 
-凭证与部署与 [使用指南 · 从零到第一次对话](./harness-tutorial.md#用户故事从零到第一次对话) 相同。`TCB_API_KEY` 在 [控制台 API Key 页](https://tcb.cloud.tencent.com/dev?envId=your-env-id#/env/apikey) 创建。
+凭证与部署与 [使用指南 · 从零到第一次对话](./harness-tutorial.md#用户故事从零到第一次对话) 相同（CAM 四样，见 [harness-credentials.md](./harness-credentials.md)）。
 
 ```yaml
 name: My Sandbox Agent

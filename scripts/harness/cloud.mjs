@@ -9,7 +9,10 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchAccessTokenViaSign, readTcbLoginCredential } from "../../lib/credentials.mjs";
 import { pinnedHarnessToolId } from "../../lib/harness-env-file.mjs";
-import { applyHarnessLlmTier, applyHarnessTestDefaults } from "./load-env.mjs";
+import {
+  applyHarnessScenario,
+  logHarnessScenario,
+} from "./load-env.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
@@ -23,16 +26,13 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Subprocess env for magent deploy — never forward shell-leaked HARNESS_TOOL_ID. */
+/** Subprocess env for magent deploy — never forward shell-leaked HARNESS_TOOL_ID; cloud strips COS. */
 function harnessDeployEnv(backend = "tcbr") {
   const env = { ...process.env };
   if (!pinnedHarnessToolId()) delete env.HARNESS_TOOL_ID;
-  if (backend === "tcbr") {
-    applyHarnessLlmTier("zen", env);
-  } else {
-    applyHarnessLlmTier("byok", env);
-  }
-  applyHarnessTestDefaults(env);
+  const scenario = backend === "scf" ? "cloud-scf" : "cloud-tcbr";
+  const meta = applyHarnessScenario(scenario, env);
+  logHarnessScenario(meta);
   return env;
 }
 

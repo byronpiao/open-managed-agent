@@ -16,6 +16,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.146",
     "@cloudbase/manager-node": "^4.4.0",
+    "@cloudbase/signature-nodejs": "^2.2.0",
     "@cloudbase/node-sdk": "^3.16.0",
     "@cloudbase/open-agent-kernel": "file:./vendor/cloudbase-open-agent-kernel-0.1.0-alpha.0.tgz",
     "cos-nodejs-sdk-v5": "^2.15.4",

@@ -71,10 +71,14 @@ export {
 export {
   assertHarnessOpenAiLlmReachable,
   assertHarnessPlatformLlmReachable,
+  classifyPlatformProbeFailure,
+  formatPlatformProbeFailureGuide,
+  isPlatformQuotaExceeded,
   openAiChatCompletionsUrl,
   probeCloudBasePlatformLlm,
   probeHarnessOpenAiLlm,
   type HarnessLlmProbeResult,
+  type PlatformProbeFailureKind,
 } from "./llm-probe.js";
 
 export {

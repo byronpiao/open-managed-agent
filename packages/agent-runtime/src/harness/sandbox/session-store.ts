@@ -21,6 +21,8 @@ export interface HarnessSessionRecord {
   secretMasterKey?: string;
   instanceId?: string;
   toolId?: string;
+  /** sit_* — AGS instance access token for gateway X-Access-Token (AuthMode TOKEN). */
+  instanceAccessToken?: string;
   engineSessionId?: string;
   /** Set when opencode sync export last failed (ops / alert). */
   syncExportFailedAt?: number;
@@ -38,8 +40,14 @@ export interface HarnessSessionStore {
   list(args: { limit?: number }): Promise<HarnessSessionRecord[]>;
   bindInstance(
     acpSessionId: string,
-    patch: { instanceId: string; toolId: string; engineSessionId?: string },
+    patch: {
+      instanceId: string;
+      toolId: string;
+      instanceAccessToken?: string;
+      engineSessionId?: string;
+    },
   ): Promise<HarnessSessionRecord>;
+  setInstanceAccessToken(acpSessionId: string, instanceAccessToken: string): Promise<void>;
   setEngineSessionId(acpSessionId: string, engineSessionId: string): Promise<void>;
   setStatus(acpSessionId: string, status: HarnessSessionStatus): Promise<void>;
   /** Drop sandbox binding after stop/delete; keeps engineSessionId for sync replay. */
@@ -100,7 +108,12 @@ class InMemoryHarnessSessionStore implements HarnessSessionStore {
 
   async bindInstance(
     acpSessionId: string,
-    patch: { instanceId: string; toolId: string; engineSessionId?: string },
+    patch: {
+      instanceId: string;
+      toolId: string;
+      instanceAccessToken?: string;
+      engineSessionId?: string;
+    },
   ): Promise<HarnessSessionRecord> {
     const row = this.rows.get(acpSessionId);
     if (!row) throw new Error(`harness session not found: ${acpSessionId}`);
@@ -108,12 +121,23 @@ class InMemoryHarnessSessionStore implements HarnessSessionStore {
       ...row,
       instanceId: patch.instanceId,
       toolId: patch.toolId,
+      instanceAccessToken: patch.instanceAccessToken ?? row.instanceAccessToken,
       engineSessionId: patch.engineSessionId ?? row.engineSessionId,
       status: "active",
       updatedAt: Date.now(),
     };
     this.rows.set(acpSessionId, updated);
     return updated;
+  }
+
+  async setInstanceAccessToken(acpSessionId: string, instanceAccessToken: string): Promise<void> {
+    const row = this.rows.get(acpSessionId);
+    if (!row) return;
+    this.rows.set(acpSessionId, {
+      ...row,
+      instanceAccessToken,
+      updatedAt: Date.now(),
+    });
   }
 
   async setEngineSessionId(acpSessionId: string, engineSessionId: string): Promise<void> {
@@ -135,7 +159,7 @@ class InMemoryHarnessSessionStore implements HarnessSessionStore {
   async clearInstanceBinding(acpSessionId: string): Promise<void> {
     const row = this.rows.get(acpSessionId);
     if (!row) return;
-    const { instanceId: _i, toolId: _t, ...rest } = row;
+    const { instanceId: _i, toolId: _t, instanceAccessToken: _a, ...rest } = row;
     this.rows.set(acpSessionId, { ...rest, updatedAt: Date.now() });
   }
 
@@ -268,7 +292,12 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
 
   async bindInstance(
     acpSessionId: string,
-    patch: { instanceId: string; toolId: string; engineSessionId?: string },
+    patch: {
+      instanceId: string;
+      toolId: string;
+      instanceAccessToken?: string;
+      engineSessionId?: string;
+    },
   ): Promise<HarnessSessionRecord> {
     const row = await this.get(acpSessionId);
     if (!row) throw new Error(`harness session not found: ${acpSessionId}`);
@@ -277,6 +306,7 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
     await collection.doc(acpSessionId).update({
       instanceId: patch.instanceId,
       toolId: patch.toolId,
+      ...(patch.instanceAccessToken ? { instanceAccessToken: patch.instanceAccessToken } : {}),
       ...(patch.engineSessionId ? { engineSessionId: patch.engineSessionId } : {}),
       status: "active",
       updatedAt,
@@ -285,6 +315,7 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
       ...row,
       instanceId: patch.instanceId,
       toolId: patch.toolId,
+      instanceAccessToken: patch.instanceAccessToken ?? row.instanceAccessToken,
       engineSessionId: patch.engineSessionId ?? row.engineSessionId,
       status: "active" as const,
       updatedAt,
@@ -321,9 +352,11 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
     if (cmd?.remove) {
       patch.instanceId = cmd.remove();
       patch.toolId = cmd.remove();
+      patch.instanceAccessToken = cmd.remove();
     } else {
       patch.instanceId = "";
       patch.toolId = "";
+      patch.instanceAccessToken = "";
     }
     await collection.doc(acpSessionId).update(patch);
     harnessTrace("session_store.clear_instance_binding", { acpSessionId });
@@ -338,6 +371,15 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
     const collection = await this.col();
     await collection.doc(acpSessionId).update({ secretMasterKey, updatedAt });
     return { ...row, secretMasterKey, updatedAt };
+  }
+
+  async setInstanceAccessToken(acpSessionId: string, instanceAccessToken: string): Promise<void> {
+    const collection = await this.col();
+    await collection.doc(acpSessionId).update({
+      instanceAccessToken,
+      updatedAt: Date.now(),
+    });
+    harnessTrace("session_store.instance_access_token", { acpSessionId });
   }
 
   async setSyncExportFailedAt(acpSessionId: string, failedAt: number | undefined): Promise<void> {

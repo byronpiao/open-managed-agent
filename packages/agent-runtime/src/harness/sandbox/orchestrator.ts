@@ -1,6 +1,6 @@
 /**
  * AgsStatefulSandboxOrchestrator — harness sandbox control + data plane (D1/D4/D5).
- * Not the OAK vendor AgsStatefulSandbox class (no per-start Env, AuthMode NONE only).
+ * Not the OAK vendor AgsStatefulSandbox class (OAK still defaults AuthMode NONE).
  */
 
 import {
@@ -14,9 +14,11 @@ import {
 } from "../../config.js";
 import {
   resolveCamControlPlaneCredentials,
+  resolveHarnessSandboxAuthMode,
   resolveHarnessSandboxImage,
   resolveHarnessToolRoleArn,
 } from "../harness-env.js";
+import { fetchGatewayAccessToken } from "../tcb-gateway-token.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 import { harnessTrace, harnessLog } from "../logging.js";
 import {
@@ -73,7 +75,11 @@ export interface HarnessSandboxHandle {
   toolId: string;
   baseUrl: string;
   headers: Record<string, string>;
+  /** sit_* instance access token (X-Access-Token); persisted on harness_sessions when bound. */
+  instanceAccessToken?: string;
   request(path: string, init?: RequestInit): Promise<Response>;
+  /** Re-fetch sit_* after pause/resume or before gateway calls if headers may be stale. */
+  refreshInstanceAccessToken(): Promise<string | undefined>;
   /** Stop instance (releases RUNNING/PAUSED quota). Prefer over pause for harness e2e. */
   stop(): Promise<void>;
   pause(): Promise<void>;
@@ -102,11 +108,6 @@ function resolveCredentials(opts: OrchestratorOptions): ResolvedCredentials {
   const secretKey = opts.secretKey ?? cam.secretKey;
   const sessionToken = opts.sessionToken ?? cam.sessionToken;
 
-  if (!apiKey) {
-    throw new SandboxOrchestratorError(
-      "AgsStatefulSandboxOrchestrator requires TCB_API_KEY for data-plane auth",
-    );
-  }
   if (!secretId || !secretKey) {
     throw new SandboxOrchestratorError(
       "AgsStatefulSandboxOrchestrator requires TCB_SECRET_ID / TCB_SECRET_KEY for control plane",
@@ -282,10 +283,11 @@ async function createHarnessTool(
   return toolId;
 }
 
-async function updateHarnessToolImage(
+async function syncHarnessToolConfiguration(
   toolId: string,
   cred: ResolvedCredentials,
   envId: string,
+  storageMounts?: Array<Record<string, unknown>>,
 ): Promise<void> {
   await callAgsApi(
     "UpdateSandboxTool",
@@ -295,6 +297,7 @@ async function updateHarnessToolImage(
         Image: cred.image,
         ImageRegistryType: resolveImageRegistryType(cred.image),
       },
+      ...(storageMounts?.length ? { StorageMounts: storageMounts } : {}),
     },
     cred,
     envId,
@@ -316,10 +319,11 @@ async function ensureHarnessTool(
   const existing = await findToolByName(toolName, cred, envId);
   if (existing) {
     try {
-      await updateHarnessToolImage(existing.toolId, cred, envId);
+      await syncHarnessToolConfiguration(existing.toolId, cred, envId, storageMounts);
     } catch (err) {
-      harnessTrace("orchestrator.tool.update_image", {
+      harnessTrace("orchestrator.tool.sync", {
         toolId: existing.toolId,
+        cosMounts: Boolean(storageMounts?.length),
         error: (err as Error).message,
       });
     }
@@ -347,11 +351,13 @@ async function startInstance(
   cos: HarnessCosConfig | null,
 ): Promise<string> {
   const customConfiguration = pickStartCustomConfiguration(instanceEnv);
+  const authMode = resolveHarnessSandboxAuthMode();
   const resp = await callAgsApi(
     "StartSandboxInstance",
     {
       ToolId: toolId,
       Timeout: cred.defaultTimeout,
+      AuthMode: authMode,
       ...(cos ? { MountOptions: buildCosMountOptions(cos) } : {}),
       ...(Object.keys(customConfiguration).length
         ? { CustomConfiguration: customConfiguration }
@@ -417,7 +423,11 @@ async function acquireInstanceToken(
   instanceId: string,
   cred: ResolvedCredentials,
   envId: string,
+  options?: { required?: boolean },
 ): Promise<string | undefined> {
+  const authMode = resolveHarnessSandboxAuthMode();
+  if (authMode === "NONE") return undefined;
+
   try {
     const resp = await callAgsApi(
       "AcquireSandboxInstanceToken",
@@ -426,12 +436,91 @@ async function acquireInstanceToken(
       envId,
     );
     const data = resp?.data as Record<string, unknown> | undefined;
-    const token = String(resp?.Token || data?.Token || "");
+    const token = String(resp?.Token || data?.Token || "").trim();
+    if (!token && options?.required !== false) {
+      throw new SandboxOrchestratorError(
+        `AcquireSandboxInstanceToken returned no Token for ${instanceId}`,
+      );
+    }
     return token || undefined;
   } catch (err) {
-    harnessTrace("orchestrator.token.acquire", { error: (err as Error).message });
-    return undefined;
+    if (options?.required === false) {
+      harnessTrace("orchestrator.token.acquire", { error: (err as Error).message });
+      return undefined;
+    }
+    throw err instanceof SandboxOrchestratorError
+      ? err
+      : new SandboxOrchestratorError(
+          `AcquireSandboxInstanceToken failed for ${instanceId}`,
+          err,
+        );
   }
+}
+
+function buildHarnessSandboxHandle(args: {
+  instanceId: string;
+  toolId: string;
+  baseUrl: string;
+  apiKey: string;
+  accessToken?: string;
+  cred: ResolvedCredentials;
+  envId: string;
+  orchestrator: AgsStatefulSandboxOrchestrator;
+}): HarnessSandboxHandle {
+  let headers = buildDataPlaneHeaders({
+    apiKey: args.apiKey,
+    instanceId: args.instanceId,
+    port: TRW_SERVICE_PORT,
+    accessToken: args.accessToken,
+  });
+
+  const self = args.orchestrator;
+  const { instanceId, cred, envId, apiKey } = args;
+
+  return {
+    instanceId: args.instanceId,
+    toolId: args.toolId,
+    baseUrl: args.baseUrl,
+    headers,
+    instanceAccessToken: args.accessToken,
+    request(path: string, init?: RequestInit) {
+      const p = path.startsWith("/") ? path : `/${path}`;
+      return fetch(`${args.baseUrl}${p}`, {
+        ...init,
+        headers: {
+          ...headers,
+          ...((init?.headers as Record<string, string> | undefined) ?? {}),
+        },
+      });
+    },
+    async refreshInstanceAccessToken() {
+      const token = await acquireInstanceToken(instanceId, cred, envId);
+      headers = buildDataPlaneHeaders({
+        apiKey,
+        instanceId,
+        port: TRW_SERVICE_PORT,
+        accessToken: token,
+      });
+      (this as HarnessSandboxHandle).instanceAccessToken = token;
+      (this as HarnessSandboxHandle).headers = headers;
+      return token;
+    },
+    async stop() {
+      await self.stopInstance(instanceId, cred, envId);
+    },
+    async pause() {
+      await self.pauseInstance(instanceId, cred, envId);
+    },
+    async resumeIfPaused() {
+      const status = await describeInstanceStatus(instanceId, cred, envId);
+      if (status === "PAUSED" || status === "RESUME_FAILED") {
+        await callAgsApi("ResumeSandboxInstance", { InstanceId: instanceId }, cred, envId);
+      }
+      if (resolveHarnessSandboxAuthMode() === "TOKEN") {
+        await (this as HarnessSandboxHandle).refreshInstanceAccessToken();
+      }
+    },
+  };
 }
 
 function buildDataPlaneHeaders(args: {
@@ -522,6 +611,9 @@ export class AgsStatefulSandboxOrchestrator {
       envId: args.envId,
     });
     const cred = resolveCredentials(this.options);
+    if (!cred.apiKey?.trim()) {
+      cred.apiKey = await fetchGatewayAccessToken(args.envId);
+    }
     wl.set({
       sandboxImage: cred.image,
       harnessToolId: cred.harnessToolId,
@@ -560,6 +652,7 @@ export class AgsStatefulSandboxOrchestrator {
     let toolId = "";
     let instanceId = "";
     let headers: Record<string, string> = {};
+    let accessToken: string | undefined;
 
     try {
       wl.milestone("tool.ensure");
@@ -605,7 +698,7 @@ export class AgsStatefulSandboxOrchestrator {
       wl.set({ instanceId });
 
       wl.milestone("token.acquire");
-      const accessToken = await acquireInstanceToken(instanceId, cred, args.envId);
+      accessToken = await acquireInstanceToken(instanceId, cred, args.envId);
       headers = buildDataPlaneHeaders({
         apiKey: cred.apiKey,
         instanceId,
@@ -626,40 +719,16 @@ export class AgsStatefulSandboxOrchestrator {
       throw err;
     }
 
-    const self = this;
-    return {
+    return buildHarnessSandboxHandle({
       instanceId,
       toolId,
       baseUrl,
-      headers,
-      request(path: string, init?: RequestInit) {
-        const p = path.startsWith("/") ? path : `/${path}`;
-        return fetch(`${baseUrl}${p}`, {
-          ...init,
-          headers: {
-            ...headers,
-            ...((init?.headers as Record<string, string> | undefined) ?? {}),
-          },
-        });
-      },
-      async stop() {
-        await self.stopInstance(instanceId, cred, args.envId);
-      },
-      async pause() {
-        await self.pauseInstance(instanceId, cred, args.envId);
-      },
-      async resumeIfPaused() {
-        const status = await describeInstanceStatus(instanceId, cred, args.envId);
-        if (status === "PAUSED" || status === "RESUME_FAILED") {
-          await callAgsApi(
-            "ResumeSandboxInstance",
-            { InstanceId: instanceId },
-            cred,
-            args.envId,
-          );
-        }
-      },
-    };
+      apiKey: cred.apiKey,
+      accessToken,
+      cred,
+      envId: args.envId,
+      orchestrator: this,
+    });
   }
 
   /** TRW data-plane POST /api/workspace/init (path is TRW-owned). */
@@ -735,6 +804,9 @@ export class AgsStatefulSandboxOrchestrator {
   /** Attach to an already-running instance (diagnostics / export on live session). */
   async connectToInstance(instanceId: string, envId: string): Promise<HarnessSandboxHandle> {
     const cred = resolveCredentials(this.options);
+    if (!cred.apiKey?.trim()) {
+      cred.apiKey = await fetchGatewayAccessToken(envId);
+    }
     const baseUrl = resolveGatewayUrl(envId, cred.gatewayBaseUrl);
     const accessToken = await acquireInstanceToken(instanceId, cred, envId);
     const headers = buildDataPlaneHeaders({
@@ -744,35 +816,16 @@ export class AgsStatefulSandboxOrchestrator {
       accessToken,
     });
     await waitForReady({ baseUrl, headers });
-    const self = this;
-    return {
+    return buildHarnessSandboxHandle({
       instanceId,
       toolId: cred.harnessToolId ?? "",
       baseUrl,
-      headers,
-      request(path: string, init?: RequestInit) {
-        const p = path.startsWith("/") ? path : `/${path}`;
-        return fetch(`${baseUrl}${p}`, {
-          ...init,
-          headers: {
-            ...headers,
-            ...((init?.headers as Record<string, string> | undefined) ?? {}),
-          },
-        });
-      },
-      async stop() {
-        await self.stopInstance(instanceId, cred, envId);
-      },
-      async pause() {
-        await self.pauseInstance(instanceId, cred, envId);
-      },
-      async resumeIfPaused() {
-        const status = await describeInstanceStatus(instanceId, cred, envId);
-        if (status === "PAUSED" || status === "RESUME_FAILED") {
-          await callAgsApi("ResumeSandboxInstance", { InstanceId: instanceId }, cred, envId);
-        }
-      },
-    };
+      apiKey: cred.apiKey,
+      accessToken,
+      cred,
+      envId,
+      orchestrator: this,
+    });
   }
 
   async listInstances(envId: string): Promise<SandboxInstanceRow[]> {

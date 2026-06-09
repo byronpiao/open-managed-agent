@@ -13,3 +13,5 @@ dist/
 packages/agent-runtime/agent.yaml
 packages/agent-runtime/agent.yml
 packages/agent-runtime/agent.harness.yaml
+# Local copy from docs/examples (see harness-tutorial.md)
+agent.sandbox.yaml

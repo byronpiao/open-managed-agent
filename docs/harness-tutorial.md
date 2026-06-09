@@ -14,11 +14,11 @@
 
 ## 开始之前
 
-1. 完成 [README](../README.md) 中的 `magent login`、Node ≥ 20。
-2. 环境已开通 **AGS 沙箱**。
-3. 在控制台创建 [环境 API Key](https://tcb.cloud.tencent.com/dev?envId=your-env-id#/env/apikey)，并开通 [CloudBase AI](https://docs.cloudbase.net/ai/model/model-access)（默认模型 `hy3-preview`）。
+1. Node ≥ 20，`magent login`（推荐，省填 CAM）。
+2. 环境已开通 **AGS 沙箱**、**CloudBase AI**（默认模型 `hy3-preview`）。
+3. **不必**在控制台创建 API Key — CAM / `magent login` 自动鉴权，见 [凭证说明](./harness-credentials.md)。
 
-部署使用 **`agent.yaml` + `magent`**，在 shell 或云函数/云托管环境变量里配置凭证即可。
+部署使用 **`agent.yaml` + `magent`**。凭证分 **必选 / 可选** 见下表与 [harness-credentials.md](./harness-credentials.md)。
 
 ---
 
@@ -26,27 +26,30 @@
 
 目标：用 **CloudBase AI 默认模型** 跑通一条命令，**无需**第三方 LLM Key，**无需** COS。
 
-### 1. 准备凭证
+### 1. 准备凭证（必选四样）
 
 ```bash
+magent login   # 推荐：浏览器授权，省填 SecretId/Key
 export CLOUDBASE_ENV_ID=your-env-id
 export TCB_REGION=ap-shanghai
-export TCB_SECRET_ID=your-secret-id
-export TCB_SECRET_KEY=your-secret-key
-export TCB_API_KEY=your-env-api-key          # 见上方 API Key 链接
-export CLOUDBASE_ACCESS_KEY=your-access-key  # 可与 TCB_API_KEY 相同
+# 未 login 时手填 CAM（与控制台 API 密钥同源）：
+# export TCB_SECRET_ID=your-secret-id
+# export TCB_SECRET_KEY=your-secret-key
 ```
 
-| 变量 | 作用 |
-|------|------|
-| `TCB_SECRET_*` | 部署 Agent、会话持久化 |
-| `TCB_API_KEY` | 拉起沙箱 + 调用 CloudBase AI（默认 `hy3-preview`） |
-| `CLOUDBASE_ACCESS_KEY` | `magent run` / SDK 访问网关 |
+| 必填 / 可选 | 变量 | 作用 |
+|-------------|------|------|
+| **必填** | `CLOUDBASE_ENV_ID`、`TCB_REGION` | 环境 |
+| **必填** | `TCB_SECRET_ID`、`TCB_SECRET_KEY` | 部署、起箱、CloudBase AI（**`magent login` 可代替手填**） |
+| 可选 | `CLOUDBASE_AGENT_ID` | 部署后写入，方便 `magent run` |
+
+> 不必去控制台单独创建 **API Key**；Runtime 会用 CAM 自动换网关令牌。变量说明见 [harness-credentials.md](./harness-credentials.md)。
 
 ### 2. 编写 `agent.yaml`
 
 ```bash
 cp docs/examples/agent.sandbox.opencode.min.yaml ./agent.sandbox.yaml
+# agent.sandbox.yaml 为本地工作副本（已 gitignore），勿 commit
 ```
 
 ```yaml
@@ -65,7 +68,7 @@ system: |
 npm run build
 
 magent agent:create \
-  --name "my-sandbox-agent" \
+  --name "myagent" \
   --runtime harness \
   --engine opencode \
   --file ./agent.sandbox.yaml \
@@ -73,7 +76,7 @@ magent agent:create \
   -e "$CLOUDBASE_ENV_ID"
 ```
 
-- 默认云函数，约 1–2 分钟就绪；生产推荐 `--type tcbr`（见 [product-guide](./product-guide.md)）。
+- 默认云函数，约 1–2 分钟就绪（`magent agent:get` 显示 Ready 后再 `run`）；`--name` 宜短（过长可能 alias 失败）。生产推荐 `--type tcbr`（见 [product-guide](./product-guide.md)）。
 - 若报错与 **RoleArn / 沙箱工具** 有关，见下文 [首次起箱](#首次起箱沙箱工具与-rolearn)。
 
 ```bash
@@ -98,7 +101,7 @@ import ManagedAgents from "open-managed-agent-sdk";
 const client = new ManagedAgents({
   envId: process.env.CLOUDBASE_ENV_ID!,
   agentId: process.env.CLOUDBASE_AGENT_ID!,
-  accessKey: process.env.CLOUDBASE_ACCESS_KEY!,
+  // 推荐先用 magent run（自动 CAM 鉴权）；纯 SDK 见 product-guide
 });
 
 const session = await client.sessions.create({ title: "sandbox-demo" });
@@ -115,7 +118,7 @@ for await (const event of client.sessions.prompt(session.id, "列出当前工作
 
 | 你想… | 做法 | 适用引擎 |
 |--------|------|----------|
-| 用 CloudBase 模型（推荐起步） | 省略 `model` 或写 `hy3-preview` + 环境 API Key；体验额度用完后可在控制台 [购买 Token 资源包](https://docs.cloudbase.net/ai/model/openai-sdk-access) | opencode、claude |
+| 用 CloudBase 模型（推荐起步） | 省略 `model` 或写 `hy3-preview`（需 CAM）；体验额度用完后可在控制台 [购买 Token 资源包](https://docs.cloudbase.net/ai/model/openai-sdk-access) | opencode、claude |
 | 不消耗 CloudBase AI 额度 | `model: zen` | **仅 opencode** |
 | 用自己的 LLM 厂商 Key | 部署前 export `LLM_*`，或 yaml 里写 ModelSpec（与上表 CloudBase Token **二选一**） | 见下方与引擎专篇 |
 
@@ -134,7 +137,7 @@ export OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
 magent agent:create ...   # 已部署的 Agent 改 Key：重新 create 或在控制台改该函数的环境变量
 ```
 
-**Claude Code — 默认仍走 CloudBase AI**（[Anthropic 协议兼容](https://docs.cloudbase.net/ai/model/anthropic-sdk-access)，同一 `TCB_API_KEY`）。第三方 Anthropic 兼容服务：
+**Claude Code — 默认仍走 CloudBase AI**（[Anthropic 协议兼容](https://docs.cloudbase.net/ai/model/anthropic-sdk-access)）。第三方 Anthropic 兼容服务：
 
 ```bash
 export LLM_API_KEY=your-api-key
@@ -172,10 +175,10 @@ export ANTHROPIC_BASE_URL=https://your-endpoint/anthropic
 export HARNESS_TOOL_ROLE_ARN=qcs::cam::uin/<你的UIN>:roleName/<角色名>
 ```
 
-角色从哪来：
+角色从哪来（详见 [harness-credentials.md · CAM 角色](./harness-credentials.md)）：
 
 1. **推荐**：复制环境里**已有沙箱工具**详情页上的 RoleArn（`tcb sandbox tool list` 亦可查看）。
-2. 由运维在 CAM 新建角色并授权：至少能拉取沙箱使用的 **容器镜像**；若启用 COS 工作区，还需对应 **COS** 权限。
+2. CAM 新建：**产品服务 → Agent 沙箱服务 (AGS)**，载体 `ags.cloud.tencent.com`；策略至少 `QcloudTCRReadOnlyAccess`（私有镜像），启用 COS 再加 `QcloudCOSFullAccess`。
 3. 自行 `tcb sandbox tool create ... --role-arn ...` 创建工具后，再部署 Agent（此后不必再配 RoleArn）。
 
 `HARNESS_TOOL_ROLE_ARN` 是**沙箱实例**在云上运行的身份，**不是**云函数执行角色，也**不是** API Key。
@@ -332,7 +335,7 @@ SDK 流式事件中出现审批请求，确认后继续。
 |------|------|
 | 首条消息超时 | 等待沙箱预热；重试 `magent run` |
 | `MISSING_CREDENTIALS` | 部署前 export `TCB_SECRET_*` |
-| 沙箱无法启动 | 检查 `TCB_API_KEY`、AGS 是否开通 |
+| 沙箱无法启动 | 检查 `TCB_SECRET_*` / `magent login`、AGS 是否开通 |
 | 模型 401 / 额度 | 控制台检查 AI 模型开关与 Token 包 |
 | 不想用 CloudBase AI 额度 | opencode：`model: zen` |
 | 第三方 LLM | 见 [选择模型](#用户故事选择模型) |
@@ -347,4 +350,4 @@ SDK 流式事件中出现审批请求，确认后继续。
 - [harness-opencode.md](./harness-opencode.md)
 - [harness-claude-code.md](./harness-claude-code.md)
 - [product-guide.md](./product-guide.md)
-- [架构参考](./harness-architecture.md)（可选阅读）
+- [架构参考](./harness-architecture.md)（进阶 / 运维可选）
