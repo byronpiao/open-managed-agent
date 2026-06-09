@@ -5,9 +5,9 @@
  */
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fetchAccessTokenViaSign, readTcbLoginCredential } from "../../lib/credentials.mjs";
 import { pinnedHarnessToolId } from "../../lib/harness-env-file.mjs";
 import { applyHarnessLlmTier, applyHarnessTestDefaults } from "./load-env.mjs";
 
@@ -255,6 +255,11 @@ async function waitForCloudAgentGateway(agentId, envId) {
       } catch {
         throw new Error(`initialize not JSON (HTTP ${res.status}): ${text.slice(0, 300)}`);
       }
+      if (isGatewayAuthFailure(res, json, text)) {
+        process.stdout.write(`  ... gateway auth (${Math.round(elapsed / 1000)}s)\r`);
+        await sleep(3000);
+        continue;
+      }
       if (json.error) throw new Error(`initialize: ${json.error.message}`);
       const runtime = json.result?.agentConfig?.runtime;
       if (runtime !== "harness") {
@@ -292,44 +297,51 @@ async function magentRunPong(agentId, envId) {
   }
 }
 
+/** Fresh gateway Bearer — do not trust stale CLOUDBASE_ACCESS_KEY from `.env.harness`. */
 async function getAuthHeaders(envId) {
-  const _require = createRequire(import.meta.url);
-  const { sign } = _require("@cloudbase/signature-nodejs");
-  let accessKey = process.env.CLOUDBASE_ACCESS_KEY?.trim() ?? "";
-  if (!accessKey) {
-    const home = process.env.HOME ?? "";
-    const raw = readFileSync(resolve(home, ".config/.cloudbase/auth.json"), "utf8");
-    const c = JSON.parse(raw).credential;
-    const host = `${envId}.api.tcloudbasegateway.com`;
-    const url = `https://${host}/auth/v1/token/clientCredential`;
-    const headers = { "Content-Type": "application/json", Host: host };
-    const data = { grant_type: "client_credentials" };
-    const ts = Math.floor(Date.now() / 1000) - 1;
-    const { authorization } = sign({
-      secretId: c.tmpSecretId,
-      secretKey: c.tmpSecretKey,
-      method: "POST",
-      url,
-      headers,
-      params: data,
-      timestamp: ts,
-      withSignedParams: false,
-      isCloudApi: false,
-      service: "tcb",
+  const sessionToken =
+    process.env.TCB_SESSION_TOKEN?.trim() ||
+    process.env.TENCENTCLOUD_TOKEN?.trim() ||
+    "";
+  const secretId = process.env.TCB_SECRET_ID?.trim();
+  const secretKey = process.env.TCB_SECRET_KEY?.trim();
+  let accessKey = "";
+
+  if (secretId && secretKey) {
+    accessKey = await fetchAccessTokenViaSign({
+      envId,
+      secretId,
+      secretKey,
+      token: sessionToken,
     });
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { ...headers, Authorization: authorization, "X-TC-Timestamp": String(ts) },
-      body: JSON.stringify(data),
-    });
-    const j = await res.json();
-    accessKey = j.access_token ?? j.accessToken ?? "";
+  } else {
+    const cred = readTcbLoginCredential();
+    if (cred) {
+      accessKey = await fetchAccessTokenViaSign({ envId, ...cred });
+    }
   }
+
+  if (!accessKey) {
+    accessKey = process.env.CLOUDBASE_ACCESS_KEY?.trim() ?? "";
+  }
+  if (!accessKey) {
+    throw new Error(
+      "No gateway access token — set TCB_SECRET_ID/TCB_SECRET_KEY in .env.harness or run magent login",
+    );
+  }
+
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${accessKey}`,
     "X-CloudBase-Env-Id": envId,
   };
+}
+
+function isGatewayAuthFailure(res, json, text) {
+  if (res.status === 401 || res.status === 403) return true;
+  const code = json?.code ?? json?.error?.code ?? "";
+  return /ACCESS_TOKEN_EXPIRED|INVALID_ACCESS_TOKEN|UNAUTHORIZED/i.test(String(code)) ||
+    /ACCESS_TOKEN_EXPIRED|invalid.*token/i.test(text);
 }
 
 async function verifyCloudHarness(agentId) {
