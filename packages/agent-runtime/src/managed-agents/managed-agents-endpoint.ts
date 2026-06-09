@@ -13,6 +13,7 @@ import {
   createCmaHttpHandler,
 } from "./vendor/cma-http.js";
 import { createHarnessManagedAgentsDispatcher } from "./dispatch/harness-dispatcher.js";
+import { setManagedAgentsDeploymentConfig } from "./deployment-config.js";
 import { getManagedAgentsStore } from "./store/managed-agents-store-factory.js";
 
 const GATEWAY_BOT_PREFIX = /^\/v1\/aibot\/bots\/[^/]+(\/v1\/[^?]*)/;
@@ -94,6 +95,7 @@ function corsHandler(req: ExpressRequest, res: Response, next: () => void) {
 }
 
 export function mountManagedAgentsEndpoint(app: Express, agentConfig: AgentConfig): void {
+  setManagedAgentsDeploymentConfig(agentConfig);
   const store = getManagedAgentsStore();
   const dispatchDriverCommand = createHarnessManagedAgentsDispatcher({ config: agentConfig, store });
 

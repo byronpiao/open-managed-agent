@@ -5,7 +5,6 @@
 
 import { resolveCamControlPlaneCredentials } from "../../harness/harness-env.js";
 import { harnessTrace } from "../../harness/logging.js";
-import { getHarnessSessionStore } from "../../harness/sandbox/session-store.js";
 import { projectDriverEventToCma } from "../vendor/projections-cma.js";
 import type { DriverEventInput } from "../vendor/driver-event-types.js";
 import { createCmaMemoryStore, CmaMemoryStore } from "../vendor/cma-memory-store.js";
@@ -190,18 +189,6 @@ export class CloudBaseManagedAgentsStore implements CmaStore {
     };
   }
 
-  async #ensureHarnessSessionRow(sessionId: string, engine?: string): Promise<void> {
-    const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "default";
-    const harnessStore = getHarnessSessionStore(envId);
-    const existing = await harnessStore.get(sessionId);
-    if (existing) return;
-    await harnessStore.create({
-      acpSessionId: sessionId,
-      userId: "managed-agents",
-      engine: (engine as "opencode" | "claude" | "codebuddy") ?? "opencode",
-    });
-  }
-
   // ── CmaStore delegation: metadata CRUD via memory (FlexDB mirror optional later) ──
 
   appendDriverEvent(sessionId: string, driverEvent: DriverEventInput) {
@@ -244,7 +231,6 @@ export class CloudBaseManagedAgentsStore implements CmaStore {
 
   async createSession(input: CmaCreateSessionInput) {
     const session = await this.#memory.createSession(input);
-    await this.#ensureHarnessSessionRow(session.id);
     const db = await this.#ensureCollection(MANAGED_AGENTS_SESSIONS_COLLECTION);
     if (db) {
       await db.collection(MANAGED_AGENTS_SESSIONS_COLLECTION).doc(session.id).set({ ...session });

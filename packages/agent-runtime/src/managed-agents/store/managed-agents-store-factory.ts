@@ -1,20 +1,26 @@
 import { resolveCamControlPlaneCredentials } from "../../harness/harness-env.js";
 import { getHarnessSessionStore } from "../../harness/sandbox/session-store.js";
+import { getManagedAgentsDeploymentConfig } from "../deployment-config.js";
+import { resolveHarnessEngineForMaSession } from "../resolve-session-agent-config.js";
 import { createCmaMemoryStore } from "../vendor/cma-memory-store.js";
 import type { CmaCreateSessionInput, CmaStore } from "../vendor/cma-store-types.js";
 import { CloudBaseManagedAgentsStore } from "./cloudbase-managed-agents-store.js";
 
 let _store: CmaStore | null = null;
 
-async function ensureHarnessSessionRow(sessionId: string): Promise<void> {
+async function ensureHarnessSessionRow(sessionId: string, store: CmaStore): Promise<void> {
   const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "default";
   const harnessStore = getHarnessSessionStore(envId);
   const existing = await harnessStore.get(sessionId);
+  const base = getManagedAgentsDeploymentConfig();
+  const engine = await resolveHarnessEngineForMaSession(base, store, sessionId);
+
   if (existing) return;
+
   await harnessStore.create({
     acpSessionId: sessionId,
     userId: "managed-agents",
-    engine: "opencode",
+    engine,
   });
 }
 
@@ -22,7 +28,7 @@ function wrapHarnessLinked(store: CmaStore): CmaStore {
   const baseCreate = store.createSession.bind(store);
   store.createSession = async (input: CmaCreateSessionInput) => {
     const session = await baseCreate(input);
-    await ensureHarnessSessionRow(session.id);
+    await ensureHarnessSessionRow(session.id, store);
     return session;
   };
   return store;

@@ -3,6 +3,7 @@ import { deleteHarnessAcpSession } from "../../harness/acp-endpoint.js";
 import type { CmaHttpDriverCommandDispatchInput } from "../vendor/cma-http.js";
 import type { CmaStore } from "../vendor/cma-store-types.js";
 import type { RuntimeCommandResult } from "../vendor/runtime-command-types.js";
+import { resolveManagedAgentsSessionConfig } from "../resolve-session-agent-config.js";
 import {
   cancelHarnessManagedAgentsPrompt,
   executeHarnessManagedAgentsMcp,
@@ -14,11 +15,15 @@ export function createHarnessManagedAgentsDispatcher(args: {
   config: AgentConfig;
   store: CmaStore;
 }): (input: CmaHttpDriverCommandDispatchInput) => Promise<RuntimeCommandResult | void> {
-  const { config, store } = args;
+  const { config: deploymentConfig, store } = args;
+
+  const configForSession = (sessionId: string) =>
+    resolveManagedAgentsSessionConfig(deploymentConfig, store, sessionId);
 
   return async (input) => {
     const { command, session } = input;
     const sessionId = session.id;
+    const config = await configForSession(sessionId);
 
     switch (command.kind) {
       case "input.start": {

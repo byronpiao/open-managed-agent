@@ -58,6 +58,15 @@ export {
   getManagedAgentsStore,
   resetManagedAgentsStoreForTests,
 } from "./store/managed-agents-store-factory.js";
+export {
+  mergeManagedAgentsAgentConfig,
+  resolveManagedAgentsSessionConfig,
+  resolveHarnessEngineForMaSession,
+} from "./resolve-session-agent-config.js";
+export {
+  setManagedAgentsDeploymentConfig,
+  resetManagedAgentsDeploymentConfigForTests,
+} from "./deployment-config.js";
 export { mountManagedAgentsEndpoint } from "./managed-agents-endpoint.js";
 export { createHarnessManagedAgentsDispatcher } from "./dispatch/harness-dispatcher.js";
 export { acpSessionUpdateToDriverEvents } from "./bridge/acp-to-driver-event.js";

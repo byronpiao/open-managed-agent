@@ -227,19 +227,45 @@ A：`OAK_USE_MEMORY_STORE=1 npm run build` 后运行 `tests/managed-agents/e2e-m
 
 ## 概念对照（官方 MA ↔ CloudBase / OMA）
 
-读 API 文档时最容易混淆的是：**HTTP 路径和事件形状与官方一致，但底层资源并不一一对应**。下表说明「协议里有什么」和「CloudBase 里真正驱动行为的是什么」。
+### 三层隔离
 
-| 官方 / 协议概念 | OMA 里存哪 | 是否改变沙箱或模型行为 | 说明 |
-|-----------------|------------|------------------------|------|
-| **Environment**（`networking`、`packages` 等） | FlexDB `managed_agents_environments` + 进程内缓存 | **否** | 仅满足 MA CRUD / 会话元数据；**不会**选择 AGS 镜像、装包或改网络。沙箱能力由 **AGS 沙箱工具 + TRW 镜像 + `agent.yaml`** 决定。 |
-| **Agent**（`POST /v1/agents`） | FlexDB `managed_agents_agents` | **否** | 协议侧 Agent 记录（name、metadata）。真正生效的是 **`magent agent:create` 部署的 Agent** 及其 **`agent.yaml`（model、system、tools）**。 |
-| **Session** | `managed_agents_sessions` + `harness_sessions`（同 id） | **是** | `session.id` = `acpSessionId`；起箱、ACP 转发、恢复都绑在这条 id 上。 |
-| **Events**（`user.message`、SSE 出站） | `managed_agents_session_events` + harness sync | **是** | 对话与 HITL 的主通道；Layer A 给 MA 客户端，Layer B 给引擎恢复。 |
-| **CloudBase Agent**（`CLOUDBASE_AGENT_ID`） | 云函数 / 云托管 + `AGENT_CONFIG` | **是** | 网关路由、`agent.yaml`、runtime 模式（managed / harness）的载体；**≠** MA API 里的 `agentId` 字符串。 |
-| **ant CLI / `api.anthropic.com`** | — | — | 官方托管；**不能**把 endpoint 或 API Key 直接指向 OMA。 |
+```text
+CloudBase envId          → 平台租户（FlexDB、网关、AGS 命名空间）
+CloudBase Agent 部署      → 一个 MA HTTP Host 进程（SCF/云托管 + 部署时 agent.yaml 基线）
+MA Environment / Agent   → 该 Host 内的配置源，合并为「有效 agent.yaml」再下传 harness
+MA Session               → 一次运行（起 AGS 沙箱 + 对话）
+```
 
-**集成建议**
+### 配置合并（已实现）
 
-- 可以按官方教程创建 Environment / Agent 以通过校验，但**不必指望** `config.packages` 等字段在 CloudBase 上生效。
-- 行为以 **`agent.yaml` + 已部署的 harness Agent** 为准；MA 的 `createAgent` 更适合「会话编排、多 agent 元数据」而非替换部署配置。
-- 若只需要对话，最小路径：`createSession({ agentId })`（`environmentId` 可省略，对沙箱无实质影响）。
+每次 `createSession` / `input.start` 时：
+
+```text
+有效 AgentConfig = 部署 agent.yaml（基线）
+                 ← MA Environment（基础设施 metadata）
+                 ← MA Agent（认知 metadata）
+                 → harness 起箱 / ACP / 模型
+```
+
+| 来源 | 典型字段（`metadata`） | 合并到 |
+|------|------------------------|--------|
+| **Environment** | `engine`（opencode/claude/codebuddy）、`harness_tool_id`、`cos_enabled` | `engine`、部署 `metadata` |
+| **Agent** | `model`、`system`、`description` | `model`、`system`、`name` |
+| **部署 yaml** | 未覆盖项 | 默认值 |
+
+官方 `environment.config.packages` / `networking` 仍会 **存储**；动态装包与网络策略尚未接 AGS（后续版本）。
+
+### 资源对照表
+
+| 官方 / 协议概念 | OMA 存储 | 是否驱动行为 |
+|-----------------|----------|--------------|
+| **Environment** | `managed_agents_environments` | **是**（经合并影响 `engine` 等） |
+| **Agent** | `managed_agents_agents` | **是**（经合并影响 `model` / `system`） |
+| **Session** | `managed_agents_sessions` + `harness_sessions` | **是** |
+| **Events** | `managed_agents_session_events` + harness sync | **是** |
+| **CloudBase `envId`** | 平台隔离 | 边界，不是 MA Environment |
+| **CloudBase Agent 部署** | `AGENT_CONFIG` | 合并基线 |
+
+**SDK：** `runtime: "harness"` 走 MA HTTP；`runtime: "managed"`（默认）走 ACP。
+
+验收步骤见 [acceptance-checklist.md](./acceptance-checklist.md)。

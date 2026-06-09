@@ -40,6 +40,7 @@
     "test": "npm run build && node tests/stop-and-resume.test.mjs && node tests/harness/unit.test.mjs && node tests/managed-agents/unit.test.mjs && node tests/managed-agents/e2e-managed-agents-harness.test.mjs",
     "test:full": "npm test && npm run harness -- local",
     "test:delivery": "npm run build:runtime && node scripts/harness/delivery.mjs",
+    "test:ma-acceptance": "npm run build && node scripts/harness/ma-acceptance.mjs",
     "harness": "npm run build:runtime && node scripts/harness/index.mjs",
     "harness:quickstart": "npm run build:runtime && node scripts/harness/quickstart.mjs"
   }

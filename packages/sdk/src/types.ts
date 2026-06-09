@@ -186,6 +186,11 @@ export interface ManagedAgentsConfig {
   accessKey?: string;
   /** 自定义 base URL（可选，默认根据 envId + agentId 自动生成） */
   baseURL?: string;
+  /**
+   * `managed`（默认）— 网关 kernel，SDK 走 ACP JSON-RPC。
+   * `harness` — 远程沙箱，SDK 走 Managed Agents HTTP `/v1/sessions`。
+   */
+  runtime?: "managed" | "harness";
 }
 
 /** @deprecated Use ManagedAgentsConfig */

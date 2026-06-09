@@ -17,6 +17,8 @@ const {
   createCmaHttpHandler,
   CMA_DEFAULT_BETA_HEADER_NAME,
   CMA_DEFAULT_BETA_HEADER_VALUE,
+  mergeManagedAgentsAgentConfig,
+  setManagedAgentsDeploymentConfig,
 } = await import(runtimeDist);
 
 const fixturesDir = join(root, "tests/fixtures/cma");
@@ -24,6 +26,38 @@ const userMessage = JSON.parse(readFileSync(join(fixturesDir, "user-message.json
 const inputStart = JSON.parse(readFileSync(join(fixturesDir, "input-start.json"), "utf8"));
 
 assert.deepEqual(projectCmaInboundToDriverCommand(userMessage), inputStart);
+
+const baseYaml = {
+  name: "deployed",
+  model: "hy3-preview",
+  system: "base",
+  runtime: "harness",
+  engine: "opencode",
+};
+setManagedAgentsDeploymentConfig(baseYaml);
+const merged = mergeManagedAgentsAgentConfig(
+  baseYaml,
+  {
+    id: "agent-1",
+    name: "Reviewer",
+    metadata: { model: "custom-model", system: "review strictly" },
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  },
+  {
+    id: "env-1",
+    name: "claude-box",
+    metadata: { engine: "claude" },
+    config: { type: "cloud", networking: { type: "unrestricted" }, packages: {} },
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt: null,
+  },
+);
+assert.equal(merged.engine, "claude");
+assert.equal(merged.model, "custom-model");
+assert.equal(merged.system, "review strictly");
+assert.equal(merged.name, "Reviewer");
 
 const authHeaders = {
   authorization: "Bearer test-token",

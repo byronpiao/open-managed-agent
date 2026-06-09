@@ -20,6 +20,11 @@ const { resetManagedAgentsStoreForTests } = await import(
     "../../packages/agent-runtime/dist/managed-agents/store/managed-agents-store-factory.js",
   )
 );
+const { setManagedAgentsDeploymentConfig, resetManagedAgentsDeploymentConfigForTests } =
+  await import("../../packages/agent-runtime/dist/managed-agents/deployment-config.js");
+const { mergeManagedAgentsAgentConfig } = await import(
+  "../../packages/agent-runtime/dist/managed-agents/resolve-session-agent-config.js",
+);
 const { resetHarnessSessionStoreForTests } = await import(
   join(
     dirname(fileURLToPath(import.meta.url)),
@@ -129,8 +134,19 @@ async function runHitlViaSse(client, sessionId, label) {
 }
 
 resetManagedAgentsStoreForTests();
+resetManagedAgentsDeploymentConfigForTests();
 resetHarnessSessionStoreForTests();
 resetE2eStubSandboxForTests();
+
+setManagedAgentsDeploymentConfig(MANAGED_AGENTS_E2E_STUB_AGENT_CONFIG);
+
+const merged = mergeManagedAgentsAgentConfig(
+  MANAGED_AGENTS_E2E_STUB_AGENT_CONFIG,
+  { id: "a1", name: "e2e-agent", metadata: { model: "stub", system: "e2e" }, createdAt: "", updatedAt: "" },
+  { id: "e1", name: "e2e-env", metadata: { engine: "opencode" }, config: { type: "cloud", networking: { type: "unrestricted" }, packages: {} }, createdAt: "", updatedAt: "", archivedAt: null },
+);
+assert.equal(merged.engine, "opencode");
+assert.equal(merged.model, "stub");
 
 const { base } = await startManagedAgentsE2eRuntime({
   agentConfig: MANAGED_AGENTS_E2E_STUB_AGENT_CONFIG,
