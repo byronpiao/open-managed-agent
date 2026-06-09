@@ -4,8 +4,10 @@
  * OpenAI-compatible → opencode (OPENCODE_CONFIG_CONTENT) + codebuddy (CODEBUDDY_*)
  * Anthropic-compatible → claude ACP (ANTHROPIC_*)
  *
- * Harness reads LLM from **host env only** (`.env.harness` → CloudRun EnvParam).
- * Do not infer OpenAI base URLs from agent.yaml `model.apiBaseUrl` (often Anthropic).
+ * Resolution order:
+ * 1. opencode only: explicit `model: zen` → built-in zen (no host LLM injection)
+ * 2. CloudBase platform AI (TCB_API_KEY + envId, default hy3-preview)
+ * 3. Custom provider (ModelSpec or explicit LLM_* / non-platform base URLs)
  */
 
 import type { AgentConfig } from "../config.js";
@@ -16,30 +18,159 @@ export interface CompatLlmProvider {
   model?: string;
 }
 
+/** Default CloudBase AI model for harness landing (experience / resource pack). */
+export const HARNESS_CLOUDBASE_DEFAULT_MODEL = "hy3-preview";
+
+const CLOUDBASE_AI_PATH = "/v1/ai/cloudbase";
+
 function modelId(config: AgentConfig): string | undefined {
   if (typeof config.model === "string") return config.model;
   return config.model?.id;
 }
 
-/** OpenAI Chat Completions → opencode + codebuddy. Requires OPENAI_BASE_URL. */
-export function resolveOpenAiCompatProvider(config: AgentConfig): CompatLlmProvider | null {
+export function cloudBaseAiGatewayBaseUrl(envId: string): string {
+  const id = envId.trim();
+  return `https://${id}.api.tcloudbasegateway.com${CLOUDBASE_AI_PATH}`;
+}
+
+/** @ai-sdk/openai-compatible baseURL — CloudBase 须 `…/v1/ai/cloudbase/v1`（见 openAiChatCompletionsUrl）。 */
+export function openAiCompatBaseUrlForHarness(provider: CompatLlmProvider): string {
+  const base = provider.baseUrl?.trim().replace(/\/$/, "") ?? "";
+  if (!base) return base;
+  if (isCloudBaseAiGatewayUrl(base)) {
+    return base.endsWith("/v1") ? base : `${base}/v1`;
+  }
+  return base.endsWith("/v1") ? base : `${base}/v1`;
+}
+
+export function isCloudBaseAiGatewayUrl(url: string): boolean {
+  const normalized = url.trim().replace(/\/$/, "");
+  return normalized.includes(".api.tcloudbasegateway.com") && normalized.endsWith(CLOUDBASE_AI_PATH);
+}
+
+export function isHarnessZenModel(config: AgentConfig): boolean {
+  return typeof config.model === "string" && config.model.trim() === "zen";
+}
+
+function hasCustomModelSpec(config: AgentConfig): boolean {
+  if (!config.model || typeof config.model === "string") return false;
+  return !!(config.model.apiKey?.trim() || config.model.apiBaseUrl?.trim());
+}
+
+function resolveCustomModelSpec(config: AgentConfig): CompatLlmProvider | null {
+  if (!hasCustomModelSpec(config) || typeof config.model === "string") return null;
+  const spec = config.model;
+  const id = spec.id?.trim();
+  if (!id) return null;
+  return {
+    apiKey: spec.apiKey?.trim(),
+    baseUrl: spec.apiBaseUrl?.trim(),
+    model: id,
+  };
+}
+
+/** User explicitly configured a non-platform LLM via host env. */
+export function hasExplicitCustomLlmEnv(): boolean {
+  const openai = process.env.OPENAI_BASE_URL?.trim();
+  const anthropic = process.env.ANTHROPIC_BASE_URL?.trim();
+  if (openai && !isCloudBaseAiGatewayUrl(openai)) return true;
+  if (anthropic && !isCloudBaseAiGatewayUrl(anthropic)) return true;
+  const llmKey = process.env.LLM_API_KEY?.trim();
+  const tcbKey = process.env.TCB_API_KEY?.trim();
+  if (llmKey && !tcbKey) return true;
+  if (llmKey && tcbKey && llmKey !== tcbKey) return true;
+  return false;
+}
+
+function resolveEnvId(): string | undefined {
+  return process.env.CLOUDBASE_ENV_ID?.trim() || process.env.TCB_ENV_ID?.trim() || undefined;
+}
+
+function resolvePlatformApiKey(): string | undefined {
+  return process.env.TCB_API_KEY?.trim() || process.env.LLM_API_KEY?.trim() || undefined;
+}
+
+function resolvePlatformModelId(config: AgentConfig): string {
+  const fromEnv = process.env.LLM_MODEL?.trim();
+  if (fromEnv) return fromEnv;
+  const fromYaml = modelId(config)?.trim();
+  if (fromYaml && fromYaml !== "zen") return fromYaml;
+  return HARNESS_CLOUDBASE_DEFAULT_MODEL;
+}
+
+/** CloudBase AI gateway (OpenAI + Anthropic compatible, same base URL). */
+export function resolveCloudBasePlatformLlm(config: AgentConfig): CompatLlmProvider | null {
   if (process.env.HARNESS_FORCE_ZEN === "1") return null;
+  if (isHarnessZenModel(config)) return null;
+  if (hasCustomModelSpec(config) || hasExplicitCustomLlmEnv()) return null;
+
+  const envId = resolveEnvId();
+  const apiKey = resolvePlatformApiKey();
+  if (!envId || !apiKey) return null;
+
+  return {
+    apiKey,
+    baseUrl: cloudBaseAiGatewayBaseUrl(envId),
+    model: resolvePlatformModelId(config),
+  };
+}
+
+function resolveCustomOpenAiFromEnv(config: AgentConfig): CompatLlmProvider | null {
   const apiKey = process.env.LLM_API_KEY?.trim();
   const baseUrl = process.env.OPENAI_BASE_URL?.trim();
   const model = process.env.LLM_MODEL?.trim() ?? modelId(config);
   if (!apiKey || !baseUrl || !model) return null;
-  return { apiKey, baseUrl, model };
+  return { apiKey, baseUrl: stripOpenAiV1Suffix(baseUrl), model };
 }
 
-/** Anthropic Messages → claude ACP. Uses ANTHROPIC_BASE_URL (not OPENAI_BASE_URL). */
+function resolveCustomAnthropicFromEnv(config: AgentConfig): CompatLlmProvider | null {
+  const apiKey = resolveAnthropicApiKeyFromEnv();
+  const baseUrl = process.env.ANTHROPIC_BASE_URL?.trim();
+  const model = process.env.LLM_MODEL?.trim() ?? modelId(config);
+  if (!apiKey || !baseUrl || !model) return null;
+  return { apiKey, baseUrl: stripOpenAiV1Suffix(baseUrl), model };
+}
+
+/** OpenAI Chat Completions → opencode + codebuddy. */
+export function resolveOpenAiCompatProvider(config: AgentConfig): CompatLlmProvider | null {
+  if (process.env.HARNESS_FORCE_ZEN === "1") return null;
+  if (isHarnessZenModel(config)) return null;
+
+  const fromSpec = resolveCustomModelSpec(config);
+  if (fromSpec?.apiKey && fromSpec.baseUrl && fromSpec.model) return fromSpec;
+
+  if (hasExplicitCustomLlmEnv()) {
+    const custom = resolveCustomOpenAiFromEnv(config);
+    if (custom) return custom;
+  }
+
+  return resolveCloudBasePlatformLlm(config);
+}
+
+/** Anthropic / Mimo tp-* key (Messages API). */
+export function resolveAnthropicApiKeyFromEnv(): string | undefined {
+  return (
+    process.env.LLM_API_KEY?.trim() ||
+    process.env.ANTHROPIC_AUTH_TOKEN?.trim() ||
+    process.env.ANTHROPIC_API_KEY?.trim() ||
+    process.env.CLAUDE_API_KEY?.trim() ||
+    undefined
+  );
+}
+
+/** Anthropic Messages → claude ACP. */
 export function resolveAnthropicCompatProvider(config: AgentConfig): CompatLlmProvider | null {
   if (process.env.HARNESS_FORCE_ZEN === "1") return null;
-  const apiKey = process.env.LLM_API_KEY?.trim();
-  let baseUrl = process.env.ANTHROPIC_BASE_URL?.trim();
-  const model = process.env.LLM_MODEL?.trim() ?? modelId(config);
-  if (!apiKey || !model) return null;
-  if (baseUrl) baseUrl = stripOpenAiV1Suffix(baseUrl);
-  return { apiKey, baseUrl, model };
+
+  const fromSpec = resolveCustomModelSpec(config);
+  if (fromSpec?.apiKey && fromSpec.baseUrl && fromSpec.model) return fromSpec;
+
+  if (hasExplicitCustomLlmEnv()) {
+    const custom = resolveCustomAnthropicFromEnv(config);
+    if (custom) return custom;
+  }
+
+  return resolveCloudBasePlatformLlm(config);
 }
 
 /**

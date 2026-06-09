@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Update AGS sandbox tool image to HARNESS_SANDBOX_IMAGE.
- * Resolves tool by HARNESS_TOOL_ID (`.env.harness` only) or by oma-harness-{env}-* name.
+ * Resolves tool by HARNESS_TOOL_ID (`.env.harness` only) or by oma-harness-{env} name.
  */
 import { execSync } from "child_process";
 import { writeFileSync } from "fs";

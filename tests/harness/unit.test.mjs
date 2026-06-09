@@ -33,11 +33,20 @@ import {
   getHarnessSyncEventStore,
   resetHarnessSyncEventStoreForTests,
   exportOpencodeSyncEvents,
+  persistOpencodeSyncForSession,
   hydrateOpencodeSyncEvents,
   resolveHarnessSandboxIdlePauseMs,
   resetSandboxPrewarmForTests,
   openAiChatCompletionsUrl,
 } from "../../packages/agent-runtime/dist/harness/index.js";
+import {
+  getHarnessSessionStore,
+  resetHarnessSessionStoreForTests,
+} from "../../packages/agent-runtime/dist/harness/sandbox/session-store.js";
+import {
+  cacheSandboxHandle,
+  dropCachedSandboxHandle,
+} from "../../packages/agent-runtime/dist/harness/sandbox/orchestrator.js";
 import {
   buildCosMountOptions,
   buildCosStorageMounts,
@@ -80,11 +89,51 @@ test("engineToDataPlaneSlug maps claude → claudecode", () => {
   assert.equal(engineToDataPlaneSlug("opencode"), "opencode");
 });
 
-test("harnessToolNameForEnv uses oma-harness-…-no-cos suffix", () => {
+test("harnessToolNameForEnv uses oma-harness-{env} without cos suffix by default", () => {
+  const prev = process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+  delete process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+  assert.equal(
+    harnessToolNameForEnv("test-6g2rfs50c69b7fb8"),
+    "oma-harness-test-6g2rfs50c69b7fb8",
+  );
+  if (prev) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prev;
+});
+
+test("applyHarnessScenario cloud-scf strips COS and sets BYOK tier", async () => {
+  const { applyHarnessScenario, HARNESS_COS_ENV_KEYS } = await import(
+    "../../scripts/harness/load-env.mjs"
+  );
+  const prevSuffix = process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+  process.env.HARNESS_TOOL_COS_NAME_SUFFIX = "1";
+  const env = {
+    CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8",
+    HARNESS_COS_ENABLED: "1",
+    HARNESS_COS_BUCKET: "bucket",
+    LLM_API_KEY: "should-stay-from-map-only",
+  };
+  const meta = applyHarnessScenario("cloud-scf", env);
+  if (prevSuffix !== undefined) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prevSuffix;
+  else delete process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+  assert.equal(meta.scenario, "cloud-scf");
+  assert.equal(meta.cosEnabled, false);
+  assert.ok(meta.toolName.endsWith("-no-cos"));
+  for (const k of HARNESS_COS_ENV_KEYS) assert.equal(env[k], undefined);
+  assert.equal(env.HARNESS_LLM_TIER, "byok");
+});
+
+test("resolveHarnessToolName uses -no-cos|-with-cos when HARNESS_TOOL_COS_NAME_SUFFIX=1", () => {
+  const prev = process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+  process.env.HARNESS_TOOL_COS_NAME_SUFFIX = "1";
   assert.equal(
     harnessToolNameForEnv("test-6g2rfs50c69b7fb8"),
     "oma-harness-test-6g2rfs50c69b7fb8-no-cos",
   );
+  assert.equal(
+    harnessCosToolNameForEnv("test-6g2rfs50c69b7fb8"),
+    "oma-harness-test-6g2rfs50c69b7fb8-with-cos",
+  );
+  if (prev) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prev;
+  else delete process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
 });
 
 test("buildManagedAgentClientMcpUrl embeds acpSessionId query param", () => {
@@ -130,19 +179,22 @@ test("buildHarnessAcpMcpServers returns http MCP for custom tools", () => {
   assert.ok(servers[0].url.includes(SANDBOX_TRW_MCP_RELAY_PATH));
 });
 
-test("buildHarnessOpencodeConfigContent ignores model.apiBaseUrl (OpenAI from env only)", () => {
-  const cfg = {
+test("buildHarnessOpencodeConfigContent uses ModelSpec apiKey + apiBaseUrl", () => {
+  const raw = buildHarnessOpencodeConfigContent({
     name: "x",
     model: {
       id: "mimo-v2.5-pro",
       apiKey: "tp-test",
-      apiBaseUrl: "https://token-plan-cn.xiaomimimo.com/anthropic",
+      apiBaseUrl: "https://token-plan-sgp.xiaomimimo.com/v1",
     },
     system: "s",
     runtime: "harness",
     engine: "opencode",
-  };
-  assert.equal(buildHarnessOpencodeConfigContent(cfg), null);
+  });
+  assert.ok(raw);
+  const parsed = JSON.parse(raw);
+  assert.equal(parsed.provider["openai-compat"].options.apiKey, "tp-test");
+  assert.ok(parsed.model.includes("mimo-v2.5-pro"));
 });
 
 test("buildHarnessOpencodeConfigContent uses LLM_* + OPENAI_BASE_URL", () => {
@@ -447,6 +499,100 @@ test("buildHarnessSandboxEnv maps LLM_* + OPENAI_BASE_URL for codebuddy engine",
   else process.env.LLM_MODEL = saved.model;
 });
 
+test("resolveAnthropicCompatProvider accepts ANTHROPIC_AUTH_TOKEN without LLM_API_KEY", async () => {
+  const { resolveAnthropicCompatProvider } = await import(
+    "../../packages/agent-runtime/dist/harness/llm-providers.js"
+  );
+  const saved = {
+    key: process.env.LLM_API_KEY,
+    tok: process.env.ANTHROPIC_AUTH_TOKEN,
+    url: process.env.ANTHROPIC_BASE_URL,
+    model: process.env.LLM_MODEL,
+  };
+  delete process.env.LLM_API_KEY;
+  process.env.ANTHROPIC_AUTH_TOKEN = "tp-test";
+  process.env.ANTHROPIC_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/anthropic";
+  process.env.LLM_MODEL = "mimo-v2.5-pro";
+  const p = resolveAnthropicCompatProvider({ name: "t", model: "m", system: "s" });
+  assert.ok(p);
+  assert.equal(p.apiKey, "tp-test");
+  assert.equal(p.baseUrl, "https://token-plan-sgp.xiaomimimo.com/anthropic");
+  if (saved.key === undefined) delete process.env.LLM_API_KEY;
+  else process.env.LLM_API_KEY = saved.key;
+  if (saved.tok === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN;
+  else process.env.ANTHROPIC_AUTH_TOKEN = saved.tok;
+  if (saved.url === undefined) delete process.env.ANTHROPIC_BASE_URL;
+  else process.env.ANTHROPIC_BASE_URL = saved.url;
+  if (saved.model === undefined) delete process.env.LLM_MODEL;
+  else process.env.LLM_MODEL = saved.model;
+});
+
+test("resolveCloudBasePlatformLlm from TCB_API_KEY + envId only", async () => {
+  const {
+    resolveCloudBasePlatformLlm,
+    resolveOpenAiCompatProvider,
+    resolveAnthropicCompatProvider,
+    HARNESS_CLOUDBASE_DEFAULT_MODEL,
+  } = await import("../../packages/agent-runtime/dist/harness/llm-providers.js");
+  const saved = {
+    env: process.env.CLOUDBASE_ENV_ID,
+    tcb: process.env.TCB_API_KEY,
+    llm: process.env.LLM_API_KEY,
+    openai: process.env.OPENAI_BASE_URL,
+    anthropic: process.env.ANTHROPIC_BASE_URL,
+    model: process.env.LLM_MODEL,
+  };
+  delete process.env.LLM_API_KEY;
+  delete process.env.OPENAI_BASE_URL;
+  delete process.env.ANTHROPIC_BASE_URL;
+  delete process.env.LLM_MODEL;
+  process.env.CLOUDBASE_ENV_ID = "test-env-abc";
+  process.env.TCB_API_KEY = "tcb-jwt-key";
+  const cfg = { name: "t", system: "s" };
+  const platform = resolveCloudBasePlatformLlm(cfg);
+  assert.ok(platform);
+  assert.equal(platform.apiKey, "tcb-jwt-key");
+  assert.equal(platform.model, HARNESS_CLOUDBASE_DEFAULT_MODEL);
+  assert.equal(
+    platform.baseUrl,
+    "https://test-env-abc.api.tcloudbasegateway.com/v1/ai/cloudbase",
+  );
+  const openai = resolveOpenAiCompatProvider(cfg);
+  assert.equal(openai?.baseUrl, platform.baseUrl);
+  const anthropic = resolveAnthropicCompatProvider(cfg);
+  assert.equal(anthropic?.baseUrl, platform.baseUrl);
+  assert.equal(resolveOpenAiCompatProvider({ name: "t", model: "zen", system: "s" }), null);
+  const ocRaw = buildHarnessOpencodeConfigContent(cfg);
+  assert.ok(ocRaw);
+  const oc = JSON.parse(ocRaw);
+  assert.equal(
+    oc.provider["openai-compat"].options.baseURL,
+    "https://test-env-abc.api.tcloudbasegateway.com/v1/ai/cloudbase/v1",
+  );
+  assert.equal(oc.provider["openai-compat"].options.apiKey, "tcb-jwt-key");
+  if (saved.env === undefined) delete process.env.CLOUDBASE_ENV_ID;
+  else process.env.CLOUDBASE_ENV_ID = saved.env;
+  if (saved.tcb === undefined) delete process.env.TCB_API_KEY;
+  else process.env.TCB_API_KEY = saved.tcb;
+  if (saved.llm === undefined) delete process.env.LLM_API_KEY;
+  else process.env.LLM_API_KEY = saved.llm;
+  if (saved.openai === undefined) delete process.env.OPENAI_BASE_URL;
+  else process.env.OPENAI_BASE_URL = saved.openai;
+  if (saved.anthropic === undefined) delete process.env.ANTHROPIC_BASE_URL;
+  else process.env.ANTHROPIC_BASE_URL = saved.anthropic;
+  if (saved.model === undefined) delete process.env.LLM_MODEL;
+  else process.env.LLM_MODEL = saved.model;
+});
+
+test("buildHarnessInstanceEnv enables claude SessionStore env", async () => {
+  const { buildHarnessInstanceEnv } = await import("../../packages/agent-runtime/dist/config.js");
+  const env = buildHarnessInstanceEnv({ name: "t", model: "m", system: "s" }, "claude");
+  const names = Object.fromEntries(env.map((e) => [e.Name, e.Value]));
+  assert.equal(names.ENABLE_AGENT_CLAUDE_ACP, "true");
+  assert.equal(names.HARNESS_CLAUDE_SESSION_STORE, "1");
+  assert.equal(names.CLAUDE_CONFIG_DIR, "/tmp/.claude");
+});
+
 test("buildHarnessSandboxEnv maps LLM_* + ANTHROPIC_BASE_URL for claude engine", () => {
   const saved = {
     key: process.env.LLM_API_KEY,
@@ -555,11 +701,88 @@ test("harness sync event store append + hydrate round-trip", async () => {
   resetHarnessSyncEventStoreForTests();
 });
 
-test("harnessCosToolNameForEnv uses oma-harness-…-with-cos suffix", () => {
-  assert.equal(
-    harnessCosToolNameForEnv("test-6g2rfs50c69b7fb8"),
-    "oma-harness-test-6g2rfs50c69b7fb8-with-cos",
+test("harness sync event store maxSeq and long list", async () => {
+  process.env.OAK_USE_MEMORY_STORE = "1";
+  resetHarnessSyncEventStoreForTests();
+  const store = getHarnessSyncEventStore("test-env");
+  const aggregateId = "agg-long-session";
+  const acpSessionId = "acp-long";
+  const total = 120;
+  const events = Array.from({ length: total }, (_, i) => ({
+    id: `ev-${i}`,
+    aggregateId,
+    seq: i + 1,
+    type: "message",
+    data: { n: i },
+  }));
+  await store.appendEvents({ acpSessionId, aggregateId, events });
+  assert.equal(await store.maxSeqForAggregate(aggregateId), total);
+  const listed = await store.listEventsForAggregate(aggregateId);
+  assert.equal(listed.length, total);
+  assert.equal(listed[0].seq, 1);
+  assert.equal(listed[listed.length - 1].seq, total);
+  const { inserted } = await store.appendEvents({
+    acpSessionId,
+    aggregateId,
+    events: [{ id: "ev-0", aggregateId, seq: 1, type: "dup", data: {} }],
+  });
+  assert.equal(inserted, 0);
+  delete process.env.OAK_USE_MEMORY_STORE;
+  resetHarnessSyncEventStoreForTests();
+});
+
+test("persistOpencodeSyncForSession marks syncExportFailedAt after retries", async () => {
+  const prevEnv = process.env.CLOUDBASE_ENV_ID;
+  const prevOak = process.env.OAK_USE_MEMORY_STORE;
+  process.env.CLOUDBASE_ENV_ID = "test-env";
+  process.env.OAK_USE_MEMORY_STORE = "1";
+  resetHarnessSyncEventStoreForTests();
+  resetHarnessSessionStoreForTests();
+
+  const acpSessionId = "acp-fail-export";
+  const aggregateId = "550e8400-e29b-41d4-a716-446655440099";
+  const sessionStore = getHarnessSessionStore("test-env");
+  await sessionStore.create({ acpSessionId, userId: "u", engine: "opencode" });
+  await sessionStore.setEngineSessionId(acpSessionId, aggregateId);
+
+  cacheSandboxHandle(acpSessionId, {
+    instanceId: "i",
+    toolId: "t",
+    baseUrl: "http://127.0.0.1:1",
+    headers: {},
+    async request(path) {
+      if (path.endsWith("/health")) {
+        return new Response(
+          JSON.stringify({ ok: true, acpReady: true, serveReady: true }),
+          { status: 200 },
+        );
+      }
+      throw new Error("sandbox sync unavailable");
+    },
+    async stop() {},
+    async pause() {},
+    async resumeIfPaused() {},
+  });
+
+  await assert.rejects(
+    () =>
+      persistOpencodeSyncForSession({
+        acpSessionId,
+        config: { name: "t", model: "m", system: "s", runtime: "harness", engine: "opencode" },
+        reason: "prompt_end",
+      }),
+    /sandbox sync unavailable/,
   );
+
+  const row = await sessionStore.get(acpSessionId);
+  assert.ok(row?.syncExportFailedAt);
+  dropCachedSandboxHandle(acpSessionId);
+  resetHarnessSessionStoreForTests();
+  resetHarnessSyncEventStoreForTests();
+  if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
+  else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  if (prevOak === undefined) delete process.env.OAK_USE_MEMORY_STORE;
+  else process.env.OAK_USE_MEMORY_STORE = prevOak;
 });
 
 test("resolveHarnessCosConfig returns null when disabled", () => {
@@ -674,6 +897,29 @@ test("buildHarnessOpencodeConfigContent embeds permission in OPENCODE_CONFIG", (
     ],
   });
   assert.ok(raw?.includes('"edit":"ask"') || raw?.includes('"edit": "ask"'));
+});
+
+test("platform probe quota failure is classified and documented", async () => {
+  const {
+    classifyPlatformProbeFailure,
+    formatPlatformProbeFailureGuide,
+    isPlatformQuotaExceeded,
+  } = await import("../../packages/agent-runtime/dist/harness/llm-probe.js");
+  const quota = {
+    ok: false,
+    httpStatus: 429,
+    model: "hy3-preview",
+    endpoint: "https://env.api.tcloudbasegateway.com/v1/ai/cloudbase/v1/chat/completions",
+    latencyMs: 12,
+    error: "Token usage exceeded quota limit",
+    errorCode: "EXCEED_TOKEN_QUOTA_LIMIT",
+  };
+  assert.equal(classifyPlatformProbeFailure(quota), "quota_exceeded");
+  assert.equal(isPlatformQuotaExceeded(quota), true);
+  const guide = formatPlatformProbeFailureGuide(quota);
+  assert.match(guide, /EXCEED_TOKEN_QUOTA_LIMIT|quota/i);
+  assert.match(guide, /auto-falls back to opencode zen/i);
+  assert.match(guide, /cloud-tcbr/);
 });
 
 test("resolveHarnessSandboxIdlePauseMs defaults to 20 minutes", () => {

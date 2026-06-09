@@ -56,9 +56,12 @@ export {
   assertHarnessAgsRuntimeEnv,
   assertHarnessCloudCreds,
   assertHarnessCosEnv,
+  assertHarnessAnthropicLlmEnv,
   assertHarnessLlmEnv,
   assertHarnessLlmSuiteEnv,
+  hasHarnessAnthropicLlmEnv,
   hasHarnessCustomLlmEnv,
+  missingHarnessAnthropicLlmEnv,
   missingHarnessCosEnv,
   missingHarnessLlmEnv,
   resolveHarnessToolRoleArn,
@@ -67,15 +70,22 @@ export {
 
 export {
   assertHarnessOpenAiLlmReachable,
+  assertHarnessPlatformLlmReachable,
+  classifyPlatformProbeFailure,
+  formatPlatformProbeFailureGuide,
+  isPlatformQuotaExceeded,
   openAiChatCompletionsUrl,
+  probeCloudBasePlatformLlm,
   probeHarnessOpenAiLlm,
   type HarnessLlmProbeResult,
+  type PlatformProbeFailureKind,
 } from "./llm-probe.js";
 
 export {
   OPENCODE_SYNC_DIRECTORY,
   ensureOpencodeSyncStarted,
   exportOpencodeSyncEvents,
+  persistOpencodeSyncForSession,
   hydrateOpencodeSyncEvents,
   fetchOpencodeSyncHistory,
   replayOpencodeSyncEvents,

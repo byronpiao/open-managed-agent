@@ -4,7 +4,7 @@
  */
 
 import COS from "cos-nodejs-sdk-v5";
-import { harnessEnvSlug } from "../../config.js";
+import { resolveHarnessToolName } from "../../config.js";
 import { assertHarnessCosEnv, requireEnv } from "../harness-env.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 
@@ -30,8 +30,9 @@ function stripLeadingSlash(p: string): string {
   return p.replace(/^\/+/, "");
 }
 
+/** @deprecated prefer resolveHarnessToolName(envId, true) from config.js */
 export function harnessCosToolNameForEnv(envId: string): string {
-  return `oma-harness-${harnessEnvSlug(envId, 38)}-with-cos`;
+  return resolveHarnessToolName(envId, true);
 }
 
 export function resolveHarnessCosConfig(args?: {

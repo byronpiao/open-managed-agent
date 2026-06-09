@@ -1,75 +1,74 @@
 # 沙箱内 Agent 使用指南
 
-在 README **托管 Agent** 流程基础上，部署并对话 **沙箱内 Agent**。
+在 [README 快速开始](../README.md) 基础上，部署并在 **远程沙箱**里运行 OpenCode 或 Claude Code（`runtime: harness`）。
 
 | | 托管 Agent（默认） | 沙箱内 Agent |
 |---|-------------------|--------------|
-| 思考与工具执行 | 网关 Runtime | **AGS 沙箱**内 engine |
-| 典型场景 | 轻量对话、平台模型 | 远程工作区、命令与文件操作 |
-| 配置 | 省略 `runtime` | `runtime: harness` + `engine: opencode` |
+| 执行位置 | 网关 Runtime | 远程沙箱内的 engine |
+| 适合 | 轻量对话、MCP | bash、改文件、完整编码环境 |
+| 配置 | 省略 `runtime` | `runtime: harness` + `engine: opencode` 或 `claude` |
 
-> `runtime: harness` 即沙箱内 Agent。箱内引擎目前仅 **`opencode`**；`claude`、`codebuddy` 尚未开放。
-
-**延伸阅读：** [架构参考](./harness-architecture.md) · [环境变量](./harness-env.md)
+**按引擎阅读：** [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md)
 
 ---
 
-## 前置条件
+## 开始之前
 
-1. 已完成 [README 快速开始](../README.md#快速开始)（`magent login`、Node ≥ 20）。
-2. CloudBase 环境已开通 **AGS 沙箱**。
+1. Node ≥ 20，`magent login`（推荐，省填 CAM）。
+2. 环境已开通 **AGS 沙箱**、**CloudBase AI**（默认模型 `hy3-preview`）。
+3. **不必**在控制台创建 API Key — CAM / `magent login` 自动鉴权，见 [凭证说明](./harness-credentials.md)。
 
-部署沙箱内 Agent 用 **`agent.yaml` + `magent`**；凭证写在 shell 环境或 CloudBase 控制台，**不需要** `.env.harness`（该文件仅研发 Harness 验收用）。
+部署使用 **`agent.yaml` + `magent`**。凭证分 **必选 / 可选** 见下表与 [harness-credentials.md](./harness-credentials.md)。
 
 ---
 
-## 第一步：最小配置，跑通一次对话
+## 用户故事：从零到第一次对话
 
-用箱内 OpenCode **zen** 模型完成首轮对话（无需 COS、无需自定义 LLM）。
+目标：用 **CloudBase AI 默认模型** 跑通一条命令，**无需**第三方 LLM Key，**无需** COS。
 
-### 1. 凭证
-
-在 shell 中 export（或写入你自己的密钥管理工具）：
+### 1. 准备凭证（必选四样）
 
 ```bash
+magent login   # 推荐：浏览器授权，省填 SecretId/Key
 export CLOUDBASE_ENV_ID=your-env-id
 export TCB_REGION=ap-shanghai
-export TCB_SECRET_ID=your-secret-id
-export TCB_SECRET_KEY=your-secret-key
-export TCB_API_KEY=your-ags-jwt
-export CLOUDBASE_ACCESS_KEY=your-access-key
+# 未 login 时手填 CAM（与控制台 API 密钥同源）：
+# export TCB_SECRET_ID=your-secret-id
+# export TCB_SECRET_KEY=your-secret-key
 ```
 
-| 变量 | 用途 |
-|------|------|
-| `TCB_SECRET_ID` / `TCB_SECRET_KEY` | 会话持久化；`agent:create` 时注入 Runtime |
-| `TCB_API_KEY` | AGS 沙箱 |
-| `CLOUDBASE_ACCESS_KEY` | `magent run` / SDK 访问网关 |
+| 必填 / 可选 | 变量 | 作用 |
+|-------------|------|------|
+| **必填** | `CLOUDBASE_ENV_ID`、`TCB_REGION` | 环境 |
+| **必填** | `TCB_SECRET_ID`、`TCB_SECRET_KEY` | 部署、起箱、CloudBase AI（**`magent login` 可代替手填**） |
+| 可选 | `CLOUDBASE_AGENT_ID` | 部署后写入，方便 `magent run` |
 
-字段说明见 [harness-env.md](./harness-env.md) ① 段（与 [`.env.harness.example`](../.env.harness.example) 相同）。
+> 不必去控制台单独创建 **API Key**；Runtime 会用 CAM 自动换网关令牌。变量说明见 [harness-credentials.md](./harness-credentials.md)。
 
-### 2. 最小 `agent.yaml`
+### 2. 编写 `agent.yaml`
 
 ```bash
-cp docs/examples/agent.sandbox.min.yaml ./agent.sandbox.yaml
+cp docs/examples/agent.sandbox.opencode.min.yaml ./agent.sandbox.yaml
+# agent.sandbox.yaml 为本地工作副本（已 gitignore），勿 commit
 ```
 
 ```yaml
 name: My Sandbox Agent
 runtime: harness
 engine: opencode
-model: zen
 system: |
   You are a helpful coding assistant in a remote sandbox workspace.
 ```
 
-### 3. 构建并部署
+使用 **Claude Code** 时：换 [agent.sandbox.claude.min.yaml](./examples/agent.sandbox.claude.min.yaml)，`engine: claude`，见 [harness-claude-code.md](./harness-claude-code.md)。
+
+### 3. 部署
 
 ```bash
 npm run build
 
 magent agent:create \
-  --name "my-sandbox-agent" \
+  --name "myagent" \
   --runtime harness \
   --engine opencode \
   --file ./agent.sandbox.yaml \
@@ -77,30 +76,24 @@ magent agent:create \
   -e "$CLOUDBASE_ENV_ID"
 ```
 
-- 默认 **SCF 云函数**，约 60–90 秒就绪。
-- 可选 `--type tcbr` 部署为云托管容器（约 3–5 分钟）；创建前需 export `TCB_SECRET_ID` / `TCB_SECRET_KEY`（见 [product-guide](./product-guide.md)）。
-- yaml 已含 `runtime` / `engine` 时，CLI 可省略对应参数。
+- 默认云函数，约 1–2 分钟就绪（`magent agent:get` 显示 Ready 后再 `run`）；`--name` 宜短（过长可能 alias 失败）。生产推荐 `--type tcbr`（见 [product-guide](./product-guide.md)）。
+- 若报错与 **RoleArn / 沙箱工具** 有关，见下文 [首次起箱](#首次起箱沙箱工具与-rolearn)。
 
 ```bash
 export CLOUDBASE_AGENT_ID=agent-my-sandbox-agent-xxxxxx
-```
-
-### 4. 等待就绪
-
-```bash
 magent agent:get -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"
 ```
 
-### 5. 发第一条消息
+### 4. 对话
 
 ```bash
 magent run -a "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID" \
   -m "在沙箱里执行 uname -a，把输出原样返回。"
 ```
 
-首次对话可能显示 `Warming sandbox...`，等待 1–3 分钟。
+首次可能显示 `Warming sandbox...`，等待 1–3 分钟。
 
-### 6. 用 SDK（可选）
+### 5. 用 SDK（可选）
 
 ```typescript
 import ManagedAgents from "open-managed-agent-sdk";
@@ -108,7 +101,7 @@ import ManagedAgents from "open-managed-agent-sdk";
 const client = new ManagedAgents({
   envId: process.env.CLOUDBASE_ENV_ID!,
   agentId: process.env.CLOUDBASE_AGENT_ID!,
-  accessKey: process.env.CLOUDBASE_ACCESS_KEY!,
+  // 推荐先用 magent run（自动 CAM 鉴权）；纯 SDK 见 product-guide
 });
 
 const session = await client.sessions.create({ title: "sandbox-demo" });
@@ -119,29 +112,137 @@ for await (const event of client.sessions.prompt(session.id, "列出当前工作
 
 ---
 
-## 第二步：运行时结构
+## 用户故事：选择模型
 
-```text
-客户端 (SDK / magent)
-    │  HTTPS  ACP
-    ▼
-OMA Runtime（SCF / 云托管）  ← 会话、审批、MCP 桥接
-    │  AGS
-    ▼
-远程沙箱（TRW + engine）     ← 命令、文件、LLM
+同一套部署方式，按需求调整模型即可。
+
+| 你想… | 做法 | 适用引擎 |
+|--------|------|----------|
+| 用 CloudBase 模型（推荐起步） | 省略 `model` 或写 `hy3-preview`（需 CAM）；体验额度用完后可在控制台 [购买 Token 资源包](https://docs.cloudbase.net/ai/model/openai-sdk-access) | opencode、claude |
+| 不消耗 CloudBase AI 额度 | `model: zen` | **仅 opencode** |
+| 用自己的 LLM 厂商 Key | 部署前 export `LLM_*`，或 yaml 里写 ModelSpec（与上表 CloudBase Token **二选一**） | 见下方与引擎专篇 |
+
+改完后：
+
+```bash
+magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"
 ```
 
-| 字段 | 说明 |
-|------|------|
-| `runtime: harness` | 沙箱内 Agent |
-| `engine: opencode` | 箱内引擎（当前可用） |
-| `model: zen` | OpenCode 内置模型，无需 API Key |
+**OpenCode — 第三方 OpenAI 兼容（如 NVIDIA）：**
 
-配置变更：`magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"`（约数十秒；Runtime 代码变更需重新部署）。
+```bash
+export LLM_API_KEY=your-api-key
+export LLM_MODEL=moonshotai/kimi-k2.6
+export OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
+magent agent:create ...   # 已部署的 Agent 改 Key：重新 create 或在控制台改该函数的环境变量
+```
+
+**Claude Code — 默认仍走 CloudBase AI**（[Anthropic 协议兼容](https://docs.cloudbase.net/ai/model/anthropic-sdk-access)）。第三方 Anthropic 兼容服务：
+
+```bash
+export LLM_API_KEY=your-api-key
+export LLM_MODEL=your-model-id
+export ANTHROPIC_BASE_URL=https://your-endpoint/anthropic
+```
+
+细节：[harness-opencode.md](./harness-opencode.md) · [harness-claude-code.md](./harness-claude-code.md)
 
 ---
 
-## 第三步：沙箱工具（bash / 读写文件）
+## 用户故事：能力进阶
+
+在能对话之后，按需叠加（`magent agent:update -f ./agent.sandbox.yaml`）。
+
+| 步骤 | 能力 | 说明 |
+|------|------|------|
+| [工具](#沙箱工具) | bash、读写文件 | `agent_toolset` |
+| [自定义工具](#自定义工具) | 客户端执行逻辑 | `type: custom` + SDK 回调 |
+| [MCP](#外部-mcp) | 接 GitHub 等远程 MCP | `mcp_servers` + `mcp_toolset` |
+| [Skills](#skills) | 领域知识文件 | 物化到沙箱 `.agents/skills/` |
+| [审批](#工具审批) | bash 等需用户确认 | `permission_policy: always_ask` |
+
+---
+
+## 首次起箱：沙箱工具与 RoleArn
+
+**什么时候会遇到：** 本 CloudBase 环境**从未**创建过 AGS 沙箱工具，第一次 `magent agent:create --runtime harness` 时。
+
+**不需要 RoleArn 的情况：** 控制台 **AGS → 沙箱工具** 里已有工具，或团队已用 `tcb sandbox tool create` 创建过。
+
+**需要 RoleArn 的情况：** 希望由 Runtime **自动创建**沙箱工具。在 `agent:create` **之前**执行：
+
+```bash
+export HARNESS_TOOL_ROLE_ARN=qcs::cam::uin/<你的UIN>:roleName/<角色名>
+```
+
+角色从哪来（详见 [harness-credentials.md · CAM 角色](./harness-credentials.md)）：
+
+1. **推荐**：复制环境里**已有沙箱工具**详情页上的 RoleArn（`tcb sandbox tool list` 亦可查看）。
+2. CAM 新建：**产品服务 → Agent 沙箱服务 (AGS)**，载体 `ags.cloud.tencent.com`；策略至少 `QcloudTCRReadOnlyAccess`（私有镜像），启用 COS 再加 `QcloudCOSFullAccess`。
+3. 自行 `tcb sandbox tool create ... --role-arn ...` 创建工具后，再部署 Agent（此后不必再配 RoleArn）。
+
+`HARNESS_TOOL_ROLE_ARN` 是**沙箱实例**在云上运行的身份，**不是**云函数执行角色，也**不是** API Key。
+
+自动创建的工具在控制台显示为 **`oma-harness-<你的环境 ID>`**（与是否启用 COS 无关；COS 只影响挂载配置，不会出现在工具名称里）。
+
+---
+
+## 进阶
+
+### 自定义沙箱镜像
+
+默认使用平台提供的公开 **magent** 沙箱镜像，**一般不用改**。
+
+若你方构建了私有镜像，在 **部署 Agent 之前**指定：
+
+```bash
+export HARNESS_SANDBOX_IMAGE=ccr.ccs.tencentyun.com/<命名空间>/<镜像>:<tag>
+magent agent:create --runtime harness ...
+```
+
+镜像需为 magent 预设（含 TRW + OpenCode/Claude Code）。自建镜像流程请联系交付或参考团队内部构建文档。
+
+### 工作区持久化（COS）
+
+**默认：** 多轮对话靠平台会话与同步能力恢复；沙箱里写的文件会随实例回收而丢失。
+
+**启用 COS：** 把项目目录挂到对象存储，会话结束时可快照，下次起箱恢复现场（适合长周期编码任务）。
+
+在 `magent agent:create` 前配置（会写入 Runtime 环境变量）：
+
+```bash
+export HARNESS_COS_ENABLED=1
+export HARNESS_COS_BUCKET=your-bucket-appid
+export HARNESS_COS_BUCKET_PATH=/your/prefix
+export HARNESS_COS_ENDPOINT=your-bucket.cos.ap-shanghai.myqcloud.com
+export HARNESS_COS_REGION=ap-shanghai
+export HARNESS_COS_MOUNT_NAME=ags-cos-workspace    # 与 AGS 工具挂载名一致
+export HARNESS_COS_MOUNT_DIR=/mnt/workspace
+```
+
+需已在 AGS 沙箱工具上配置好同名 **StorageMount**。首次启用建议与运维确认桶路径与 CAM 权限。
+
+### 导出与回写配置
+
+```bash
+magent agent:export -i "$CLOUDBASE_AGENT_ID" -o ./agent.sandbox.yaml
+# 编辑后
+magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"
+```
+
+---
+
+## 运行时结构
+
+```text
+客户端 (SDK / magent) → OMA Runtime → AGS 远程沙箱 → OpenCode / Claude Code
+```
+
+`magent agent:update` 改配置约数十秒；**Runtime 代码**变更需重新 `agent:create` 或按 [README](../README.md) 部署章节更新代码包。
+
+---
+
+## 沙箱工具
 
 ```yaml
 tools:
@@ -156,14 +257,9 @@ tools:
           type: always_ask
 ```
 
-```bash
-magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"
-magent run -a "$CLOUDBASE_AGENT_ID" -m "创建 hello.txt 并写入 Hello sandbox."
-```
-
 ---
 
-## 第四步：自定义工具（客户端执行）
+## 自定义工具
 
 ```yaml
 tools:
@@ -177,11 +273,11 @@ tools:
       required: [sql]
 ```
 
-SDK 处理 custom tool 回调，协议与托管 Agent 相同。
+由 SDK 在客户端执行，协议与托管 Agent 相同。
 
 ---
 
-## 第五步：外部 MCP
+## 外部 MCP
 
 ```yaml
 mcp_servers:
@@ -197,13 +293,9 @@ tools:
         type: always_allow
 ```
 
-MCP 鉴权在服务商侧或你的部署环境中配置。
-
 ---
 
-## 第六步：Skills
-
-Skills 物化到沙箱工作区 `.agents/skills/`，供箱内 engine 读取。
+## Skills
 
 ```yaml
 skills:
@@ -212,11 +304,11 @@ skills:
     source: ./skills/code-review.md
 ```
 
-确保 `skills/` 随代码包或 `agent:update` 一并发布。
+随 `agent:update` 或代码包发布。
 
 ---
 
-## 第七步：工具审批
+## 工具审批
 
 ```yaml
 tools:
@@ -227,60 +319,13 @@ tools:
           type: always_ask
 ```
 
-SDK 流式事件中出现审批请求；客户端确认后继续 session。
+SDK 流式事件中出现审批请求，确认后继续。
 
 ---
 
-## 第八步：CloudBase 箱内能力
+## CloudBase 箱内能力
 
-创建 Agent 时 shell 已 export `TCB_SECRET_*` 的情况下，沙箱启动后自动初始化 **CloudBase MCP**（数据库、云函数等），yaml 中通常无需额外声明。
-
----
-
-## 第九步：箱内引擎
-
-| `engine` | 状态 |
-|----------|------|
-| `opencode` | 可用 |
-| `claude` | 尚未开放 |
-| `codebuddy` | 尚未开放 |
-
-```yaml
-runtime: harness
-engine: opencode
-```
-
----
-
-## 第十步：自定义 LLM（可选）
-
-在 `agent.yaml` 用 ModelSpec（随 `AGENT_CONFIG_B64` 下发）：
-
-```yaml
-runtime: harness
-engine: opencode
-model:
-  id: your-model-id
-  apiKey: your-api-key
-  apiBaseUrl: https://your-openai-compatible-endpoint/v1
-```
-
-`apiBaseUrl` 为 OpenAI Chat Completions 兼容根路径（通常含 `/v1`）。
-
----
-
-## 进阶
-
-### 工作区快照（COS）
-
-需单独开通 COS 并在 Runtime 环境配置相应变量。见 [harness-env.md](./harness-env.md)。
-
-### 导出配置
-
-```bash
-magent agent:export -i "$CLOUDBASE_AGENT_ID" -o ./agent.sandbox.yaml
-magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID"
-```
+创建 Agent 时已 export `TCB_SECRET_*` 时，沙箱启动后会初始化 **CloudBase MCP**（数据库、云函数等），yaml 通常无需额外声明。
 
 ---
 
@@ -289,16 +334,20 @@ magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID"
 | 现象 | 处理 |
 |------|------|
 | 首条消息超时 | 等待沙箱预热；重试 `magent run` |
-| `MISSING_CREDENTIALS` | 创建/更新 Agent 前 export `TCB_SECRET_*` |
-| 沙箱无法启动 | 检查 `TCB_API_KEY` 与 AGS 开通状态 |
-| yaml 不生效 | `magent agent:update -f ...`；容器内 `agent.yaml` 优先于环境变量 |
-| 使用混元 / DeepSeek | 托管 Agent 走 TokenHub；沙箱内 Agent 在 yaml 中为 engine 配置 ModelSpec |
+| `MISSING_CREDENTIALS` | 部署前 export `TCB_SECRET_*` |
+| 沙箱无法启动 | 检查 `TCB_SECRET_*` / `magent login`、AGS 是否开通 |
+| 模型 401 / 额度 | 控制台检查 AI 模型开关与 Token 包 |
+| 不想用 CloudBase AI 额度 | opencode：`model: zen` |
+| 第三方 LLM | 见 [选择模型](#用户故事选择模型) |
+| 起箱报 RoleArn / 工具错误 | 见 [首次起箱](#首次起箱沙箱工具与-rolearn) |
+| yaml 改了不生效 | `magent agent:update -f ...` |
 
 ---
 
 ## 相关文档
 
 - [README](../README.md)
+- [harness-opencode.md](./harness-opencode.md)
+- [harness-claude-code.md](./harness-claude-code.md)
 - [product-guide.md](./product-guide.md)
-- [harness-architecture.md](./harness-architecture.md)
-- [harness-env.md](./harness-env.md)
+- [架构参考](./harness-architecture.md)（进阶 / 运维可选）

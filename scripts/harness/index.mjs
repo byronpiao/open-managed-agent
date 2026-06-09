@@ -2,26 +2,31 @@
 /**
  * Harness 验收入口：
  *
- *   npm run harness -- local    # stub → zen 真箱 e2e → 矩阵 →（COS 硬门）
+ *   npm run harness -- local    # stub → 真箱 e2e（CloudBase AI）→ 矩阵 →（COS 硬门）
  *   npm run harness -- cloud-tcbr  # 云托管 tcbr + smoke（另跑，不进 test:full）
  *   npm run harness -- cloud-scf  # SCF + smoke（完整一条龙时与 cloud-tcbr 都跑）
  */
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { loadEnv } from "./load-env.mjs";
+import {
+  loadEnv,
+  hydrateTcbApiKeyFromCam,
+  applyHarnessLlmTier,
+  applyHarnessScenario,
+  logHarnessScenario,
+} from "./load-env.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
 
 const HELP = `Usage: npm run harness -- <local|cloud-tcbr|cloud-scf> [options]
 
-  local        stub e2e + 真 AGS（zen）+ 矩阵；HARNESS_COS_ENABLED=1 时 COS
-  cloud-tcbr   云托管 tcbr：deploy/redeploy → gateway ACP smoke（日常云上验收）
-  cloud-scf    SCF 云函数：agent:create/update → 同上 smoke（完整一条龙时必跑）
+  local        stub + 真 AGS（CloudBase AI hy3-preview，CAM 鉴权）+ 矩阵
+  cloud-tcbr   云托管 tcbr：deploy opencode **zen** → gateway smoke
+  cloud-scf    SCF：deploy **自定义 LLM**（.env.harness ③ 段 LLM_*）→ smoke
 
-  cloud-tcbr / cloud-scf 共用：
-          有 LLM_* 时先 probe；无则 zen
+  cloud-scf  deploy 前 probe LLM_*；cloud-tcbr 固定 zen（忽略 ③ 段）
           --agent-id <id>   或 HARNESS_CLOUD_AGENT_ID / HARNESS_CLOUD_SCF_AGENT_ID
           --verify-only     只 smoke
           --no-verify       只 deploy
@@ -39,23 +44,19 @@ async function assertHarnessAgsRuntimeEnvSync() {
   assertHarnessAgsRuntimeEnv();
 }
 
-/** Strip host LLM_* so sandbox uses built-in opencode zen. */
-function envForZenHarness() {
+function envForHarnessTier(tier) {
   const env = { ...process.env };
-  delete env.LLM_API_KEY;
-  delete env.LLM_MODEL;
-  delete env.OPENAI_BASE_URL;
-  delete env.ANTHROPIC_BASE_URL;
-  env.HARNESS_FORCE_ZEN = "1";
+  applyHarnessLlmTier(tier, env);
+  applyHarnessTestDefaults(env);
   return env;
 }
 
-function runNode(scriptRel, extraArgs = [], { zen = false } = {}) {
+function runNode(scriptRel, extraArgs = [], { tier } = {}) {
   const script = resolve(repoRoot, scriptRel);
   const r = spawnSync(process.execPath, [script, ...extraArgs], {
     cwd: repoRoot,
     stdio: "inherit",
-    env: zen ? envForZenHarness() : process.env,
+    env: tier ? envForHarnessTier(tier) : process.env,
   });
   if (r.status !== 0) process.exit(r.status ?? 1);
 }
@@ -66,19 +67,55 @@ function truthyCos() {
 }
 
 async function runLocal() {
+  loadEnv();
+  const scenarioMeta = applyHarnessScenario("local");
+  logHarnessScenario(scenarioMeta);
+
   console.log("=== harness local: e2e stub（网关 + 假沙箱）===");
   runNode("tests/harness/e2e.test.mjs");
 
-  loadEnv();
-  console.log("=== harness local: AGS env（CloudBase；主链 opencode zen，无需 LLM_*）===");
+  await hydrateTcbApiKeyFromCam();
+  console.log("=== harness local: AGS env（CloudBase AI hy3-preview，CAM）===");
   await assertHarnessAgsRuntimeEnvSync();
 
-  console.log("=== harness local: e2e full（真 AGS + zen 对话 / custom tool / sync）===");
-  runNode("tests/harness/e2e.test.mjs", ["--full"], { zen: true });
+  console.log("=== harness local: platform LLM probe（30s，失败不进入 300s×N 真箱）===");
+  const {
+    probeCloudBasePlatformLlm,
+    formatPlatformProbeFailureGuide,
+    isPlatformQuotaExceeded,
+  } = await import("../../packages/agent-runtime/dist/harness/llm-probe.js");
+
+  let localTier = "platform";
+  const platformProbe = await probeCloudBasePlatformLlm();
+  if (!platformProbe.ok) {
+    if (isPlatformQuotaExceeded(platformProbe)) {
+      console.warn(
+        "⚠ hy3-preview quota exhausted (HTTP 429) — local harness continues with opencode zen.\n" +
+          "  Sandbox / CAM / AGS path still runs; this run does NOT validate CloudBase AI platform LLM.\n" +
+          "  To test hy3 again: recharge quota in console, then re-run test:full.\n",
+      );
+      localTier = "zen";
+    } else {
+      console.error(formatPlatformProbeFailureGuide(platformProbe));
+      process.exit(1);
+    }
+  } else {
+    console.log(
+      `✓ platform LLM ${platformProbe.latencyMs}ms model=${platformProbe.model} reply=${platformProbe.replySnippet ?? "(empty)"}`,
+    );
+  }
+
+  applyHarnessLlmTier(localTier);
+  applyHarnessTestDefaults();
+
+  console.log(
+    `=== harness local: e2e full（真 AGS + ${localTier === "zen" ? "opencode zen" : "平台 hy3-preview"} / sync）===`,
+  );
+  runNode("tests/harness/e2e.test.mjs", ["--full"], { tier: localTier });
 
   console.log("=== harness local: matrix parity（#1–#2 TRW #8 MCP #9 CloudBase #10 Skills）===");
   await assertHarnessAgsRuntimeEnvSync();
-  runNode("tests/harness/matrix-parity.test.mjs", [], { zen: true });
+  runNode("tests/harness/matrix-parity.test.mjs", [], { tier: localTier });
 
   if (truthyCos()) {
     const { assertHarnessCosEnv } = await import(
@@ -108,6 +145,8 @@ async function main() {
     case "cloud-tcbr":
     case "cloud-scf": {
       loadEnv();
+      const scenario = cmd === "cloud-scf" ? "cloud-scf" : "cloud-tcbr";
+      logHarnessScenario(applyHarnessScenario(scenario));
       const { runCloudHarness } = await import("./cloud.mjs");
       const backend = cmd === "cloud-scf" ? "scf" : "tcbr";
       await runCloudHarness(args.slice(1), { backend });

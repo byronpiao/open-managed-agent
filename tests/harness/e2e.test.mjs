@@ -6,8 +6,32 @@
  * Loads `.env.harness` via scripts/harness/load-env.mjs
  */
 
-import { loadEnv, assertHarnessCreds } from "../../scripts/harness/load-env.mjs";
+import {
+  loadEnv,
+  assertHarnessCreds,
+  applyHarnessLlmTier,
+  applyHarnessTestDefaults,
+} from "../../scripts/harness/load-env.mjs";
 loadEnv();
+
+const FULL = process.argv.includes("--full");
+const LLM_SUITE = process.argv.includes("--llm");
+/** Claude SessionStore 外置：旁路验收，不挡主链（平台 / zen / BYOK）。 */
+const E2E_CLAUDE =
+  process.argv.includes("--claude") || process.env.HARNESS_E2E_CLAUDE === "1";
+const FORCE_ZEN = process.env.HARNESS_FORCE_ZEN === "1";
+
+const tierFromEnv = process.env.HARNESS_LLM_TIER?.trim();
+if (tierFromEnv) {
+  applyHarnessLlmTier(tierFromEnv);
+} else if (LLM_SUITE) {
+  applyHarnessLlmTier("byok");
+} else if (FULL && FORCE_ZEN) {
+  applyHarnessLlmTier("zen");
+} else if (FULL) {
+  applyHarnessLlmTier("platform");
+}
+if (FULL || LLM_SUITE) applyHarnessTestDefaults();
 
 import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
@@ -18,15 +42,15 @@ import { dirname, resolve } from "node:path";
 import { Agent } from "undici";
 import * as acp from "@agentclientprotocol/sdk";
 
-/** Real AGS prompts/SSE can exceed undici default headers timeout (Node fetch). */
-const SANDBOX_HTTP = new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 });
+const E2E_ACP_TIMEOUT_MS = Number(process.env.HARNESS_OPENCODE_ACP_TIMEOUT_MS) || 90_000;
+/** undici 须略大于箱内 opencode ACP relay 超时 */
+const SANDBOX_HTTP = new Agent({
+  headersTimeout: E2E_ACP_TIMEOUT_MS + 60_000,
+  bodyTimeout: E2E_ACP_TIMEOUT_MS + 60_000,
+});
 function sandboxFetch(url, init = {}) {
   return fetch(url, { ...init, dispatcher: SANDBOX_HTTP });
 }
-
-const FULL = process.argv.includes("--full");
-const LLM_SUITE = process.argv.includes("--llm");
-const FORCE_ZEN = process.env.HARNESS_FORCE_ZEN === "1" || (FULL && !LLM_SUITE);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SKILL_FIXTURE_PATH = resolve(repoRoot, "tests/fixtures/skills/harness-e2e-demo.md");
 const E2E_PORT = 19090;
@@ -37,7 +61,6 @@ const E2E_SYNC_SEED_SYNTHETIC_ON_EMPTY = false;
 
 const BASE_AGENT_CONFIG = {
   name: "HarnessE2E",
-  model: "zen",
   system:
     "When asked to use echo_tool, you MUST call it before answering. " +
     "Harness e2e agent.",
@@ -72,17 +95,21 @@ function hasCustomLlmInEnv() {
   );
 }
 
-/** FULL e2e: zen by default; --llm merges host LLM_* into opencode openai-compat. */
+/** FULL e2e tier: platform(hy3) | zen | byok — 见 HARNESS_LLM_TIER / harness -- local|cloud-* */
 function resolveFullAgentConfig() {
-  if (FORCE_ZEN || (!LLM_SUITE && !hasCustomLlmInEnv())) {
+  const tier = process.env.HARNESS_LLM_TIER?.trim();
+  if (tier === "zen" || FORCE_ZEN) {
     return { ...BASE_AGENT_CONFIG, model: "zen", engine: "opencode" };
+  }
+  if (tier === "platform" || (!LLM_SUITE && !hasCustomLlmInEnv())) {
+    return { ...BASE_AGENT_CONFIG, engine: "opencode" };
   }
 
   const raw = process.env.AGENT_CONFIG?.trim();
   if (!raw) {
     return {
       ...BASE_AGENT_CONFIG,
-      model: process.env.LLM_MODEL?.trim() ?? BASE_AGENT_CONFIG.model,
+      model: process.env.LLM_MODEL?.trim() ?? "mimo-v2.5-pro",
       engine: "opencode",
     };
   }
@@ -105,7 +132,7 @@ function resolveFullAgentConfig() {
     }
     return cfg;
   } catch {
-    return { ...BASE_AGENT_CONFIG, model: process.env.LLM_MODEL?.trim() ?? BASE_AGENT_CONFIG.model };
+    return { ...BASE_AGENT_CONFIG, model: process.env.LLM_MODEL?.trim() ?? "mimo-v2.5-pro" };
   }
 }
 
@@ -460,6 +487,47 @@ async function waitSandboxReady(sessionId, maxMs = 180_000) {
   throw new Error(`sandbox not ready for session ${sessionId} after ${maxMs}ms`);
 }
 
+/** Classify sandbox prompt body — avoid retrying 300s relay timeouts with 0 LLM text. */
+function classifySandboxPrompt(body) {
+  const text = extractAllSseText(body);
+  if (text.trim()) return { kind: "ok", text };
+  const relayTimeout =
+    body.includes("timeout waiting for id=") || body.includes("opencode acp timeout");
+  if (relayTimeout) {
+    return {
+      kind: "relay_timeout",
+      text: "",
+      hint: `箱内 opencode ACP relay ${E2E_ACP_TIMEOUT_MS}ms 仍无 LLM 输出；查 hy3-preview / OPENCODE_CONFIG，不是 sync 逻辑本身`,
+    };
+  }
+  if (body.includes('"stopReason"') && !text.trim()) {
+    return {
+      kind: "empty_turn",
+      text: "",
+      hint: "收到 end_turn 但无 agent_message_chunk（可能是 OMA 在 timeout 后补的 end_turn）",
+    };
+  }
+  if (body.includes('"code":-32000')) return { kind: "rpc_error", text: "" };
+  return { kind: "empty", text: "" };
+}
+
+/** Sandbox may emit -32000 timeout on one SSE frame then result.end_turn on the next. */
+function promptResponseUsable(body) {
+  if (sseShowsLlmActivity(body)) return true;
+  for (const line of body.split("\n")) {
+    let payload = line.trim();
+    if (payload.startsWith("data:")) payload = payload.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const j = JSON.parse(payload);
+      if (j.result?.stopReason) return true;
+    } catch {
+      // skip
+    }
+  }
+  return false;
+}
+
 async function promptSessionText(sessionId, text, rpcId = 100) {
   const res = await sandboxFetch(`${BASE}/acp`, {
     method: "POST",
@@ -475,7 +543,7 @@ async function promptSessionText(sessionId, text, rpcId = 100) {
     }),
   });
   const body = await res.text();
-  if (body.includes("timeout waiting for id=")) {
+  if (body.includes("timeout waiting for id=") && !promptResponseUsable(body)) {
     throw new Error(body.slice(0, 400));
   }
   return body;
@@ -513,11 +581,15 @@ async function testSyncPersistence() {
         : "Reply with exactly: OK",
       201 + attempt,
     );
-    if (first.includes('"code":-32000') || first.includes("opencode acp timeout")) {
+    const outcome = classifySandboxPrompt(first);
+    if (outcome.kind === "relay_timeout" || outcome.kind === "empty_turn") {
+      throw new Error(`sync: ${outcome.hint} — fail-fast (no 300s×4). ${first.slice(0, 280)}`);
+    }
+    if (outcome.kind === "rpc_error") {
       console.warn(`sync: prompt attempt ${attempt + 1} error: ${first.slice(0, 280)}`);
       continue;
     }
-    firstText = extractAllSseText(first);
+    firstText = outcome.text;
     if (firstText.trim().length > 0) break;
   }
   assert.ok(
@@ -656,6 +728,130 @@ async function testSyncPersistence() {
   await rpc("/acp", "session/delete", { sessionId });
 }
 
+function resolveClaudeAgentConfig() {
+  const cfg = { ...BASE_AGENT_CONFIG, engine: "claude" };
+  if (hasCustomLlmInEnv() || process.env.ANTHROPIC_BASE_URL?.trim()) {
+    cfg.model = process.env.LLM_MODEL?.trim() ?? "mimo-v2.5-pro";
+  }
+  return cfg;
+}
+
+function hasClaudeLlmForE2e() {
+  if (hasCustomLlmInEnv() && process.env.ANTHROPIC_BASE_URL?.trim()) return true;
+  return !!(
+    process.env.TCB_API_KEY?.trim() &&
+    (process.env.CLOUDBASE_ENV_ID?.trim() || process.env.TCB_ENV_ID?.trim()) &&
+    !FORCE_ZEN
+  );
+}
+
+async function testClaudeSessionPersistence() {
+  if (!hasClaudeLlmForE2e()) {
+    console.warn(
+      "⚠ claude SessionStore e2e skipped: need TCB_API_KEY (platform) or LLM_* + ANTHROPIC_BASE_URL",
+    );
+    return;
+  }
+
+  assertHarnessCreds();
+  const envId = process.env.CLOUDBASE_ENV_ID;
+  const token = `CLD${Date.now().toString(36)}`;
+
+  stopRuntime();
+  await sleep(500);
+  await startRuntime({ useCloudDb: true, agentConfig: resolveClaudeAgentConfig() });
+
+  const sessionId = crypto.randomUUID();
+  await rpc("/acp", "session/new", { sessionId, meta: { userId: "e2e-claude-sync" } });
+
+  await waitSandboxReady(sessionId);
+  await sleep(8000);
+
+  let firstText = "";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(5000);
+    const first = await promptSessionText(
+      sessionId,
+      `Remember exactly this token: ${token}. Reply with OK only.`,
+      301 + attempt,
+    );
+    if (first.includes('"code":-32000')) {
+      console.warn(`claude sync: prompt attempt ${attempt + 1}: ${first.slice(0, 280)}`);
+      continue;
+    }
+    firstText = extractAllSseText(first);
+    if (firstText.trim().length > 0) break;
+  }
+  assert.ok(
+    firstText.trim().length > 0,
+    `claude: first prompt produced no LLM text (ANTHROPIC_* / magent image): ${firstText.slice(0, 200)}`,
+  );
+
+  const { getHarnessSessionStore } = await import(
+    "../../packages/agent-runtime/dist/harness/sandbox/session-store.js"
+  );
+  const { countHarnessClaudeSessionEntries } = await import(
+    "../../packages/agent-runtime/dist/harness/claude-session-probe.js"
+  );
+
+  let row = null;
+  for (let i = 0; i < 36; i++) {
+    row = await getHarnessSessionStore(envId).get(sessionId);
+    if (row?.engineSessionId) break;
+    await sleep(500);
+  }
+  assert.ok(row?.engineSessionId, "claude: expected engineSessionId after first prompt");
+
+  let entryCount = 0;
+  for (let i = 0; i < 36; i++) {
+    entryCount = await countHarnessClaudeSessionEntries(row.engineSessionId);
+    if (entryCount > 0) break;
+    await sleep(2000);
+  }
+  assert.ok(
+    entryCount > 0,
+    `expected harness_claude_session_entries for ${row.engineSessionId} (magent needs claude-acp-harness.js)`,
+  );
+
+  stopRuntime();
+  await sleep(800);
+  await startRuntime({ useCloudDb: true, agentConfig: resolveClaudeAgentConfig() });
+
+  const loadRes = await sandboxFetch(`${BASE}/acp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 302,
+      method: "session/load",
+      params: { sessionId, replay: true },
+    }),
+  });
+  const loadText = await loadRes.text();
+  assert.ok(!loadText.includes('"code":-32000'), `claude session/load failed: ${loadText.slice(0, 400)}`);
+
+  await waitSandboxReady(sessionId);
+  await sleep(8000);
+
+  let recallText = "";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(5000);
+    const recallBody = await promptSessionText(
+      sessionId,
+      `What is the exact token I asked you to remember? Reply with ONLY that token.`,
+      303 + attempt,
+    );
+    recallText = extractAllSseText(recallBody);
+    if (recallText.includes(token) || recallBody.includes(token)) break;
+  }
+  assert.ok(
+    recallText.includes(token),
+    `claude post-reload should recall token ${token}: ${recallText.slice(0, 300)}`,
+  );
+
+  await rpc("/acp", "session/delete", { sessionId });
+}
+
 async function testSandboxPrompt() {
   assertHarnessCreds();
   stopRuntime();
@@ -689,7 +885,10 @@ async function testSandboxPrompt() {
   if (text.includes('"code":-32000') || text.includes("opencode acp timeout")) {
     throw new Error(`session/prompt sandbox failed (opencode): ${text.slice(0, 400)}`);
   }
-  assert.ok(sseShowsLlmActivity(text), `expected LLM SSE from sandbox (zen): ${text.slice(0, 400)}`);
+  assert.ok(
+    sseShowsLlmActivity(text),
+    `expected LLM SSE from sandbox (platform/zen): ${text.slice(0, 400)}`,
+  );
   await rpc("/acp", "session/delete", { sessionId });
 }
 
@@ -972,8 +1171,16 @@ async function main() {
       console.log(
         LLM_SUITE
           ? "✓ opencode sync export → CloudBase → hydrate → session/load → token recall"
-          : "✓ opencode sync export → CloudBase → hydrate → session/load replay (zen)",
+          : "✓ opencode sync export → CloudBase → hydrate → session/load replay (platform)",
       );
+      if (E2E_CLAUDE) {
+        await testClaudeSessionPersistence();
+        console.log("✓ claude SessionStore → CloudBase → runtime restart → token recall");
+      } else {
+        console.log(
+          "⊘ claude SessionStore e2e skipped (旁路；HARNESS_E2E_CLAUDE=1 或 --claude 再跑)",
+        );
+      }
       await testSandboxPrompt();
       console.log("✓ session/prompt → AGS sandbox SSE");
       await testSandboxCustomToolLoop();

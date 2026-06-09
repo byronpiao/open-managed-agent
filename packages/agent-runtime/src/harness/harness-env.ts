@@ -3,9 +3,11 @@
  * 除 HARNESS_PUBLIC_MAGENT_IMAGE 外不设兜底魔法值。
  */
 
+import { resolveAnthropicApiKeyFromEnv } from "./llm-providers.js";
+
 /** 唯一允许内置的默认：公开 CCR magent 镜像（可用 HARNESS_SANDBOX_IMAGE 覆盖）。 */
 export const HARNESS_PUBLIC_MAGENT_IMAGE =
-  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260608-1829-dadc15-magent";
+  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260609-1304-4b29ab-magent";
 
 export function requireEnv(name: string, hint?: string): string {
   const value = process.env[name]?.trim();
@@ -18,6 +20,13 @@ export function requireEnv(name: string, hint?: string): string {
 
 export function resolveHarnessSandboxImage(): string {
   return process.env.HARNESS_SANDBOX_IMAGE?.trim() || HARNESS_PUBLIC_MAGENT_IMAGE;
+}
+
+/** AGS instance auth — production uses TOKEN (sit_* via X-Access-Token); NONE is debug-only. */
+export function resolveHarnessSandboxAuthMode(): "TOKEN" | "NONE" {
+  const raw = process.env.HARNESS_SANDBOX_AUTH_MODE?.trim().toUpperCase();
+  if (raw === "NONE") return "NONE";
+  return "TOKEN";
 }
 
 /** CreateSandboxTool RoleArn — 必须显式配置，禁止写死测试 UIN。 */
@@ -38,7 +47,6 @@ export function missingHarnessCloudCreds(): string[] {
   if (!process.env.CLOUDBASE_ENV_ID?.trim() && !process.env.TCB_ENV_ID?.trim()) {
     missing.push("CLOUDBASE_ENV_ID");
   }
-  if (!process.env.TCB_API_KEY?.trim()) missing.push("TCB_API_KEY");
   if (
     !process.env.TCB_SECRET_ID?.trim() &&
     !process.env.TENCENTCLOUD_SECRETID?.trim()
@@ -81,6 +89,30 @@ export function assertHarnessLlmEnv(): void {
 /** Host has custom OpenAI-compatible provider (Mimo tp/sk, etc.). */
 export function hasHarnessCustomLlmEnv(): boolean {
   return missingHarnessLlmEnv().length === 0;
+}
+
+const ANTHROPIC_LLM_HINT = "LLM_API_KEY";
+
+/** Claude / Mimo Anthropic Messages (engine=claude). */
+export function missingHarnessAnthropicLlmEnv(): string[] {
+  const missing: string[] = [];
+  if (!resolveAnthropicApiKeyFromEnv()) missing.push(ANTHROPIC_LLM_HINT);
+  if (!process.env.LLM_MODEL?.trim()) missing.push("LLM_MODEL");
+  if (!process.env.ANTHROPIC_BASE_URL?.trim()) missing.push("ANTHROPIC_BASE_URL");
+  return missing;
+}
+
+export function hasHarnessAnthropicLlmEnv(): boolean {
+  return missingHarnessAnthropicLlmEnv().length === 0;
+}
+
+export function assertHarnessAnthropicLlmEnv(): void {
+  const missing = missingHarnessAnthropicLlmEnv();
+  if (missing.length) {
+    throw new Error(
+      `Missing Anthropic LLM env for claude harness: ${missing.join(", ")}. See .env.harness.example`,
+    );
+  }
 }
 
 /** Custom LLM suite: CloudBase + LLM_* (probe / hitl / Mimo pong). Not required for test:full. */
@@ -165,7 +197,7 @@ export function isScfServerless(): boolean {
   return false;
 }
 
-/** 真 AGS 验收前：CloudBase + TCB_REGION +（可选）COS。主链用 opencode zen，不要求 LLM_*。 */
+/** 真 AGS 验收前：CloudBase + TCB_REGION +（可选）COS。local 主链用 TCB_API_KEY → hy3-preview，不要求 LLM_*。 */
 export function assertHarnessAgsRuntimeEnv(): void {
   assertHarnessCloudCreds();
   if (!process.env.TCB_REGION?.trim()) {
