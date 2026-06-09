@@ -24,12 +24,40 @@ for await (const event of client.sessions.prompt(session.id, "Review this PR")) 
 
 ---
 
+## 选择路径
+
+| | **托管 Agent**（默认） | **沙箱内 Agent**（`runtime: harness`） |
+|---|------------------------|----------------------------------------|
+| 执行位置 | 网关 Runtime（SCF / 云托管） | **AGS 远程沙箱**内的 OpenCode / Claude Code |
+| 典型场景 | 对话、MCP、轻量工具 | 远程 bash、读写项目文件、完整编码环境 |
+| 默认模型 | CloudBase 混元 / DeepSeek 等 | CloudBase AI **`hy3-preview`**（环境 API Key） |
+| 配置要点 | `agent.yaml` 省略 `runtime` | `runtime: harness` + `engine: opencode` 或 `claude` |
+| 详细文档 | 下文 [快速开始](#快速开始) | [沙箱内 Agent](#沙箱内-agent) · [使用指南](./docs/harness-tutorial.md) |
+
+---
+
+## 凭证速查
+
+部署与对话前，在 shell 中准备（或写入你自己的密钥管理工具）：
+
+| 变量 | 用途 | 如何获取 |
+|------|------|----------|
+| `CLOUDBASE_ENV_ID` | 环境 ID | [CloudBase 控制台](https://tcb.cloud.tencent.com) |
+| `TCB_SECRET_ID` / `TCB_SECRET_KEY` | 部署 Agent、会话持久化 | CAM 密钥；`magent login` 亦可 |
+| `TCB_API_KEY` | **沙箱数据面** + **CloudBase AI**（`hy3-preview` 等） | 控制台 → 环境 → **API Key**：[创建页面](https://tcb.cloud.tencent.com/dev?envId=%3Cenv-id%3E#/env/apikey)（将 `<env-id>` 换成你的环境 ID，例如 `test-xxxx`） |
+| `CLOUDBASE_ACCESS_KEY` | `magent run` / SDK 访问 Agent 网关 | 同上 API Key 页，或与 `TCB_API_KEY` 相同 |
+
+> 托管 Agent 日常对话主要用 `CLOUDBASE_ACCESS_KEY`；**沙箱 Agent** 还需 `TCB_API_KEY` 起箱并调默认 LLM。二者常为同一把环境 API Key。
+
+---
+
 ## 快速开始
 
 ### 前置条件
 
 - Node.js ≥ 20
 - 腾讯云 CloudBase 环境（[创建环境](https://tcb.cloud.tencent.com)）
+- 已开通 **CloudBase AI** 并启用体验模型（沙箱 Agent 默认 `hy3-preview` 时需要）
 
 ### 1. 安装 `magent` CLI
 
@@ -71,6 +99,8 @@ magent env:list
 
 ### 4. 部署 Agent
 
+**托管 Agent（默认）** — 思考与工具在网关 Runtime 执行：
+
 ```bash
 # 创建并部署（内部自动调用 tcb agent create）
 magent agent:create \
@@ -78,6 +108,8 @@ magent agent:create \
   --system "You are a helpful coding assistant." \
   -e <your-env-id>      # 也可用 --env <your-env-id>
 ```
+
+**沙箱内 Agent** — 见 [沙箱内 Agent](#沙箱内-agent)（`runtime: harness`、环境 API Key；[RoleArn](#首次使用沙箱工具与-rolearn) 仅首次创 Tool 时可能需）。
 
 如果不带 `-e` 参数且未设置 `CLOUDBASE_ENV_ID`，`magent` 会自动列出可用环境并报错提示。
 
@@ -123,24 +155,49 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 
 ## 沙箱内 Agent
 
-远程 AGS 沙箱内运行 **OpenCode** 或 **Claude Code**，支持 bash、读写项目文件。
+远程 **AGS** 沙箱内运行 **OpenCode** 或 **Claude Code**，支持 bash、读写项目文件。与上文托管 Agent 共用 `magent` / SDK，通过 `runtime: harness` 切换。
 
-**模型（由简到繁）**：默认 **CloudBase AI `hy3-preview`**（`TCB_API_KEY`）→ 可选内置 **`model: zen`**（不扣 CloudBase AI 额度）→ 可选 **BYOK** 自有 LLM Key。见 [使用指南](./docs/harness-tutorial.md)。
+### 模型（由简到繁）
 
-| 项 | 说明 |
-|----|------|
-| 文档 | [使用指南](./docs/harness-tutorial.md) · [OpenCode](./docs/harness-opencode.md) · [Claude Code](./docs/harness-claude-code.md) |
-| 配置 | `runtime: harness` + `engine: opencode` 或 `claude` |
-| 凭证 | `TCB_API_KEY`（沙箱 + 默认 LLM）· `TCB_SECRET_*`（会话）· `CLOUDBASE_ACCESS_KEY`（`magent run`） |
-| 参考 | [架构](./docs/harness-architecture.md) · [环境变量](./docs/harness-env.md)（研发验收） |
+| 阶段 | 配置 | 说明 |
+|------|------|------|
+| 默认 | 省略 `model` 或 `hy3-preview` | [CloudBase AI](https://docs.cloudbase.net/ai/model/model-access)，环境 **API Key**；体验额度用完后可在控制台 [购买 Token](https://docs.cloudbase.net/ai/model/openai-sdk-access) |
+| 可选 | `model: zen` | 箱内 OpenCode 内置，**不扣** CloudBase AI 额度（仅 opencode） |
+| 可选 | 部署前 `LLM_*` 或 yaml ModelSpec | 自有 NVIDIA、Moonshot 等 OpenAI/Anthropic 兼容厂商 Key（与 CloudBase Token 二选一） |
+
+完整步骤：[使用指南](./docs/harness-tutorial.md) · [OpenCode](./docs/harness-opencode.md) · [Claude Code](./docs/harness-claude-code.md)
+
+### 最小部署
 
 ```bash
+export CLOUDBASE_ENV_ID=<your-env-id>
+export TCB_SECRET_ID=... TCB_SECRET_KEY=...
+export TCB_API_KEY=...          # https://tcb.cloud.tencent.com/dev?envId=<your-env-id>#/env/apikey
+export CLOUDBASE_ACCESS_KEY=... # 可与 TCB_API_KEY 相同
+
 cp docs/examples/agent.sandbox.opencode.min.yaml ./agent.sandbox.yaml
-# 或 Claude Code：cp docs/examples/agent.sandbox.claude.min.yaml ./agent.sandbox.yaml
+cd packages/agent-runtime && npm run build && cd ../..
 
 magent agent:create --name my-sandbox --runtime harness --engine opencode \
   --file ./agent.sandbox.yaml --code ./packages/agent-runtime -e "$CLOUDBASE_ENV_ID"
 ```
+
+`engine: claude` 时改用 [agent.sandbox.claude.min.yaml](./docs/examples/agent.sandbox.claude.min.yaml)，见 [harness-claude-code.md](./docs/harness-claude-code.md)。
+
+### 首次使用：沙箱工具与 RoleArn
+
+每个 CloudBase 环境需有 **AGS 沙箱工具**（定义沙箱镜像与资源）。首次在本环境部署沙箱 Agent 时，Runtime 会尝试自动注册；若环境里还没有工具，需提供一个 **CAM 角色 ARN**（`HARNESS_TOOL_ROLE_ARN`），与控制台或 `tcb sandbox tool create --role-arn` 填的是同一类配置。
+
+| 你的情况 | 要做什么 |
+|----------|----------|
+| 控制台 / `tcb sandbox tool list` 里已有沙箱工具 | 直接部署，**不用**配 RoleArn |
+| 第一次在本环境用沙箱 Agent，且希望自动创建工具 | 部署前 `export HARNESS_TOOL_ROLE_ARN=...`（见 [使用指南](./docs/harness-tutorial.md#首次起箱沙箱工具与-rolearn)） |
+
+日常对话、换模型、更新 `agent.yaml` **都不需要**再碰 RoleArn。
+
+### 更多能力
+
+自定义模型、自有镜像、COS 工作区持久化等，见 [沙箱内 Agent 使用指南](./docs/harness-tutorial.md) 的 **进阶** 一节。
 
 ---
 

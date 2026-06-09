@@ -137,13 +137,36 @@ export function engineToDataPlaneSlug(engine: HarnessEngine): DataPlaneEngineSlu
   }
 }
 
-/** Env slug for AGS tool names (`oma-harness-{slug}-{no-cos|with-cos}`). */
+/** Env slug for AGS sandbox tool names (`oma-harness-{slug}`). */
 export function harnessEnvSlug(envId: string, maxLen = 40): string {
   return envId.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, maxLen) || "default";
 }
 
+function truthyHarnessEnvFlag(name: string): boolean {
+  const v = process.env[name]?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+/**
+ * E2e only: `-no-cos` / `-with-cos` suffixes for parallel tools in one env (`.env.harness`).
+ * Production deploy must leave `HARNESS_TOOL_COS_NAME_SUFFIX` unset.
+ */
+export function harnessToolCosNameSuffixEnabled(): boolean {
+  return truthyHarnessEnvFlag("HARNESS_TOOL_COS_NAME_SUFFIX");
+}
+
+/** Resolve auto-created AGS tool name for env (COS affects mounts, not name, unless e2e suffix mode). */
+export function resolveHarnessToolName(envId: string, cosEnabled: boolean): string {
+  const suffixMode = harnessToolCosNameSuffixEnabled();
+  const maxLen = suffixMode && cosEnabled ? 38 : 40;
+  const slug = harnessEnvSlug(envId, maxLen);
+  const base = `oma-harness-${slug}`;
+  if (!suffixMode) return base;
+  return cosEnabled ? `${base}-with-cos` : `${base}-no-cos`;
+}
+
 export function harnessToolNameForEnv(envId: string): string {
-  return `oma-harness-${harnessEnvSlug(envId)}-no-cos`;
+  return resolveHarnessToolName(envId, false);
 }
 
 /** AGS StartSandboxInstance CustomConfiguration.Env entries (F4 / D1). */

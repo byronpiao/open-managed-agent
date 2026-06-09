@@ -5,7 +5,7 @@
 
 import {
   buildHarnessInstanceEnv,
-  harnessToolNameForEnv,
+  resolveHarnessToolName,
   type AgentConfig,
   type HarnessEnvVar,
   type HarnessEngine,
@@ -23,7 +23,6 @@ import {
   buildCosMountOptions,
   buildCosStorageMounts,
   ensureCosSubPath,
-  harnessCosToolNameForEnv,
   mergeCosInstanceEnv,
   resolveHarnessCosConfig,
   type HarnessCosConfig,
@@ -312,7 +311,7 @@ async function ensureHarnessTool(
     return { toolId: cred.harnessToolId, justCreated: false };
   }
 
-  const toolName = cos ? harnessCosToolNameForEnv(envId) : harnessToolNameForEnv(envId);
+  const toolName = resolveHarnessToolName(envId, Boolean(cos));
   const storageMounts = cos ? buildCosStorageMounts(cos) : undefined;
   const existing = await findToolByName(toolName, cred, envId);
   if (existing) {

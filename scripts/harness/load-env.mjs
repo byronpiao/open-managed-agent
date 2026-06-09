@@ -92,6 +92,11 @@ export function loadEnv() {
     if (anthropicKey) process.env.LLM_API_KEY = anthropicKey;
   }
   clearShellLeakedHarnessPins();
+  const envMap = readHarnessEnvMap();
+  // E2e: parallel no-cos / with-cos tools unless explicitly disabled in `.env.harness`.
+  if (!envMap.has("HARNESS_TOOL_COS_NAME_SUFFIX")) {
+    process.env.HARNESS_TOOL_COS_NAME_SUFFIX = "1";
+  }
   const pinnedTool = pinnedHarnessToolId();
   if (pinnedTool) process.env.HARNESS_TOOL_ID = pinnedTool;
 }
@@ -140,7 +145,7 @@ if (isCli) {
         console.log(`  COS=${cosMissing.length ? `missing ${cosMissing.join(",")}` : "ok"}`);
       }
       console.log(
-        `  HARNESS_TOOL_ID=${process.env.HARNESS_TOOL_ID ?? "(unset — auto oma-harness-{env}-no-cos|with-cos)"}`,
+        `  HARNESS_TOOL_ID=${process.env.HARNESS_TOOL_ID ?? "(unset — auto oma-harness-{env}; e2e suffix if HARNESS_TOOL_COS_NAME_SUFFIX=1)"}`,
       );
       console.log(
         `  HARNESS_TOOL_ROLE_ARN=${process.env.HARNESS_TOOL_ROLE_ARN ? "(set)" : "(unset — required when auto-creating AGS tools)"}`,

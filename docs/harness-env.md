@@ -42,7 +42,7 @@ Harness 运行时（`resolveCamControlPlaneCredentials`）：SCF 内优先 `TENC
 
 `agent:update`（SCF）会**整表替换**函数 env，须与 `agent:create` 共用同一套 `buildScfDeployEnvMap`（含 `TCB_REGION`、`HARNESS_TOOL_ROLE_ARN`、COS 段等）。**`agent:update` 不重传 SCF 代码包** — 坏包须删函数重建或复用 ⑤ pin agent。
 
-**`HARNESS_TOOL_ID`**：仅写在 `.env.harness`；`load-env.mjs` / `lib/harness-env-file.mjs` 会忽略 shell `export` 泄漏。未 pin 时 orchestrator 自动 `ensureHarnessTool`；镜像推送后用 `scripts/harness/sync-tool.mjs`（按 `oma-harness-{env}-*` 名解析 tool）。
+**`HARNESS_TOOL_ID`**：仅写在 `.env.harness`；`load-env.mjs` / `lib/harness-env-file.mjs` 会忽略 shell `export` 泄漏。未 pin 时 orchestrator 自动 `ensureHarnessTool`；镜像推送后用 `scripts/harness/sync-tool.mjs`（按 `oma-harness-{env}` 名解析 tool）。
 
 **镜像 tag 三处对齐**：`HARNESS_PUBLIC_MAGENT_IMAGE`（源码常量）= `.env.harness` `HARNESS_SANDBOX_IMAGE` = AGS tool `Image`。`./scripts/harness/build-push-magent-public.sh` 一次更新前两处并 `sync-tool`；`load-env.mjs --check` 校验。
 
@@ -58,7 +58,7 @@ Harness 运行时（`resolveCamControlPlaneCredentials`）：SCF 内优先 `TENC
 | ⑤ | `HARNESS_CLOUD_AGENT_ID` / `HARNESS_CLOUD_SCF_AGENT_ID` |
 | ⑥ | `HARNESS_COS_*`（工作区跨沙箱持久化，见下） |
 
-Tool 名：`oma-harness-{env}-no-cos`；`HARNESS_COS_ENABLED=1` 时用 `oma-harness-{env}-with-cos`（独立 tool + `StorageMounts`）。
+Tool 名（对客 / 生产）：`oma-harness-{env}`（COS 只影响 `StorageMounts`，不在名字里体现）。研发验收同一环境并行 no-cos / with-cos 时 `.env.harness` 设 `HARNESS_TOOL_COS_NAME_SUFFIX=1` → `oma-harness-{env}-no-cos` / `-with-cos`。
 
 ### ⑥ COS — 工作区 vs 对话
 

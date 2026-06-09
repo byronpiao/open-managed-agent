@@ -89,11 +89,29 @@ test("engineToDataPlaneSlug maps claude → claudecode", () => {
   assert.equal(engineToDataPlaneSlug("opencode"), "opencode");
 });
 
-test("harnessToolNameForEnv uses oma-harness-…-no-cos suffix", () => {
+test("harnessToolNameForEnv uses oma-harness-{env} without cos suffix by default", () => {
+  const prev = process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+  delete process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+  assert.equal(
+    harnessToolNameForEnv("test-6g2rfs50c69b7fb8"),
+    "oma-harness-test-6g2rfs50c69b7fb8",
+  );
+  if (prev) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prev;
+});
+
+test("resolveHarnessToolName uses -no-cos|-with-cos when HARNESS_TOOL_COS_NAME_SUFFIX=1", () => {
+  const prev = process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+  process.env.HARNESS_TOOL_COS_NAME_SUFFIX = "1";
   assert.equal(
     harnessToolNameForEnv("test-6g2rfs50c69b7fb8"),
     "oma-harness-test-6g2rfs50c69b7fb8-no-cos",
   );
+  assert.equal(
+    harnessCosToolNameForEnv("test-6g2rfs50c69b7fb8"),
+    "oma-harness-test-6g2rfs50c69b7fb8-with-cos",
+  );
+  if (prev) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prev;
+  else delete process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
 });
 
 test("buildManagedAgentClientMcpUrl embeds acpSessionId query param", () => {
@@ -743,13 +761,6 @@ test("persistOpencodeSyncForSession marks syncExportFailedAt after retries", asy
   else process.env.CLOUDBASE_ENV_ID = prevEnv;
   if (prevOak === undefined) delete process.env.OAK_USE_MEMORY_STORE;
   else process.env.OAK_USE_MEMORY_STORE = prevOak;
-});
-
-test("harnessCosToolNameForEnv uses oma-harness-…-with-cos suffix", () => {
-  assert.equal(
-    harnessCosToolNameForEnv("test-6g2rfs50c69b7fb8"),
-    "oma-harness-test-6g2rfs50c69b7fb8-with-cos",
-  );
 });
 
 test("resolveHarnessCosConfig returns null when disabled", () => {
