@@ -32,7 +32,7 @@ node scripts/harness/load-env.mjs --check
 **仅更新 TRW、OMA 仍用 main：**
 
 1. TRW 合入并 `pnpm build:prod` + 打 magent 镜像  
-2. `cd open-managed-agent && git checkout main`  
+2. `cd open-managed-agent && git checkout master`  
 3. `./scripts/harness/build-push-magent-public.sh`  
 4. `npm run test:delivery`
 
