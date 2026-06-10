@@ -8,17 +8,19 @@
 | 适合 | 轻量对话、MCP | bash、改文件、完整编码环境 |
 | 配置 | 省略 `runtime` | `runtime: harness` + `engine: opencode` 或 `claude` |
 
-**按引擎阅读：** [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md)
+**选型：** [Harness 用户故事](./harness-user-story.md)（Harness 运行时 vs MA HTTP 两条路径）  
+**按引擎：** [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md)  
+**按 MA HTTP 协议：** [Managed Agents 使用指南](./managed-agents-guide.md)
 
 ---
 
 ## 开始之前
 
-1. Node ≥ 20，`magent login`（推荐，省填 CAM）。
+1. Node ≥ 20；`magent login` → `tcb env use <envId>`（与全局 `tcb` 共用 `~/.config/.cloudbase/`）。
 2. 环境已开通 **AGS 沙箱**、**CloudBase AI**（默认模型 `hy3-preview`）。
-3. **不必**在控制台创建 API Key — CAM / `magent login` 自动鉴权，见 [凭证说明](./harness-credentials.md)。
+3. **不必**在控制台创建 API Key，也不必先 export 四列 CloudBase 变量 — 见 [凭证说明](./harness-credentials.md)。
 
-部署使用 **`agent.yaml` + `magent`**。凭证分 **必选 / 可选** 见下表与 [harness-credentials.md](./harness-credentials.md)。
+部署使用 **`agent.yaml` + `magent`**。凭证默认走 CLI，见 [harness-credentials.md](./harness-credentials.md)；CI / 手填见 [harness-env — Advanced settings](./harness-env.md#advanced-settings)。
 
 ---
 
@@ -26,24 +28,17 @@
 
 目标：用 **CloudBase AI 默认模型** 跑通一条命令，**无需**第三方 LLM Key，**无需** COS。
 
-### 1. 准备凭证（必选四样）
+### 1. 登录并选环境
 
 ```bash
-magent login   # 推荐：浏览器授权，省填 SecretId/Key
-export CLOUDBASE_ENV_ID=your-env-id
-export TCB_REGION=ap-shanghai
-# 未 login 时手填 CAM（与控制台 API 密钥同源）：
-# export TCB_SECRET_ID=your-secret-id
-# export TCB_SECRET_KEY=your-secret-key
+magent login
+tcb env use your-env-id
 ```
 
-| 必填 / 可选 | 变量 | 作用 |
-|-------------|------|------|
-| **必填** | `CLOUDBASE_ENV_ID`、`TCB_REGION` | 环境 |
-| **必填** | `TCB_SECRET_ID`、`TCB_SECRET_KEY` | 部署、起箱、CloudBase AI（**`magent login` 可代替手填**） |
-| 可选 | `CLOUDBASE_AGENT_ID` | 部署后写入，方便 `magent run` |
+不必手填 `TCB_SECRET_*`、`CLOUDBASE_ENV_ID`、`TCB_REGION`；`magent agent:create` 部署时会从 CLI 解析并写入云上函数 env。  
+CI 或无 tcb 交互机器见 [Advanced settings](./harness-env.md#advanced-settings)。
 
-> 不必去控制台单独创建 **API Key**；Runtime 会用 CAM 自动换网关令牌。变量说明见 [harness-credentials.md](./harness-credentials.md)。
+> 不必去控制台单独创建 **API Key**；Runtime 会用 CAM 自动换网关令牌。
 
 ### 2. 编写 `agent.yaml`
 
@@ -72,8 +67,7 @@ magent agent:create \
   --runtime harness \
   --engine opencode \
   --file ./agent.sandbox.yaml \
-  --code ./packages/agent-runtime \
-  -e "$CLOUDBASE_ENV_ID"
+  --code ./packages/agent-runtime
 ```
 
 - 默认云函数，约 1–2 分钟就绪（`magent agent:get` 显示 Ready 后再 `run`）；`--name` 宜短（过长可能 alias 失败）。生产推荐 `--type tcbr`（见 [product-guide](./product-guide.md)）。
@@ -81,13 +75,13 @@ magent agent:create \
 
 ```bash
 export CLOUDBASE_AGENT_ID=agent-my-sandbox-agent-xxxxxx
-magent agent:get -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"
+magent agent:get -i "$CLOUDBASE_AGENT_ID"
 ```
 
 ### 4. 对话
 
 ```bash
-magent run -a "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID" \
+magent run -a "$CLOUDBASE_AGENT_ID" \
   -m "在沙箱里执行 uname -a，把输出原样返回。"
 ```
 
@@ -125,7 +119,7 @@ for await (const event of client.sessions.prompt(session.id, "列出当前工作
 改完后：
 
 ```bash
-magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"
+magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID"
 ```
 
 **OpenCode — 第三方 OpenAI 兼容（如 NVIDIA）：**
@@ -227,7 +221,7 @@ export HARNESS_COS_MOUNT_DIR=/mnt/workspace
 ```bash
 magent agent:export -i "$CLOUDBASE_AGENT_ID" -o ./agent.sandbox.yaml
 # 编辑后
-magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"
+magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID"
 ```
 
 ---
@@ -325,7 +319,7 @@ SDK 流式事件中出现审批请求，确认后继续。
 
 ## CloudBase 箱内能力
 
-创建 Agent 时已 export `TCB_SECRET_*` 时，沙箱启动后会初始化 **CloudBase MCP**（数据库、云函数等），yaml 通常无需额外声明。
+已 `magent login`（或部署时带有效 CAM）时，沙箱启动后会初始化 **CloudBase MCP**（数据库、云函数等），yaml 通常无需额外声明。
 
 ---
 
@@ -334,8 +328,8 @@ SDK 流式事件中出现审批请求，确认后继续。
 | 现象 | 处理 |
 |------|------|
 | 首条消息超时 | 等待沙箱预热；重试 `magent run` |
-| `MISSING_CREDENTIALS` | 部署前 export `TCB_SECRET_*` |
-| 沙箱无法启动 | 检查 `TCB_SECRET_*` / `magent login`、AGS 是否开通 |
+| `MISSING_CREDENTIALS` | `magent login`；CI 见 [Advanced settings](./harness-env.md#advanced-settings) |
+| 沙箱无法启动 | `magent login` + `tcb env use`、AGS 是否开通、RoleArn（见 [首次起箱](#首次起箱沙箱工具与-rolearn)） |
 | 模型 401 / 额度 | 控制台检查 AI 模型开关与 Token 包 |
 | 不想用 CloudBase AI 额度 | opencode：`model: zen` |
 | 第三方 LLM | 见 [选择模型](#用户故事选择模型) |
@@ -349,5 +343,6 @@ SDK 流式事件中出现审批请求，确认后继续。
 - [README](../README.md)
 - [harness-opencode.md](./harness-opencode.md)
 - [harness-claude-code.md](./harness-claude-code.md)
+- [harness-env.md — Advanced settings](./harness-env.md#advanced-settings)（CI / 手填 CloudBase 变量）
 - [product-guide.md](./product-guide.md)
 - [架构参考](./harness-architecture.md)（进阶 / 运维可选）

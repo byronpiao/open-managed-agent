@@ -1,36 +1,56 @@
-/**
- * @deprecated Environment management is handled via `magent` CLI, not the SDK.
- * The runtime does not implement REST endpoints for /environments.
- */
 import type {
   Environment,
   CreateEnvironmentParams,
   ListResponse,
   ManagedAgentsConfig,
 } from "./types.js";
+import { ManagedAgentsClient } from "./managed-agents-client.js";
 
-const ERR = "Not supported: use `magent env:*` CLI commands instead.";
+function toEnvironment(record: {
+  id: string;
+  name: string;
+  config: Record<string, unknown>;
+  createdAt: string;
+}): Environment {
+  const config = record.config as unknown as Environment["config"];
+  return {
+    id: record.id,
+    object: "environment",
+    name: record.name,
+    config: config?.type ? config : { type: "cloud" },
+    created_at: Math.floor(Date.parse(record.createdAt) / 1000) || Math.floor(Date.now() / 1000),
+  };
+}
 
 export class EnvironmentsResource {
-  constructor(_config: ManagedAgentsConfig) {}
+  private client: ManagedAgentsClient;
 
-  /** @deprecated Use `magent env:create` */
-  async create(_params: CreateEnvironmentParams): Promise<Environment> {
-    throw new Error(`environments.create() — ${ERR}`);
+  constructor(config: ManagedAgentsConfig) {
+    this.client = new ManagedAgentsClient(config);
   }
 
-  /** @deprecated Use CloudBase console or tcb CLI */
-  async retrieve(_envId: string): Promise<Environment> {
-    throw new Error(`environments.retrieve() — ${ERR}`);
+  async create(params: CreateEnvironmentParams): Promise<Environment> {
+    const record = await this.client.createEnvironment({
+      name: params.name,
+      config: params.config as Record<string, unknown> | undefined,
+    });
+    return toEnvironment(record);
   }
 
-  /** @deprecated Use `magent env:list` */
+  async retrieve(envId: string): Promise<Environment> {
+    return toEnvironment(await this.client.getEnvironment(envId));
+  }
+
   async list(): Promise<ListResponse<Environment>> {
-    throw new Error(`environments.list() — ${ERR}`);
+    const environments = await this.client.listEnvironments();
+    return {
+      object: "list",
+      has_more: false,
+      data: environments.map(toEnvironment),
+    };
   }
 
-  /** @deprecated Use CloudBase console or tcb CLI */
-  async delete(_envId: string): Promise<{ id: string; deleted: boolean }> {
-    throw new Error(`environments.delete() — ${ERR}`);
+  async delete(envId: string): Promise<{ id: string; deleted: boolean }> {
+    throw new Error("environments.delete() is not supported; use archive via CMA HTTP");
   }
 }

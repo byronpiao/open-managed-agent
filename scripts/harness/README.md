@@ -7,10 +7,12 @@
 | 场景 | 命令 | COS tool |
 |------|------|----------|
 | 对客冒烟 | `npm run harness:quickstart` | no-cos |
-| 合入 / 日常 | `npm run test:full` | ⑥ 开 → with-cos |
-| 云上 tcbr | `npm run harness -- cloud-tcbr` | **strip** no-cos |
-| 云上 SCF | `npm run harness -- cloud-scf` | **strip** no-cos |
-| **交付** | `npm run test:delivery` | 每步自动 |
+| **合入 / 日常** | `npm run test:full` | ⑥ 开 → with-cos |
+| **云上双后端** | `npm run harness:cloud` | **strip** no-cos |
+| 云上 tcbr（单跑） | `npm run harness:cloud-tcbr` | **strip** no-cos |
+| 云上 SCF（单跑） | `npm run harness:cloud-scf` | **strip** no-cos |
+| **MA HTTP 协议** | `npm run ma-protocol` | — |
+| **交付一条龙** | `npm run test:delivery` | quickstart → full → cloud |
 
 ```bash
 cp .env.harness.example .env.harness
@@ -33,8 +35,9 @@ node scripts/harness/load-env.mjs --check
 
 | 脚本 | 用途 |
 |------|------|
-| `index.mjs` | 入口：`local` / `cloud-tcbr` / `cloud-scf` |
-| `delivery.mjs` | 交付一条龙 |
+| `index.mjs` | 入口：`local` / `cloud`（并行）/ `cloud-tcbr` / `cloud-scf` |
+| `managed-agents-protocol.mjs` | MA HTTP 云上验收（`ma-protocol`） |
+| `delivery.mjs` | 交付一条龙（quickstart + test:full + harness:cloud） |
 | `quickstart.mjs` | tutorial 冒烟 |
 | `scenarios/README.md` | agent.yaml × env × tool |
 | `cloud.mjs` | 云上 deploy + gateway ACP smoke |

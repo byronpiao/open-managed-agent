@@ -104,12 +104,19 @@ export function harnessLog(scope: Record<string, unknown>): HarnessLogHandle {
       ...scope,
     }),
   );
+  let sealed = false;
+
+  const apply = (fields: Record<string, unknown>) => {
+    if (sealed) return;
+    wl.set(sanitizeHarnessLogFields(fields));
+  };
+
   return {
     set(fields) {
-      wl.set(sanitizeHarnessLogFields(fields));
+      apply(fields);
     },
     phase(name, fields) {
-      wl.set(sanitizeHarnessLogFields({ phase: name, ...fields }));
+      apply({ phase: name, ...fields });
       if (isHarnessLogDebug()) {
         log.debug(
           sanitizeHarnessLogFields({
@@ -130,14 +137,17 @@ export function harnessLog(scope: Record<string, unknown>): HarnessLogHandle {
         ...scope,
         ...fields,
       });
-      wl.set(payload);
+      apply(payload);
       log.info(payload);
     },
     error(err, fields) {
+      if (sealed) return;
       const error = err instanceof Error ? err : new Error(String(err));
       wl.error(error, sanitizeHarnessLogFields(fields ?? {}));
     },
     emit(extra) {
+      if (sealed) return;
+      sealed = true;
       wl.emit(sanitizeHarnessLogFields(extra ?? {}));
     },
   };

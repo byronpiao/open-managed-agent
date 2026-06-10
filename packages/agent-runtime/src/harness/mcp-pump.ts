@@ -46,12 +46,12 @@ export function startSandboxMcpPump(args: {
   const onParentAbort = () => abort.abort();
   args.signal?.addEventListener("abort", onParentAbort);
 
-  const wl = harnessLog({
+  const pumpLog = harnessLog({
     lane: "mcp",
     operation: "mcp.pump",
     acpSessionId: args.acpSessionId,
   });
-  wl.phase("mcp.pump.start");
+  pumpLog.milestone("mcp.pump.start");
 
   let stopped = false;
   const loop = async () => {
@@ -86,7 +86,13 @@ export function startSandboxMcpPump(args: {
           continue;
         }
 
-        wl.set({ toolName: pending.name, callId: pending.callId });
+        const callLog = harnessLog({
+          lane: "mcp",
+          operation: "mcp.call",
+          acpSessionId: args.acpSessionId,
+          toolName: pending.name,
+          callId: pending.callId,
+        });
         const startedAt = Date.now();
         let result: { content: unknown; isError?: boolean };
         try {
@@ -95,10 +101,10 @@ export function startSandboxMcpPump(args: {
             toolName: pending.name,
             input: pending.arguments ?? {},
           });
-          wl.emit({ status: "ok", durationMs: Date.now() - startedAt });
+          callLog.emit({ status: "ok", durationMs: Date.now() - startedAt });
         } catch (err) {
-          wl.error(err);
-          wl.emit({ status: "error", durationMs: Date.now() - startedAt });
+          callLog.error(err);
+          callLog.emit({ status: "error", durationMs: Date.now() - startedAt });
           result = {
             content: err instanceof Error ? err.message : String(err),
             isError: true,
@@ -126,7 +132,7 @@ export function startSandboxMcpPump(args: {
         await sleep(POLL_INTERVAL_MS, abort.signal);
       }
     }
-    wl.phase("mcp.pump.stop");
+    pumpLog.emit({ status: "stopped" });
   };
 
   void loop();

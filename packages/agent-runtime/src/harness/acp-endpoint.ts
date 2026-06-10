@@ -90,7 +90,7 @@ function handleInitialize(params: Record<string, unknown>, config: AgentConfig) 
   };
 }
 
-async function ensureSandboxForSession(
+export async function ensureSandboxForSession(
   config: AgentConfig,
   acpSessionId: string,
 ): Promise<{
@@ -132,7 +132,7 @@ async function ensureSandboxForSession(
   return { handle, record, syncHydrated };
 }
 
-async function forwardAcpToSandbox(args: {
+export async function forwardAcpToSandbox(args: {
   handle: HarnessSandboxHandle;
   config: AgentConfig;
   method: string;
@@ -225,7 +225,7 @@ async function drainAcpResponseBody(
 }
 
 /** First prompt must create engine-side session in sandbox (gateway UUID ≠ engine session). */
-async function ensureEngineSessionOnSandbox(
+export async function ensureEngineSessionOnSandbox(
   config: AgentConfig,
   acpSessionId: string,
   handle: HarnessSandboxHandle,
@@ -715,6 +715,13 @@ async function handleSessionCancel(
       // best-effort
     }
   }
+}
+
+export async function deleteHarnessAcpSession(
+  params: Record<string, unknown>,
+  config: AgentConfig,
+) {
+  return handleSessionDelete(params, config);
 }
 
 async function handleSessionDelete(params: Record<string, unknown>, config: AgentConfig) {

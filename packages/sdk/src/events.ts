@@ -1,86 +1,49 @@
-import type {
-  AgentEvent,
-  SendEventsParams,
-  ManagedAgentsConfig,
-} from "./types.js";
+import type { AgentEvent, SendEventsParams, ManagedAgentsConfig } from "./types.js";
+import {
+  ManagedAgentsClient,
+  type ManagedAgentsSessionEventRecord,
+} from "./managed-agents-client.js";
+
+function outboundToAgentEvent(record: ManagedAgentsSessionEventRecord): AgentEvent | null {
+  const ev = record.event;
+  if (!ev?.type) return null;
+  const session_id = ev.session_id ?? record.sessionId;
+  return { ...ev, session_id } as AgentEvent;
+}
 
 export class EventStream implements AsyncIterable<AgentEvent> {
+  private client: ManagedAgentsClient;
   private sessionId: string;
-  private config: ManagedAgentsConfig;
-  private controller: AbortController;
 
   constructor(sessionId: string, config: ManagedAgentsConfig) {
     this.sessionId = sessionId;
-    this.config = config;
-    this.controller = new AbortController();
-  }
-
-  private get headers(): Record<string, string> {
-    const h: Record<string, string> = { Accept: "text/event-stream" };
-    if (this.config.accessKey) h["Authorization"] = `Bearer ${this.config.accessKey}`;
-    if (this.config.envId) h["X-CloudBase-Env-Id"] = this.config.envId;
-    return h;
+    this.client = new ManagedAgentsClient(config);
   }
 
   async *[Symbol.asyncIterator](): AsyncGenerator<AgentEvent> {
-    const res = await fetch(
-      `${this.config.baseURL}/sessions/${this.sessionId}/events/stream`,
-      { headers: this.headers, signal: this.controller.signal }
-    );
-    if (!res.ok || !res.body) {
-      throw new Error(`Failed to connect to event stream: ${res.status}`);
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6).trim();
-            if (data === "[DONE]") return;
-            try {
-              const event = JSON.parse(data) as AgentEvent;
-              yield event;
-              if (
-                event.type === "session.status_idle" ||
-                event.type === "session.status_terminated"
-              ) {
-                return;
-              }
-            } catch {
-              // ignore parse errors on partial chunks
-            }
-          }
-        }
+    for await (const record of this.client.streamSessionEvents(this.sessionId)) {
+      const event = outboundToAgentEvent(record);
+      if (!event) continue;
+      yield event;
+      if (
+        event.type === "session.status_idle" ||
+        event.type === "session.status_terminated"
+      ) {
+        return;
       }
-    } finally {
-      reader.releaseLock();
     }
   }
 
   abort(): void {
-    this.controller.abort();
+    // stream ends when the async iterator is discarded
   }
 }
 
 export class EventsResource {
-  constructor(private config: ManagedAgentsConfig) {}
+  private config: ManagedAgentsConfig;
 
-  private get headers(): Record<string, string> {
-    const h: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.config.accessKey) h["Authorization"] = `Bearer ${this.config.accessKey}`;
-    if (this.config.envId) h["X-CloudBase-Env-Id"] = this.config.envId;
-    return h;
+  constructor(config: ManagedAgentsConfig) {
+    this.config = config;
   }
 
   stream(sessionId: string): EventStream {
@@ -88,15 +51,15 @@ export class EventsResource {
   }
 
   async send(sessionId: string, params: SendEventsParams): Promise<{ ok: boolean }> {
-    const res = await fetch(
-      `${this.config.baseURL}/sessions/${sessionId}/events`,
-      {
-        method: "POST",
-        headers: this.headers,
-        body: JSON.stringify(params),
-      }
-    );
-    if (!res.ok) throw new Error(`Failed to send events: ${res.status} ${await res.text()}`);
-    return res.json() as Promise<{ ok: boolean }>;
+    const client = new ManagedAgentsClient(this.config);
+    for (const event of params.events) {
+      await client.sendSessionEvent(sessionId, {
+        ...event,
+        commandId: crypto.randomUUID(),
+        requestId: crypto.randomUUID(),
+        runId: crypto.randomUUID(),
+      } as Record<string, unknown>);
+    }
+    return { ok: true };
   }
 }

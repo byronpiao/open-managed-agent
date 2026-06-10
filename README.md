@@ -32,7 +32,7 @@ for await (const event of client.sessions.prompt(session.id, "Review this PR")) 
 | 典型场景 | 对话、MCP、轻量工具 | 远程 bash、读写项目文件、完整编码环境 |
 | 默认模型 | CloudBase 混元 / DeepSeek 等 | CloudBase AI **`hy3-preview`**（环境 API Key） |
 | 配置要点 | `agent.yaml` 省略 `runtime` | `runtime: harness` + `engine: opencode` 或 `claude` |
-| 详细文档 | 下文 [快速开始](#快速开始) | [沙箱内 Agent](#沙箱内-agent) · [使用指南](./docs/harness-tutorial.md) |
+| 详细文档 | 下文 [快速开始](#快速开始) | [用户故事](./docs/harness-user-story.md) · [使用指南](./docs/harness-tutorial.md) |
 
 ---
 
@@ -40,11 +40,9 @@ for await (const event of client.sessions.prompt(session.id, "Review this PR")) 
 
 详见 [docs/harness-credentials.md](./docs/harness-credentials.md)。
 
-| 必填 / 可选 | 变量 | 用途 |
-|-------------|------|------|
-| **必填** | `CLOUDBASE_ENV_ID`、`TCB_REGION` | 环境 |
-| **必填** | `TCB_SECRET_ID`、`TCB_SECRET_KEY` | 部署、起箱、CloudBase AI；`magent login` 可代替手填 |
+| 快速开始 | `magent login` + `tcb env use <envId>` | 代替手填下面四列 |
 | 可选 | `CLOUDBASE_AGENT_ID` | 部署后的 Agent ID |
+| Advanced | `CLOUDBASE_ENV_ID`、`TCB_REGION`、`TCB_SECRET_*` | CI / 手填，见 [harness-env#advanced-settings](./docs/harness-env.md#advanced-settings) |
 
 网关鉴权由 CAM **自动换取**，无需单独配置 API Key。
 
@@ -78,19 +76,17 @@ npm install -g open-managed-agent
 
 > `@cloudbase/cli`（tcb）作为内置依赖随 `open-managed-agent` 一起安装，**不需要手动安装 tcb**。
 
-### 2. 登录 CloudBase
+### 2. 登录并选环境
 
 ```bash
-# 交互式登录（浏览器授权）
-magent login
+magent login                    # 浏览器授权；等同 tcb login，共用 ~/.config/.cloudbase/
+tcb env use <your-env-id>       # 选默认环境；可省略后续命令的 -e
 
-# 或使用 API Key 登录
-magent login --apiKeyId <SecretId> --apiKey <SecretKey>
+# CI / 无交互：magent login --apiKeyId <id> --apiKey <key>
+# 或手填四列变量，见 docs/harness-env.md#advanced-settings
 ```
 
-等效于 `tcb login`，但无需单独安装 tcb。
-
-### 3. 查看可用环境
+### 3. 查看可用环境（可选）
 
 ```bash
 magent env:list
@@ -105,12 +101,12 @@ magent env:list
 magent agent:create \
   --name my-agent \
   --system "You are a helpful coding assistant." \
-  -e <your-env-id>      # 也可用 --env <your-env-id>
+  # -e <env-id> 可选：已 tcb env use 时可省略
 ```
 
 **沙箱内 Agent** — 见 [沙箱内 Agent](#沙箱内-agent)（`runtime: harness`；[RoleArn](#首次使用沙箱工具与-rolearn) 仅首次创 Tool 时可能需）。
 
-如果不带 `-e` 参数且未设置 `CLOUDBASE_ENV_ID`，`magent` 会自动列出可用环境并报错提示。
+未 `tcb env use` 且未传 `-e` / `CLOUDBASE_ENV_ID` 时，`magent` 会提示先选环境。
 
 > 首次部署前需构建代码：`cd packages/agent-runtime && npm run build`
 
@@ -119,8 +115,7 @@ magent agent:create \
 部署完成后，使用 `magent agent:update` 配置 Agent 的行为（不需要重新部署代码，约 8 秒生效）：
 
 ```bash
-# 设置环境变量（后续命令省略重复传参）
-export CLOUDBASE_ENV_ID=<your-env-id>
+# 可选：记下 agent id，后续省略 -a
 export CLOUDBASE_AGENT_ID=<agent-id>
 # 更新 system prompt
 magent agent:update --system "You are a helpful coding assistant."
@@ -164,18 +159,19 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 
 完整步骤：[使用指南](./docs/harness-tutorial.md) · [OpenCode](./docs/harness-opencode.md) · [Claude Code](./docs/harness-claude-code.md)
 
+**Managed Agents HTTP**（`/v1/sessions` + SSE）：[用户故事 · 故事 B](./docs/harness-user-story.md#故事-b使用-ma-http-协议接入) · [使用指南](./docs/managed-agents-guide.md)
+
 ### 最小部署
 
 ```bash
-magent login   # 或 export TCB_SECRET_ID / TCB_SECRET_KEY
-export CLOUDBASE_ENV_ID=<your-env-id>
-export TCB_REGION=ap-shanghai
+magent login
+tcb env use <your-env-id>
 
 cp docs/examples/agent.sandbox.opencode.min.yaml ./agent.sandbox.yaml
 cd packages/agent-runtime && npm run build && cd ../..
 
 magent agent:create --name my-sandbox --runtime harness --engine opencode \
-  --file ./agent.sandbox.yaml --code ./packages/agent-runtime -e "$CLOUDBASE_ENV_ID"
+  --file ./agent.sandbox.yaml --code ./packages/agent-runtime
 ```
 
 网关与 CloudBase AI 鉴权由 Runtime **用 CAM 自动换取**，沙箱路径**不必**手填控制台 API Key。见 [凭证说明](./docs/harness-credentials.md)。

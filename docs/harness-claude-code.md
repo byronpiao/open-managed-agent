@@ -8,6 +8,11 @@
 
 ## 快速开始
 
+```bash
+magent login
+tcb env use your-env-id
+```
+
 ```yaml
 name: My Claude Sandbox Agent
 runtime: harness
@@ -22,14 +27,13 @@ magent agent:create \
   --runtime harness \
   --engine claude \
   --file ./agent.sandbox.yaml \
-  --code ./packages/agent-runtime \
-  -e "$CLOUDBASE_ENV_ID"
+  --code ./packages/agent-runtime
 
-magent run -a "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID" \
+magent run -a "$CLOUDBASE_AGENT_ID" \
   -m "列出当前工作目录下的文件。"
 ```
 
-CAM（`TCB_SECRET_*` 或 `magent login`）自动鉴权：拉起沙箱 + 调用 **CloudBase AI**（Anthropic Messages [兼容网关](https://docs.cloudbase.net/ai/model/anthropic-sdk-access)，默认 `hy3-preview`）。**无需**单独的 Anthropic 官方 Key。
+`magent login` 自动鉴权（不必手填 `TCB_SECRET_*`）：拉起沙箱 + 调用 **CloudBase AI**（Anthropic Messages [兼容网关](https://docs.cloudbase.net/ai/model/anthropic-sdk-access)，默认 `hy3-preview`）。**无需**单独的 Anthropic 官方 Key。
 
 ---
 
@@ -72,7 +76,7 @@ model: your-model-id
 
 | 现象 | 处理 |
 |------|------|
-| 鉴权失败 | 检查 `TCB_SECRET_*` / `magent login`、控制台 AI 模型是否启用 |
+| 鉴权失败 | `magent login` + `tcb env use`；或 Advanced 手填 CAM；检查控制台 AI 模型是否启用 |
 | 想用 OpenCode / zen | [harness-opencode.md](./harness-opencode.md) |
 | 沙箱无法启动 | [使用指南 · 首次起箱](./harness-tutorial.md#首次起箱沙箱工具与-rolearn) |
 

@@ -13,6 +13,7 @@
  *   POST /acp                              ACP JSON-RPC 2.0
  *   POST /v1/aibot/bots/:botId/acp         ACP via gateway proxy
  *   GET  /healthz                          Health check
+ *   /v1/agents|environments|sessions       Claude Managed Agents HTTP (harness)
  */
 
 import express from "express";
@@ -101,6 +102,10 @@ async function main() {
   });
 
   mountAcpEndpoint(app, config);
+  if (runtime === "harness") {
+    const { mountManagedAgentsEndpoint } = await import("./managed-agents/managed-agents-endpoint.js");
+    mountManagedAgentsEndpoint(app, config);
+  }
   if (runtime === "harness") {
     app.use("/internal/harness/mcp", express.json({ limit: "2mb" }));
     harnessRuntime ??= await import("./harness/index.js");

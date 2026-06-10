@@ -6,7 +6,14 @@
 
 ## 快速开始
 
-凭证与部署与 [使用指南 · 从零到第一次对话](./harness-tutorial.md#用户故事从零到第一次对话) 相同（CAM 四样，见 [harness-credentials.md](./harness-credentials.md)）。
+凭证与 [使用指南 · 从零到第一次对话](./harness-tutorial.md#用户故事从零到第一次对话) 相同：
+
+```bash
+magent login
+tcb env use your-env-id
+```
+
+不必手填 `TCB_SECRET_*` / `CLOUDBASE_ENV_ID` / `TCB_REGION`。CI 或无 tcb 交互见 [harness-env — Advanced settings](./harness-env.md#advanced-settings)。
 
 ```yaml
 name: My Sandbox Agent
@@ -22,10 +29,9 @@ magent agent:create \
   --runtime harness \
   --engine opencode \
   --file ./agent.sandbox.yaml \
-  --code ./packages/agent-runtime \
-  -e "$CLOUDBASE_ENV_ID"
+  --code ./packages/agent-runtime
 
-magent run -a "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID" \
+magent run -a "$CLOUDBASE_AGENT_ID" \
   -m "在沙箱里执行 uname -a，把输出原样返回。"
 ```
 
@@ -48,7 +54,7 @@ engine: opencode
 model: zen
 ```
 
-`magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID"`
+`magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID"`
 
 ---
 

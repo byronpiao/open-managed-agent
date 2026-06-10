@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 /**
- * Harness 验收 env：只读 `.env.harness`（单文件，不叠加 `.env`）。
+ * Harness 验收 env：
+ *   `.env.harness` — 基座 ①④⑤⑥
+ *   `scenarios/.env.<scenario>` × `scenarios/agent.<engine>.yaml` — 6 格矩阵
  *
  *   cp .env.harness.example .env.harness
- *   node scripts/harness/load-env.mjs --check [--probe-llm]
+ *   node scripts/harness/load-env.mjs --check
  */
 
 import { execSync } from "child_process";
 import { resolve } from "path";
 import { fileURLToPath } from "url";
+import { readTcbLoginCredential } from "../../lib/credentials.mjs";
+import { hydrateCloudEnvFromCli } from "../../lib/env.mjs";
 import {
   clearShellLeakedHarnessPins,
   expectedHarnessToolName,
@@ -17,6 +21,32 @@ import {
   pinnedHarnessToolId,
   readHarnessEnvMap,
 } from "../../lib/harness-env-file.mjs";
+import {
+  applyScenarioEnv,
+  hasAnthropicScenarioEnv,
+  hasAnthropicTripleInMap,
+  hasOpenAiScenarioEnv,
+  hasOpenAiTripleInMap,
+  HARNESS_MATRIX_SCENARIOS,
+  normalizeHarnessScenario,
+  readScenarioEnvMap,
+  resolveHarnessAgentYaml,
+  scenarioAgentYamlPath,
+  scenarioEngine,
+  scenarioEnvFileExists,
+  scenarioEnvPath,
+  scenarioEnvExamplePath,
+  scenarioEnvReady,
+} from "./scenario-matrix.mjs";
+
+export {
+  applyScenarioEnv,
+  resolveHarnessAgentYaml,
+  normalizeHarnessScenario,
+  HARNESS_MATRIX_SCENARIOS,
+  scenarioEngine,
+  scenarioAgentYamlPath,
+};
 
 const ALIASES = [
   ["TCB_ENV_ID", "CLOUDBASE_ENV_ID"],
@@ -24,12 +54,20 @@ const ALIASES = [
   ["TENCENTCLOUD_SECRETKEY", "TCB_SECRET_KEY"],
 ];
 
-const REQUIRED_FOR_AGS = [
-  "CLOUDBASE_ENV_ID",
-  "TCB_SECRET_ID",
-  "TCB_SECRET_KEY",
-  "TCB_REGION",
-];
+/** @deprecated alias — use hydrateCloudEnvFromCli from lib/env.mjs */
+export function resolveHarnessCloudFromCli() {
+  hydrateCloudEnvFromCli();
+}
+
+function hasHarnessCamCredentials() {
+  if (process.env.TCB_SECRET_ID?.trim() && process.env.TCB_SECRET_KEY?.trim()) return true;
+  if (process.env.TENCENTCLOUD_SECRETID?.trim() && process.env.TENCENTCLOUD_SECRETKEY?.trim()) {
+    return true;
+  }
+  if (readTcbLoginCredential()) return true;
+  if (process.env.TCB_API_KEY?.trim()) return true;
+  return false;
+}
 
 const BYOK_LLM_KEYS = [
   "LLM_API_KEY",
@@ -38,6 +76,44 @@ const BYOK_LLM_KEYS = [
   "ANTHROPIC_BASE_URL",
   "HARNESS_FORCE_ZEN",
 ];
+
+/** @deprecated use hasAnthropicScenarioEnv */
+export function hasAnthropicByokInMap() {
+  return hasAnthropicScenarioEnv("local-claude");
+}
+
+/** local full 引擎覆盖：opencode=主力默认 · claude=旁路 · all=两者 */
+export const HARNESS_ENGINE_VALUES = ["opencode", "claude", "all"];
+
+export function parseHarnessEnginesArg(argv = process.argv.slice(2)) {
+  let engines = "opencode";
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--engines" && argv[i + 1]) {
+      engines = argv[++i].trim().toLowerCase();
+    }
+  }
+  if (!HARNESS_ENGINE_VALUES.includes(engines)) {
+    throw new Error(`Invalid --engines ${engines}; use opencode | claude | all`);
+  }
+  return engines;
+}
+
+export function harnessEnginesIncludeOpencode(engines) {
+  return engines === "opencode" || engines === "all";
+}
+
+export function harnessEnginesIncludeClaude(engines) {
+  return engines === "claude" || engines === "all";
+}
+
+export function assertHarnessEnginesEnv(engines) {
+  if (harnessEnginesIncludeClaude(engines) && !hasAnthropicScenarioEnv("local-claude")) {
+    throw new Error(
+      `--engines claude|all requires ${scenarioEnvPath("local-claude")} ` +
+        `(cp ${scenarioEnvExamplePath("local-claude")})`,
+    );
+  }
+}
 
 /** Stripped for cloud / no-cos scenarios — COS only applies to `local` when enabled in `.env.harness`. */
 export const HARNESS_COS_ENV_KEYS = [
@@ -57,37 +133,42 @@ export const HARNESS_COS_ENV_KEYS = [
  * | scenario     | agent yaml              | COS tool        | LLM        |
  * |--------------|-------------------------|-----------------|------------|
  * | quickstart   | docs/examples/...min    | no-cos          | platform   |
- * | local        | (host orchestrator)     | file ⑥ optional | platform   |
- * | cloud-tcbr   | agent.harness.cloud     | no-cos (strip)  | zen        |
- * | cloud-scf    | agent.harness.cloud     | no-cos (strip)  | BYOK ③     |
+ * | local        | opencode orchestrator   | file ⑥ optional | platform   |
+ * | 6 格         | agent.opencode.yaml | agent.claude.yaml |
  */
+export function cloudHarnessScenario(backend, engine = "opencode") {
+  const b = backend === "scf" ? "scf" : "tcbr";
+  const e = engine === "claude" ? "claude" : "opencode";
+  return `cloud-${b}-${e}`;
+}
+
+/** Pin var in `.env.harness` ⑤ — engine 后缀与 npm script 对齐。 */
+export function cloudHarnessAgentPinVar(backend, engine = "opencode") {
+  const b = backend === "scf" ? "SCF" : "TCBR";
+  const e = engine === "claude" ? "CLAUDE" : "OPENCODE";
+  return `HARNESS_CLOUD_${b}_${e}_AGENT_ID`;
+}
+
+export function pinnedCloudHarnessAgentId(backend, engine = "opencode", map = readHarnessEnvMap()) {
+  const primary = map.get(cloudHarnessAgentPinVar(backend, engine))?.trim();
+  if (primary) return primary;
+  if (engine === "opencode") {
+    const legacy =
+      backend === "scf"
+        ? map.get("HARNESS_CLOUD_SCF_AGENT_ID")?.trim()
+        : map.get("HARNESS_CLOUD_AGENT_ID")?.trim();
+    if (legacy) return legacy;
+  }
+  return "";
+}
+
 export function applyHarnessScenario(scenario, target = process.env) {
   const map = readHarnessEnvMap();
   const envId = target.CLOUDBASE_ENV_ID?.trim() || map.get("CLOUDBASE_ENV_ID")?.trim() || "";
+  const cosRequired = scenario === "local-cos";
+  scenario = normalizeHarnessScenario(scenario);
 
   for (const k of HARNESS_COS_ENV_KEYS) delete target[k];
-
-  if (scenario === "cloud-tcbr") {
-    target.HARNESS_SCENARIO = "cloud-tcbr";
-    applyHarnessLlmTier("zen", target);
-    applyHarnessTestDefaults(target);
-    return {
-      scenario,
-      cosEnabled: false,
-      toolName: envId ? expectedHarnessToolName(envId, false, map) : "",
-    };
-  }
-
-  if (scenario === "cloud-scf") {
-    target.HARNESS_SCENARIO = "cloud-scf";
-    applyHarnessLlmTier("byok", target);
-    applyHarnessTestDefaults(target);
-    return {
-      scenario,
-      cosEnabled: false,
-      toolName: envId ? expectedHarnessToolName(envId, false, map) : "",
-    };
-  }
 
   if (scenario === "quickstart") {
     target.HARNESS_SCENARIO = "quickstart";
@@ -100,32 +181,53 @@ export function applyHarnessScenario(scenario, target = process.env) {
     };
   }
 
-  if (scenario === "local" || scenario === "local-cos") {
-    const cosFromFile = harnessCosEnabledFromMap(map);
-    if (scenario === "local-cos") {
-      if (!cosFromFile) {
-        throw new Error(
-          "scenario local-cos requires HARNESS_COS_ENABLED=1 in .env.harness (⑥ 段)",
-        );
-      }
-    }
-    if (cosFromFile) {
-      for (const k of HARNESS_COS_ENV_KEYS) {
-        const v = map.get(k)?.trim();
-        if (v) target[k] = v;
-      }
+  const cloudLocal = scenario.startsWith("cloud-") || scenario.startsWith("local-");
+  if (!cloudLocal || !HARNESS_MATRIX_SCENARIOS.includes(scenario)) {
+    throw new Error(`unknown harness scenario: ${scenario}`);
+  }
+
+  if (scenario.startsWith("cloud-")) {
+    applyScenarioEnv(scenario, target);
+    if (scenario === "cloud-tcbr-opencode") {
+      applyHarnessLlmTier("zen", target);
+    } else if (scenario === "cloud-scf-opencode") {
+      applyHarnessLlmTier("byok", target);
+    } else {
+      applyHarnessLlmTier("anthropic-byok", target);
     }
     target.HARNESS_SCENARIO = scenario;
-    applyHarnessLlmTier("platform", target);
     applyHarnessTestDefaults(target);
     return {
       scenario,
-      cosEnabled: cosFromFile,
-      toolName: envId ? expectedHarnessToolName(envId, cosFromFile, map) : "",
+      cosEnabled: false,
+      toolName: envId ? expectedHarnessToolName(envId, false, map) : "",
+      engine: scenarioEngine(scenario),
+      agentYaml: scenarioAgentYamlPath(scenarioEngine(scenario)),
     };
   }
 
-  throw new Error(`unknown harness scenario: ${scenario}`);
+  const cosFromFile = harnessCosEnabledFromMap(map);
+  if (cosRequired && !cosFromFile) {
+    throw new Error("scenario local-cos requires HARNESS_COS_ENABLED=1 in .env.harness (⑥ 段)");
+  }
+  if (cosFromFile) {
+    for (const k of HARNESS_COS_ENV_KEYS) {
+      const v = map.get(k)?.trim();
+      if (v) target[k] = v;
+    }
+  }
+
+  applyScenarioEnv(scenario, target);
+  applyHarnessLlmTier("platform", target);
+  target.HARNESS_SCENARIO = scenario;
+  applyHarnessTestDefaults(target);
+  return {
+    scenario,
+    cosEnabled: cosFromFile,
+    toolName: envId ? expectedHarnessToolName(envId, cosFromFile, map) : "",
+    engine: scenarioEngine(scenario),
+    agentYaml: scenarioAgentYamlPath(scenarioEngine(scenario)),
+  };
 }
 
 export function logHarnessScenario(meta) {
@@ -136,9 +238,13 @@ export function logHarnessScenario(meta) {
   );
 }
 
-/** Harness 三层 LLM：local=platform(hy3) | cloud-tcbr=zen | cloud-scf=BYOK(③段). */
+/**
+ * LLM tier 标记。byok / anthropic-byok 要求先 `applyScenarioEnv` 写入标准 ③ 键。
+ */
 export function applyHarnessLlmTier(tier, target = process.env) {
-  for (const k of BYOK_LLM_KEYS) delete target[k];
+  if (tier === "platform" || tier === "zen") {
+    for (const k of BYOK_LLM_KEYS) delete target[k];
+  }
   if (tier === "platform") {
     target.HARNESS_LLM_TIER = "platform";
     return;
@@ -149,12 +255,21 @@ export function applyHarnessLlmTier(tier, target = process.env) {
     return;
   }
   if (tier === "byok") {
-    const map = readHarnessEnvMap();
-    for (const k of ["LLM_API_KEY", "LLM_MODEL", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"]) {
-      const v = map.get(k)?.trim();
-      if (v) target[k] = v;
+    if (!hasOpenAiTripleInMap(new Map(Object.entries(target)))) {
+      throw new Error("byok tier: missing LLM_API_KEY + LLM_MODEL + OPENAI_BASE_URL (apply scenario env first)");
     }
+    delete target.ANTHROPIC_BASE_URL;
     target.HARNESS_LLM_TIER = "byok";
+    return;
+  }
+  if (tier === "anthropic-byok") {
+    if (!hasAnthropicTripleInMap(new Map(Object.entries(target)))) {
+      throw new Error(
+        "anthropic-byok tier: missing LLM_API_KEY + LLM_MODEL + ANTHROPIC_BASE_URL (apply scenario env first)",
+      );
+    }
+    delete target.OPENAI_BASE_URL;
+    target.HARNESS_LLM_TIER = "anthropic-byok";
     return;
   }
   throw new Error(`unknown HARNESS LLM tier: ${tier}`);
@@ -177,6 +292,8 @@ export function loadEnv() {
       "Missing .env.harness — run: cp .env.harness.example .env.harness",
     );
   }
+  for (const k of BYOK_LLM_KEYS) delete process.env[k];
+  delete process.env.HARNESS_LLM_TIER;
   for (const [from, to] of ALIASES) {
     if (process.env[from] && !process.env[to]) process.env[to] = process.env[from];
   }
@@ -188,6 +305,7 @@ export function loadEnv() {
   }
   const pinnedTool = pinnedHarnessToolId();
   if (pinnedTool) process.env.HARNESS_TOOL_ID = pinnedTool;
+  hydrateCloudEnvFromCli();
 }
 
 /** Resolve TCB_API_KEY from CAM when unset (for probes / local harness). */
@@ -198,15 +316,26 @@ export async function hydrateTcbApiKeyFromCam() {
 }
 
 export function missingHarnessCreds() {
-  return REQUIRED_FOR_AGS.filter((k) => !process.env[k]);
+  hydrateCloudEnvFromCli();
+  const missing = [];
+  if (!process.env.CLOUDBASE_ENV_ID?.trim()) {
+    missing.push("CLOUDBASE_ENV_ID (or: tcb env use <envId>)");
+  }
+  if (!process.env.TCB_REGION?.trim()) {
+    missing.push("TCB_REGION (or: readable via tcb env detail)");
+  }
+  if (!hasHarnessCamCredentials()) {
+    missing.push("TCB_SECRET_ID/KEY (or: magent login)");
+  }
+  return missing;
 }
 
 export function assertHarnessCreds() {
   const missing = missingHarnessCreds();
   if (missing.length) {
     throw new Error(
-      `Missing in .env.harness: ${missing.join(", ")}. ` +
-        `Fill required keys in .env.harness (see .env.harness.example).`,
+      `Missing CloudBase creds: ${missing.join("; ")}. ` +
+        `See .env.harness.example — or magent login + tcb env use.`,
     );
   }
 }
@@ -237,7 +366,9 @@ if (isCli) {
       const image = process.env.HARNESS_SANDBOX_IMAGE?.trim() || HARNESS_PUBLIC_MAGENT_IMAGE;
       console.log(`  HARNESS_SANDBOX_IMAGE=${image}`);
       const llmMissing = missingHarnessLlmEnv();
-      console.log(`  LLM=${llmMissing.length ? `missing ${llmMissing.join(",")}` : "ok"}`);
+      console.log(
+        `  LLM(process)=${llmMissing.length ? `unset (${llmMissing.join(",")} — scenario inject)` : "ok"}`,
+      );
       const cosMissing = missingHarnessCosEnv();
       if (process.env.HARNESS_COS_ENABLED === "1") {
         console.log(`  COS=${cosMissing.length ? `missing ${cosMissing.join(",")}` : "ok"}`);
@@ -251,7 +382,14 @@ if (isCli) {
       console.log(
         `  HARNESS_TOOL_ROLE_ARN=${process.env.HARNESS_TOOL_ROLE_ARN ? "(set)" : "(unset — 仅首次自动创工具时需要)"}`,
       );
-      console.log(`  LLM_API_KEY=${process.env.LLM_API_KEY ? "(set)" : "(unset)"}`);
+      console.log("  matrix (6 scenarios × agent.<engine>.yaml):");
+      for (const id of HARNESS_MATRIX_SCENARIOS) {
+        const fileOk = scenarioEnvFileExists(id);
+        const ready = scenarioEnvReady(id);
+        const engine = scenarioEngine(id);
+        const status = !fileOk ? "missing .env" : ready ? "ok" : "incomplete ③";
+        console.log(`    ${id} → agent.${engine}.yaml : ${status}`);
+      }
       console.log(`  HARNESS_COS_ENABLED=${process.env.HARNESS_COS_ENABLED ?? "(unset)"}`);
       const publicTag = HARNESS_PUBLIC_MAGENT_IMAGE.split(":").pop();
       const sandboxTag = image.split(":").pop();
@@ -287,18 +425,23 @@ if (isCli) {
       } catch (err) {
         console.warn(`  AGS tool check skipped: ${err.message ?? err}`);
       }
-      if (process.argv.includes("--probe-llm")) {
-        if (llmMissing.length) {
-          console.error(`Cannot probe LLM: missing ${llmMissing.join(", ")}`);
-          process.exit(1);
+      if (process.argv.includes("--probe-matrix")) {
+        const { probeHarnessMatrixPreflight } = await import("./llm-preflight.mjs");
+        console.log("  LLM preflight (6 cells):");
+        await probeHarnessMatrixPreflight();
+      } else if (process.argv.includes("--probe-llm")) {
+        const scenarioArg = process.argv.find((a, i) => process.argv[i - 1] === "--scenario");
+        const { runHarnessLlmPreflight } = await import("./llm-preflight.mjs");
+        const scenario = scenarioArg || "cloud-scf-opencode";
+        const result = await runHarnessLlmPreflight(scenario, { allowTestFallback: true });
+        if (result.probe) {
+          console.log(
+            `  LLM probe (${scenario}): tier=${result.tier} ok ${result.probe.latencyMs}ms ` +
+              `model=${result.probe.model} reply=${result.probe.replySnippet ?? "(empty)"}`,
+          );
+        } else {
+          console.log(`  LLM probe (${scenario}): tier=${result.tier}`);
         }
-        const { assertHarnessOpenAiLlmReachable } = await import(
-          "../../packages/agent-runtime/dist/harness/llm-probe.js"
-        );
-        const probe = await assertHarnessOpenAiLlmReachable();
-        console.log(
-          `  LLM probe: ok ${probe.latencyMs}ms model=${probe.model} reply=${probe.replySnippet ?? "(empty)"}`,
-        );
       }
       process.exit(0);
     };

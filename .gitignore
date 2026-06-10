@@ -6,7 +6,7 @@ dist/
 .env.*
 !.env.example
 !.env.harness.example
-.env.local
+!.env.*.example
 .plan/
 # Prevent accidentally committing agent.yaml from agent-runtime
 # (it overrides AGENT_CONFIG_B64 and breaks cloud deploys)

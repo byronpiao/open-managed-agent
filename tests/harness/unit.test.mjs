@@ -99,6 +99,39 @@ test("harnessToolNameForEnv uses oma-harness-{env} without cos suffix by default
   if (prev) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prev;
 });
 
+test("cloudHarnessScenario names engine-suffixed cloud paths", async () => {
+  const { cloudHarnessScenario, cloudHarnessAgentPinVar, normalizeHarnessScenario } =
+    await import("../../scripts/harness/load-env.mjs");
+  assert.equal(cloudHarnessScenario("tcbr", "opencode"), "cloud-tcbr-opencode");
+  assert.equal(cloudHarnessScenario("scf", "claude"), "cloud-scf-claude");
+  assert.equal(cloudHarnessAgentPinVar("tcbr", "claude"), "HARNESS_CLOUD_TCBR_CLAUDE_AGENT_ID");
+  assert.equal(normalizeHarnessScenario("local"), "local-opencode");
+  assert.equal(normalizeHarnessScenario("cloud-tcbr"), "cloud-tcbr-opencode");
+  assert.equal(normalizeHarnessScenario("cloud-scf"), "cloud-scf-opencode");
+});
+
+test("parseDbPressureArgs defaults off", async () => {
+  const { parseDbPressureArgs } = await import("../../scripts/harness/db-pressure.mjs");
+  assert.deepEqual(parseDbPressureArgs([]), { enabled: false, rounds: 10 });
+  assert.deepEqual(parseDbPressureArgs(["--db-pressure"]), { enabled: true, rounds: 10 });
+  assert.deepEqual(parseDbPressureArgs(["--db-pressure", "--db-pressure-rounds", "3"]), {
+    enabled: true,
+    rounds: 3,
+  });
+});
+
+test("parseHarnessEnginesArg accepts opencode | claude | all", async () => {
+  const { parseHarnessEnginesArg, harnessEnginesIncludeClaude, harnessEnginesIncludeOpencode } =
+    await import("../../scripts/harness/load-env.mjs");
+  assert.equal(parseHarnessEnginesArg(["--engines", "opencode"]), "opencode");
+  assert.equal(parseHarnessEnginesArg(["--engines", "claude"]), "claude");
+  assert.equal(parseHarnessEnginesArg(["--engines", "all"]), "all");
+  assert.ok(harnessEnginesIncludeOpencode("opencode"));
+  assert.ok(!harnessEnginesIncludeOpencode("claude"));
+  assert.ok(harnessEnginesIncludeClaude("all"));
+  assert.throws(() => parseHarnessEnginesArg(["--engines", "codebuddy"]));
+});
+
 test("applyHarnessScenario cloud-scf strips COS and sets BYOK tier", async () => {
   const { applyHarnessScenario, HARNESS_COS_ENV_KEYS } = await import(
     "../../scripts/harness/load-env.mjs"
@@ -109,16 +142,52 @@ test("applyHarnessScenario cloud-scf strips COS and sets BYOK tier", async () =>
     CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8",
     HARNESS_COS_ENABLED: "1",
     HARNESS_COS_BUCKET: "bucket",
-    LLM_API_KEY: "should-stay-from-map-only",
   };
   const meta = applyHarnessScenario("cloud-scf", env);
   if (prevSuffix !== undefined) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prevSuffix;
   else delete process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
-  assert.equal(meta.scenario, "cloud-scf");
+  assert.equal(meta.scenario, "cloud-scf-opencode");
   assert.equal(meta.cosEnabled, false);
   assert.ok(meta.toolName.endsWith("-no-cos"));
   for (const k of HARNESS_COS_ENV_KEYS) assert.equal(env[k], undefined);
   assert.equal(env.HARNESS_LLM_TIER, "byok");
+});
+
+test("scenario matrix isolates OpenAI vs Anthropic env files", async () => {
+  const { applyHarnessScenario } = await import("../../scripts/harness/load-env.mjs");
+  const openAiEnv = { CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8" };
+  const openAiMeta = applyHarnessScenario("cloud-scf-opencode", openAiEnv);
+  assert.equal(openAiEnv.HARNESS_LLM_TIER, "byok");
+  assert.equal(openAiMeta.engine, "opencode");
+  assert.ok(openAiEnv.LLM_API_KEY);
+  assert.ok(openAiEnv.OPENAI_BASE_URL);
+  assert.equal(openAiEnv.ANTHROPIC_BASE_URL, undefined);
+
+  const claudeEnv = { CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8" };
+  const claudeMeta = applyHarnessScenario("local-claude", claudeEnv);
+  assert.equal(claudeEnv.HARNESS_LLM_TIER, "platform");
+  assert.equal(claudeMeta.engine, "claude");
+  assert.equal(claudeEnv.LLM_API_KEY, undefined);
+
+  const { applyScenarioEnv } = await import("../../scripts/harness/scenario-matrix.mjs");
+  const claudeRaw = { CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8" };
+  applyScenarioEnv("local-claude", claudeRaw);
+  assert.ok(claudeRaw.LLM_API_KEY);
+  assert.ok(claudeRaw.ANTHROPIC_BASE_URL);
+  assert.equal(claudeRaw.OPENAI_BASE_URL, undefined);
+});
+
+test("harness matrix has 6 scenarios and 2 agent yaml by engine", async () => {
+  const {
+    HARNESS_MATRIX_SCENARIOS,
+    resolveHarnessAgentYaml,
+    scenarioEngine,
+  } = await import("../../scripts/harness/scenario-matrix.mjs");
+  assert.equal(HARNESS_MATRIX_SCENARIOS.length, 6);
+  for (const id of HARNESS_MATRIX_SCENARIOS) {
+    const yaml = resolveHarnessAgentYaml(id);
+    assert.ok(yaml.endsWith(`agent.${scenarioEngine(id)}.yaml`));
+  }
 });
 
 test("resolveHarnessToolName uses -no-cos|-with-cos when HARNESS_TOOL_COS_NAME_SUFFIX=1", () => {
@@ -611,6 +680,9 @@ test("buildHarnessSandboxEnv maps LLM_* + ANTHROPIC_BASE_URL for claude engine",
   assert.equal(names.ANTHROPIC_AUTH_TOKEN, "sk-ant");
   assert.equal(names.ANTHROPIC_BASE_URL, "https://example.com");
   assert.equal(names.ANTHROPIC_MODEL, "hy3-preview");
+  assert.equal(names.ANTHROPIC_DEFAULT_HAIKU_MODEL, "hy3-preview");
+  assert.equal(names.ANTHROPIC_DEFAULT_SONNET_MODEL, "hy3-preview");
+  assert.equal(names.ANTHROPIC_DEFAULT_OPUS_MODEL, "hy3-preview");
   assert.equal(names.OPENCODE_CONFIG_CONTENT, undefined);
   if (saved.key === undefined) delete process.env.LLM_API_KEY;
   else process.env.LLM_API_KEY = saved.key;
@@ -618,6 +690,30 @@ test("buildHarnessSandboxEnv maps LLM_* + ANTHROPIC_BASE_URL for claude engine",
   else process.env.ANTHROPIC_BASE_URL = saved.url;
   if (saved.model === undefined) delete process.env.LLM_MODEL;
   else process.env.LLM_MODEL = saved.model;
+});
+
+test("buildAnthropicCompatFetchHeaders sends Bearer and x-api-key", async () => {
+  const { buildAnthropicCompatFetchHeaders } = await import(
+    "../../packages/agent-runtime/dist/harness/llm-providers.js"
+  );
+  const headers = buildAnthropicCompatFetchHeaders("key-test", "https://example.com");
+  assert.equal(headers.Authorization, "Bearer key-test");
+  assert.equal(headers["x-api-key"], "key-test");
+});
+
+test("buildHarnessSandboxEnv injects AUTH_TOKEN and API_KEY for BYOK", async () => {
+  const { anthropicCompatToTrwEnv } = await import(
+    "../../packages/agent-runtime/dist/harness/llm-providers.js"
+  );
+  const env = anthropicCompatToTrwEnv({
+    apiKey: "sk-test",
+    baseUrl: "https://token.sensenova.cn",
+    model: "sensenova-6.7-flash-lite",
+  });
+  const names = Object.fromEntries(env.map((e) => [e.Name, e.Value]));
+  assert.equal(names.ANTHROPIC_AUTH_TOKEN, "sk-test");
+  assert.equal(names.ANTHROPIC_API_KEY, "sk-test");
+  assert.equal(names.ANTHROPIC_MODEL, "sensenova-6.7-flash-lite");
 });
 
 test("buildHarnessInstanceEnv enables opencode serve for sync persistence", () => {

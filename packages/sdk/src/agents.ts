@@ -1,36 +1,62 @@
-/**
- * @deprecated Agent management is handled via `magent` CLI, not the SDK.
- * The runtime does not implement REST endpoints for /agents.
- */
 import type {
   Agent,
   CreateAgentParams,
   ListResponse,
   ManagedAgentsConfig,
 } from "./types.js";
+import { ManagedAgentsClient } from "./managed-agents-client.js";
 
-const ERR = "Not supported: use `magent agent:*` CLI commands instead.";
+function toAgent(record: {
+  id: string;
+  name: string;
+  metadata: Record<string, string>;
+  createdAt: string;
+}): Agent {
+  return {
+    id: record.id,
+    object: "agent",
+    name: record.name,
+    model: record.metadata.model ?? "",
+    system: record.metadata.system,
+    tools: [],
+    metadata: record.metadata,
+    created_at: Math.floor(Date.parse(record.createdAt) / 1000) || Math.floor(Date.now() / 1000),
+  };
+}
 
 export class AgentsResource {
-  constructor(_config: ManagedAgentsConfig) {}
+  private client: ManagedAgentsClient;
 
-  /** @deprecated Use `magent agent:create` */
-  async create(_params: CreateAgentParams): Promise<Agent> {
-    throw new Error(`agents.create() — ${ERR}`);
+  constructor(config: ManagedAgentsConfig) {
+    this.client = new ManagedAgentsClient(config);
   }
 
-  /** @deprecated Use `magent agent:get` */
-  async retrieve(_agentId: string): Promise<Agent> {
-    throw new Error(`agents.retrieve() — ${ERR}`);
+  async create(params: CreateAgentParams): Promise<Agent> {
+    const record = await this.client.createAgent({
+      name: params.name,
+      metadata: {
+        ...(params.model ? { model: params.model } : {}),
+        ...(params.system ? { system: params.system } : {}),
+        ...params.metadata,
+      },
+    });
+    return toAgent(record);
   }
 
-  /** @deprecated Use `magent agent:list` */
+  async retrieve(agentId: string): Promise<Agent> {
+    return toAgent(await this.client.getAgent(agentId));
+  }
+
   async list(): Promise<ListResponse<Agent>> {
-    throw new Error(`agents.list() — ${ERR}`);
+    const agents = await this.client.listAgents();
+    return {
+      object: "list",
+      has_more: false,
+      data: agents.map(toAgent),
+    };
   }
 
-  /** @deprecated Use `magent agent:delete` */
   async delete(_agentId: string): Promise<{ id: string; deleted: boolean }> {
-    throw new Error(`agents.delete() — ${ERR}`);
+    throw new Error("agents.delete() is not supported by CMA HTTP");
   }
 }
