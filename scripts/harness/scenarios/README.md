@@ -22,6 +22,8 @@ cloud-scf        │ .env.cloud-scf-opencode     │ .env.cloud-scf-claude
 
 基座 **`/.env.harness`**：①④⑤⑥（镜像、COS、pin；① CloudBase 默认留空）。不含 ③。
 
+**`sandbox`（内部草案）**：6 格 AGS 路径 = `sandbox.infra: serverless`（`agent.*.yaml` 已显式写；省略时解析默认同值）。`resources` 默认 `cpu: "2"` / `memory: "2Gi"`。详见 [`docs/sandbox.md`](../../docs/sandbox.md) — 不对客、Hermes 不进本矩阵。
+
 ```bash
 magent login && tcb env use <envId>    # ① 段通常不必手填
 cd scripts/harness/scenarios
@@ -48,3 +50,12 @@ cp .env.cloud-scf-opencode.example .env.cloud-scf-opencode
 别名：`local` → `local-opencode` · `cloud-tcbr` → `cloud-tcbr-opencode` · `cloud-scf` → `cloud-scf-opencode`
 
 实现：`scenario-matrix.mjs` · `load-env.mjs`
+
+## Hermes（内部 · Talos，未接 manage node）
+
+| 项 | 说明 |
+|----|------|
+| `agent.hermes.yaml` | `engine: hermes` → TRW `POST /api/agents/hermes/acp` |
+| 箱 env | `ENABLE_AGENT_HERMES_ACP` + `ENABLE_AGENT_HERMES_WEB`（与 packer preset 对齐） |
+| LLM 注入 | 主路径 **OpenAI-compatible**（`OPENAI_API_KEY` / `OPENAI_BASE_URL`）；可选叠加 Anthropic（`ANTHROPIC_*`） |
+| 验收 | **阻塞**：Talos 未进 TCB CLI / manage node；无 AGS docker 镜像。联调前勿加 harness npm 格子。 |

@@ -230,6 +230,24 @@ export function anthropicCompatToTrwEnv(
   return out;
 }
 
+/**
+ * TRW hermes-acp / hermes dashboard — OpenAI-compatible direct API (`openai-api` provider).
+ * Official Hermes path for CloudBase zen / Mimo / custom gateways. Model lives in
+ * ~/.hermes/config.yaml (not LLM_MODEL env).
+ */
+export function hermesOpenAiCompatToTrwEnv(
+  provider: CompatLlmProvider,
+): Array<{ Name: string; Value: string }> {
+  const out: Array<{ Name: string; Value: string }> = [];
+  if (provider.apiKey) {
+    out.push({ Name: "OPENAI_API_KEY", Value: provider.apiKey });
+  }
+  if (provider.baseUrl) {
+    out.push({ Name: "OPENAI_BASE_URL", Value: provider.baseUrl });
+  }
+  return out;
+}
+
 /** TRW codebuddy --acp sidecar env (OpenAI-compatible when BASE_URL set). */
 export function codebuddyCompatToTrwEnv(
   provider: CompatLlmProvider,

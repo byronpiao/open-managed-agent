@@ -1,0 +1,13 @@
+name: harness-hermes
+runtime: harness
+engine: hermes
+# Internal draft — sandbox.infra=durable requires Talos (orchestrator not wired yet).
+sandbox:
+  infra: durable
+  resources:
+    cpu: "2"
+    memory: "4Gi"
+model: hy3-preview
+system: |
+  You are a helpful assistant running in a Talos VM with Hermes ACP.
+  Reply briefly in the same language as the user.

@@ -13,6 +13,10 @@ import fs from "fs/promises";
 import path from "path";
 import { createRequire } from "module";
 import { parse as parseYaml } from "yaml";
+import {
+  applyResolvedSandboxToConfig,
+  resolveSandboxConfig,
+} from "./harness/sandbox/sandbox-config.js";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -84,10 +88,10 @@ export interface ModelSpec {
 export type AgentRuntimeMode = "managed" | "harness";
 
 /** 箱内引擎（ACP 服务端）when runtime=harness; data-plane slug may differ (D5). */
-export type HarnessEngine = "opencode" | "claude" | "codebuddy";
+export type HarnessEngine = "opencode" | "claude" | "codebuddy" | "hermes";
 
 /** TRW route segment: POST /api/agents/{slug}/acp */
-export type DataPlaneEngineSlug = "opencode" | "claudecode" | "codebuddy";
+export type DataPlaneEngineSlug = "opencode" | "claudecode" | "codebuddy" | "hermes";
 
 /**
  * Shared by managed (OAK loop on gateway) and harness (loop in AGS sandbox).
@@ -108,6 +112,11 @@ export interface AgentConfig {
   mcp_servers?: McpServer[];
   skills?: Skill[];
   metadata?: Record<string, string>;
+  /**
+   * Harness sandbox placement (draft — see docs/sandbox.md).
+   * Ignored when runtime=managed. Normalized with defaults on load.
+   */
+  sandbox?: import("./harness/sandbox/sandbox-config.js").SandboxConfig;
   // Storage
   sessions_collection?: string; // NoSQL collection name for sessions, default: "acp_sessions"
 }
@@ -120,7 +129,9 @@ export interface ResolvedRuntime {
 export function resolveRuntime(config: AgentConfig): ResolvedRuntime {
   const runtime = config.runtime === "harness" ? "harness" : "managed";
   const engine =
-    config.engine === "claude" || config.engine === "codebuddy"
+    config.engine === "claude" ||
+    config.engine === "codebuddy" ||
+    config.engine === "hermes"
       ? config.engine
       : "opencode";
   return { runtime, engine };
@@ -132,6 +143,8 @@ export function engineToDataPlaneSlug(engine: HarnessEngine): DataPlaneEngineSlu
       return "claudecode";
     case "codebuddy":
       return "codebuddy";
+    case "hermes":
+      return "hermes";
     default:
       return "opencode";
   }
@@ -194,12 +207,25 @@ export function buildHarnessInstanceEnv(
     push("ENABLE_AGENT_CLAUDE_ACP", "true");
     push("HARNESS_CLAUDE_SESSION_STORE", "1");
     push("CLAUDE_CONFIG_DIR", "/tmp/.claude");
-  } else {
+  } else if (engine === "codebuddy") {
     push("ENABLE_AGENT_CODEBUDDY_ACP", "true");
+  } else if (engine === "hermes") {
+    // Packer/Talos images only — both toggles match packer/presets/hermes.pkrvars.hcl.
+    push("ENABLE_AGENT_HERMES_ACP", "true");
+    push("ENABLE_AGENT_HERMES_WEB", "true");
   }
 
   // SECRET_MASTER_KEY: injected per harness session (harness_sessions.secretMasterKey), not from host env.
-  push("INTEGRATION_IDE", engine === "codebuddy" ? "codebuddy" : engine === "claude" ? "claude" : "opencode");
+  push(
+    "INTEGRATION_IDE",
+    engine === "codebuddy"
+      ? "codebuddy"
+      : engine === "claude"
+        ? "claude"
+        : engine === "hermes"
+          ? "hermes"
+          : "opencode",
+  );
   push("WORKSPACE_FOLDER_PATHS", "/home/user");
 
   return out;
@@ -514,6 +540,30 @@ export function toKernelAgentConfig(
   };
 }
 
+export type {
+  SandboxInfra,
+  SandboxConfig,
+  SandboxResources,
+  ResolvedSandboxConfig,
+} from "./harness/sandbox/sandbox-config.js";
+export {
+  SandboxConfigError,
+  DEFAULT_SANDBOX_INFRA,
+  DEFAULT_SANDBOX_RESOURCES,
+  resolveSandboxConfig,
+  assertSandboxAcquireAllowed,
+  buildAgsSandboxResources,
+  applyResolvedSandboxToConfig,
+} from "./harness/sandbox/sandbox-config.js";
+
+/** Apply sandbox defaults after YAML / AGENT_CONFIG parse (harness or explicit sandbox block). */
+export function normalizeAgentConfig(config: AgentConfig): AgentConfig {
+  const { runtime } = resolveRuntime(config);
+  if (runtime !== "harness" && config.sandbox === undefined) return config;
+  const resolved = resolveSandboxConfig({ sandbox: config.sandbox, engine: config.engine });
+  return applyResolvedSandboxToConfig(config, resolved);
+}
+
 // ── Loader ────────────────────────────────────────────────────────────────────
 //
 // Loading priority:
@@ -541,7 +591,7 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
   for (const p of searchPaths) {
     try {
       const content = await fs.readFile(p, "utf-8");
-      const config = parseYaml(content) as AgentConfig;
+      const config = normalizeAgentConfig(parseYaml(content) as AgentConfig);
       console.log(`[Config] Loaded agent config from: ${p}`);
       return config;
     } catch {
@@ -557,7 +607,7 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
 
   if (rawConfig) {
     try {
-      const config = JSON.parse(rawConfig) as AgentConfig;
+      const config = normalizeAgentConfig(JSON.parse(rawConfig) as AgentConfig);
       console.log(`[Config] Loaded from AGENT_CONFIG env var`);
       return config;
     } catch (err) {
@@ -567,11 +617,11 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
 
   // Priority 3: pure env vars (backward compatible)
   console.log("[Config] No agent.yaml or AGENT_CONFIG found, using environment variables");
-  return {
+  return normalizeAgentConfig({
     name: process.env.AGENT_NAME ?? "open-managed-agent",
     model: process.env.AGENT_MODEL ?? "hunyuan-t1-latest",
     system: process.env.AGENT_SYSTEM
       ? decodeURIComponent(process.env.AGENT_SYSTEM)
       : "You are a helpful assistant.",
-  };
+  });
 }

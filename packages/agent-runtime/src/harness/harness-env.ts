@@ -115,6 +115,14 @@ export function assertHarnessAnthropicLlmEnv(): void {
   }
 }
 
+/**
+ * Hermes (Talos / packer only): OpenAI-compatible and/or Anthropic native creds.
+ * Primary harness path is OpenAI (`OPENAI_API_KEY` + `OPENAI_BASE_URL`) — same tier as opencode.
+ */
+export function hasHarnessHermesLlmEnv(): boolean {
+  return hasHarnessCustomLlmEnv() || hasHarnessAnthropicLlmEnv();
+}
+
 /** Custom LLM suite: CloudBase + LLM_* (probe / hitl / Mimo pong). Not required for test:full. */
 export function assertHarnessLlmSuiteEnv(): void {
   assertHarnessCloudCreds();

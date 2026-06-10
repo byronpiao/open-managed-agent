@@ -22,7 +22,12 @@ function parseHarnessEngine(
   value: string | undefined,
   fallback: HarnessEngine,
 ): HarnessEngine {
-  if (value === "opencode" || value === "claude" || value === "codebuddy") {
+  if (
+    value === "opencode" ||
+    value === "claude" ||
+    value === "codebuddy" ||
+    value === "hermes"
+  ) {
     return value;
   }
   return fallback;
