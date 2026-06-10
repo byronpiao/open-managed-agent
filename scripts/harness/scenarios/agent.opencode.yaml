@@ -1,6 +1,9 @@
 name: Harness OpenCode
 runtime: harness
 engine: opencode
+# AGS 验收路径 — 与 orchestrator 默认一致（见 docs/sandbox.md 草案）
+sandbox:
+  infra: serverless
 system: |
   You are a helpful coding assistant in a remote sandbox workspace.
   Reply concisely.

@@ -1,6 +1,8 @@
 name: Harness Claude
 runtime: harness
 engine: claude
+sandbox:
+  infra: serverless
 system: |
   You are a helpful coding assistant in a remote sandbox workspace.
   Reply concisely.

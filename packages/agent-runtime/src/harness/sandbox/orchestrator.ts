@@ -29,6 +29,14 @@ import {
   resolveHarnessCosConfig,
   type HarnessCosConfig,
 } from "./cos-mount.js";
+import {
+  assertSandboxAcquireAllowed,
+  buildAgsSandboxResources,
+  resolveSandboxConfig,
+  resolveSandboxImage,
+  resolveSandboxTimeout,
+  type ResolvedSandboxConfig,
+} from "./sandbox-config.js";
 
 const TRW_SERVICE_PORT = 9000;
 const READY_TIMEOUT_MS = 120_000;
@@ -234,6 +242,7 @@ async function createHarnessTool(
   envId: string,
   toolName: string,
   cred: ResolvedCredentials,
+  sandbox: ResolvedSandboxConfig,
   storageMounts?: Array<Record<string, unknown>>,
 ): Promise<string> {
   const roleArn = cred.toolRoleArn || resolveHarnessToolRoleArn();
@@ -247,7 +256,7 @@ async function createHarnessTool(
         Image: cred.image,
         ImageRegistryType: resolveImageRegistryType(cred.image),
         Command: ["/init"],
-        Resources: { CPU: "2", Memory: "2Gi" },
+        Resources: buildAgsSandboxResources(sandbox.resources),
         Ports: [
           { Name: "trw", Protocol: "TCP", Port: TRW_SERVICE_PORT },
           { Name: "envd", Protocol: "TCP", Port: 49983 },
@@ -286,6 +295,7 @@ async function createHarnessTool(
 async function syncHarnessToolConfiguration(
   toolId: string,
   cred: ResolvedCredentials,
+  sandbox: ResolvedSandboxConfig,
   envId: string,
   storageMounts?: Array<Record<string, unknown>>,
 ): Promise<void> {
@@ -296,7 +306,9 @@ async function syncHarnessToolConfiguration(
       CustomConfiguration: {
         Image: cred.image,
         ImageRegistryType: resolveImageRegistryType(cred.image),
+        Resources: buildAgsSandboxResources(sandbox.resources),
       },
+      DefaultTimeout: cred.defaultTimeout,
       ...(storageMounts?.length ? { StorageMounts: storageMounts } : {}),
     },
     cred,
@@ -307,6 +319,7 @@ async function syncHarnessToolConfiguration(
 async function ensureHarnessTool(
   envId: string,
   cred: ResolvedCredentials,
+  sandbox: ResolvedSandboxConfig,
   cos: HarnessCosConfig | null,
   onProgress?: (msg: { phase: string; message: string }) => void,
 ): Promise<{ toolId: string; justCreated: boolean }> {
@@ -319,7 +332,7 @@ async function ensureHarnessTool(
   const existing = await findToolByName(toolName, cred, envId);
   if (existing) {
     try {
-      await syncHarnessToolConfiguration(existing.toolId, cred, envId, storageMounts);
+      await syncHarnessToolConfiguration(existing.toolId, cred, sandbox, envId, storageMounts);
     } catch (err) {
       harnessTrace("orchestrator.tool.sync", {
         toolId: existing.toolId,
@@ -334,7 +347,7 @@ async function ensureHarnessTool(
     phase: "tool_create",
     message: `creating harness tool ${toolName} (first run, ~30s)`,
   });
-  const toolId = await createHarnessTool(envId, toolName, cred, storageMounts);
+  const toolId = await createHarnessTool(envId, toolName, cred, sandbox, storageMounts);
   return { toolId, justCreated: true };
 }
 
@@ -611,10 +624,20 @@ export class AgsStatefulSandboxOrchestrator {
       envId: args.envId,
     });
     const cred = resolveCredentials(this.options);
+    const sandbox = resolveSandboxConfig(
+      { sandbox: args.agentConfig.sandbox, engine: args.engine },
+      args.engine,
+    );
+    assertSandboxAcquireAllowed(sandbox, args.engine);
+    cred.image = resolveSandboxImage(sandbox, cred.image);
+    cred.defaultTimeout = resolveSandboxTimeout(sandbox, cred.defaultTimeout);
     if (!cred.apiKey?.trim()) {
       cred.apiKey = await fetchGatewayAccessToken(args.envId);
     }
     wl.set({
+      sandboxInfra: sandbox.infra,
+      sandboxCpu: sandbox.resources.cpu,
+      sandboxMemory: sandbox.resources.memory,
       sandboxImage: cred.image,
       harnessToolId: cred.harnessToolId,
     });
@@ -656,7 +679,7 @@ export class AgsStatefulSandboxOrchestrator {
 
     try {
       wl.milestone("tool.ensure");
-      const ensured = await ensureHarnessTool(args.envId, cred, cos, onProgress);
+      const ensured = await ensureHarnessTool(args.envId, cred, sandbox, cos, onProgress);
       toolId = ensured.toolId;
       wl.set({
         toolId,

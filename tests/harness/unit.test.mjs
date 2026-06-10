@@ -9,6 +9,12 @@ import {
   engineToDataPlaneSlug,
   harnessToolNameForEnv,
   buildHarnessInstanceEnv,
+  resolveSandboxConfig,
+  assertSandboxAcquireAllowed,
+  buildAgsSandboxResources,
+  normalizeAgentConfig,
+  SandboxConfigError,
+  DEFAULT_SANDBOX_RESOURCES,
 } from "../../packages/agent-runtime/dist/config.js";
 import {
   buildHarnessAcpMcpServers,
@@ -86,7 +92,99 @@ test("resolveRuntime harness + engine", () => {
 test("engineToDataPlaneSlug maps claude → claudecode", () => {
   assert.equal(engineToDataPlaneSlug("claude"), "claudecode");
   assert.equal(engineToDataPlaneSlug("codebuddy"), "codebuddy");
+  assert.equal(engineToDataPlaneSlug("hermes"), "hermes");
   assert.equal(engineToDataPlaneSlug("opencode"), "opencode");
+});
+
+test("resolveRuntime harness + hermes engine", () => {
+  assert.deepEqual(
+    resolveRuntime({
+      name: "x",
+      model: "m",
+      system: "s",
+      runtime: "harness",
+      engine: "hermes",
+    }),
+    { runtime: "harness", engine: "hermes" },
+  );
+});
+
+test("resolveSandboxConfig applies serverless defaults", () => {
+  assert.deepEqual(
+    resolveSandboxConfig({ sandbox: undefined }, "opencode"),
+    {
+      infra: "serverless",
+      resources: { ...DEFAULT_SANDBOX_RESOURCES },
+    },
+  );
+});
+
+test("resolveSandboxConfig merges partial resources and memory shorthand", () => {
+  assert.deepEqual(
+    resolveSandboxConfig(
+      {
+        sandbox: {
+          infra: "serverless",
+          resources: { memory: 4 },
+          timeout: "45m",
+          image: "ccr.example/trw:magent",
+        },
+      },
+      "opencode",
+    ),
+    {
+      infra: "serverless",
+      resources: { cpu: "2", memory: "4Gi" },
+      timeout: "45m",
+      image: "ccr.example/trw:magent",
+    },
+  );
+});
+
+test("buildAgsSandboxResources maps CPU/Memory for AGS API", () => {
+  assert.deepEqual(buildAgsSandboxResources({ cpu: "4", memory: "8Gi" }), {
+    CPU: "4",
+    Memory: "8Gi",
+  });
+});
+
+test("assertSandboxAcquireAllowed rejects hermes on serverless", () => {
+  assert.throws(
+    () =>
+      assertSandboxAcquireAllowed(
+        resolveSandboxConfig({ sandbox: { infra: "serverless" } }, "hermes"),
+        "hermes",
+      ),
+    SandboxConfigError,
+  );
+});
+
+test("assertSandboxAcquireAllowed rejects durable until Talos is wired", () => {
+  assert.throws(
+    () =>
+      assertSandboxAcquireAllowed(
+        resolveSandboxConfig({ sandbox: { infra: "durable" } }, "hermes"),
+        "hermes",
+      ),
+    /not wired/i,
+  );
+});
+
+test("normalizeAgentConfig fills sandbox for harness runtime", () => {
+  const cfg = normalizeAgentConfig({
+    name: "t",
+    model: "m",
+    system: "s",
+    runtime: "harness",
+    engine: "opencode",
+  });
+  assert.equal(cfg.sandbox?.infra, "serverless");
+  assert.deepEqual(cfg.sandbox?.resources, DEFAULT_SANDBOX_RESOURCES);
+});
+
+test("normalizeAgentConfig skips sandbox when managed and no yaml block", () => {
+  const cfg = normalizeAgentConfig({ name: "t", model: "m", system: "s", runtime: "managed" });
+  assert.equal(cfg.sandbox, undefined);
 });
 
 test("harnessToolNameForEnv uses oma-harness-{env} without cos suffix by default", () => {
@@ -388,6 +486,8 @@ test("normalizeAgentRuntime sets harness + engine from CLI args", () => {
   );
   assert.equal(cfg.runtime, "harness");
   assert.equal(cfg.engine, "claude");
+  assert.equal(cfg.sandbox?.infra, "serverless");
+  assert.deepEqual(cfg.sandbox?.resources, DEFAULT_SANDBOX_RESOURCES);
 });
 
 test("applyHarnessRuntimeEnv writes mcporter for custom tools", () => {
@@ -412,6 +512,21 @@ test("applyHarnessRuntimeEnv writes mcporter for custom tools", () => {
   );
   assert.ok(env.MCPORTER_CONFIG_CONTENT);
   assert.equal(env.HARNESS_SANDBOX_IMAGE, HARNESS_PUBLIC_MAGENT_IMAGE);
+});
+
+test("applyHarnessRuntimeEnv prefers config.sandbox.image over deploy default", () => {
+  const env = applyHarnessRuntimeEnv(
+    {},
+    {
+      name: "t",
+      model: "m",
+      system: "s",
+      runtime: "harness",
+      engine: "opencode",
+      sandbox: { infra: "serverless", image: "ccr.example/trw:custom" },
+    },
+  );
+  assert.equal(env.HARNESS_SANDBOX_IMAGE, "ccr.example/trw:custom");
 });
 
 test("buildMcporterConfig adds managed-agent-client for custom tools", () => {
@@ -725,6 +840,42 @@ test("buildHarnessInstanceEnv enables opencode serve for sync persistence", () =
   assert.equal(names.ENABLE_AGENT_OPENCODE, "true");
   assert.equal(names.ENABLE_AGENT_OPENCODE_ACP, "true");
   assert.equal(names.ENABLE_AGENT_OPENCODE_SERVE, "true");
+});
+
+test("buildHarnessInstanceEnv enables hermes acp + web (Talos preset parity)", () => {
+  const env = buildHarnessInstanceEnv({ name: "t", model: "m", system: "s" }, "hermes");
+  const names = Object.fromEntries(env.map((e) => [e.Name, e.Value]));
+  assert.equal(names.ENABLE_AGENT_HERMES_ACP, "true");
+  assert.equal(names.ENABLE_AGENT_HERMES_WEB, "true");
+  assert.equal(names.INTEGRATION_IDE, "hermes");
+});
+
+test("buildHarnessSandboxEnv maps OpenAI env for hermes engine", () => {
+  const saved = {
+    key: process.env.LLM_API_KEY,
+    url: process.env.OPENAI_BASE_URL,
+    model: process.env.LLM_MODEL,
+  };
+  process.env.LLM_API_KEY = "sk-openai";
+  process.env.OPENAI_BASE_URL = "https://example.com/v1";
+  process.env.LLM_MODEL = "hy3-preview";
+  const env = buildHarnessSandboxEnv({
+    config: { name: "t", model: "hy3-preview", system: "s" },
+    engine: "hermes",
+    clientToolCallbackBase: "http://127.0.0.1:19090",
+  });
+  const names = Object.fromEntries(env.map((e) => [e.Name, e.Value]));
+  assert.equal(names.ENABLE_AGENT_HERMES_ACP, "true");
+  assert.equal(names.ENABLE_AGENT_HERMES_WEB, "true");
+  assert.equal(names.OPENAI_API_KEY, "sk-openai");
+  assert.equal(names.OPENAI_BASE_URL, "https://example.com");
+  assert.equal(names.OPENCODE_CONFIG_CONTENT, undefined);
+  if (saved.key === undefined) delete process.env.LLM_API_KEY;
+  else process.env.LLM_API_KEY = saved.key;
+  if (saved.url === undefined) delete process.env.OPENAI_BASE_URL;
+  else process.env.OPENAI_BASE_URL = saved.url;
+  if (saved.model === undefined) delete process.env.LLM_MODEL;
+  else process.env.LLM_MODEL = saved.model;
 });
 
 test("harness sync event store append + hydrate round-trip", async () => {

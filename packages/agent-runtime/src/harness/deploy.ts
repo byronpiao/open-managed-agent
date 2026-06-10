@@ -5,15 +5,17 @@
 import fs from "fs";
 import path from "path";
 import type { AgentConfig, CustomTool, HarnessEnvVar, HarnessEngine } from "../config.js";
-import { buildHarnessInstanceEnv, getCustomTools } from "../config.js";
+import { buildHarnessInstanceEnv, getCustomTools, normalizeAgentConfig } from "../config.js";
 import {
   anthropicCompatToTrwEnv,
   codebuddyCompatToTrwEnv,
+  hermesOpenAiCompatToTrwEnv,
   resolveAnthropicCompatProvider,
   resolveCloudBasePlatformLlm,
   resolveCodebuddyProvider,
   resolveOpenAiCompatProvider,
   openAiCompatBaseUrlForHarness,
+  stripOpenAiV1Suffix,
 } from "./llm-providers.js";
 import { buildHarnessOpencodePermission } from "./opencode-permissions.js";
 
@@ -262,6 +264,11 @@ export function buildHarnessSandboxEnv(args: {
   } else if (args.engine === "codebuddy") {
     const codebuddy = resolveCodebuddyProvider(args.config);
     if (codebuddy) merged.push(...codebuddyCompatToTrwEnv(codebuddy));
+  } else if (args.engine === "hermes") {
+    const openai = resolveOpenAiCompatProvider(args.config);
+    if (openai) merged.push(...hermesOpenAiCompatToTrwEnv(openai));
+    const anthropic = resolveAnthropicCompatProvider(args.config);
+    if (anthropic) merged.push(...anthropicCompatToTrwEnv(anthropic));
   }
   const callback = args.clientToolCallbackBase.replace(/\/$/, "");
   if (callback) {
@@ -291,6 +298,28 @@ export function buildHarnessSandboxEnv(args: {
       !merged.some((e) => e.Name === "LLM_API_KEY")
     ) {
       merged.push({ Name: "LLM_API_KEY", Value: byokKey });
+    }
+  }
+  if (args.engine === "hermes") {
+    if (!merged.some((e) => e.Name === "OPENAI_API_KEY")) {
+      const platform = resolveCloudBasePlatformLlm(args.config);
+      if (platform?.apiKey) {
+        merged.push({ Name: "OPENAI_API_KEY", Value: platform.apiKey });
+        if (platform.baseUrl) {
+          merged.push({ Name: "OPENAI_BASE_URL", Value: platform.baseUrl });
+        }
+      }
+      const byokKey = process.env.LLM_API_KEY?.trim();
+      if (byokKey && !platform) {
+        merged.push({ Name: "OPENAI_API_KEY", Value: byokKey });
+        const byokUrl = process.env.OPENAI_BASE_URL?.trim();
+        if (byokUrl) {
+          merged.push({
+            Name: "OPENAI_BASE_URL",
+            Value: stripOpenAiV1Suffix(byokUrl),
+          });
+        }
+      }
     }
   }
   const customTools = buildManagedAgentClientTools(args.config);
@@ -340,11 +369,13 @@ export function normalizeAgentRuntime(
   if (runtime === "harness") {
     config.runtime = "harness";
     config.engine =
-      engine === "claude" || engine === "codebuddy" ? engine : "opencode";
-  } else {
-    config.runtime = "managed";
-    delete config.engine;
+      engine === "claude" || engine === "codebuddy" || engine === "hermes"
+        ? engine
+        : "opencode";
+    return normalizeAgentConfig(config);
   }
+  config.runtime = "managed";
+  delete config.engine;
   return config;
 }
 
@@ -386,7 +417,8 @@ export function applyHarnessRuntimeEnv(
   if (config.runtime !== "harness") return envMap;
   // Harness agent loop runs in AGS; drop managed-only local-dev flag that would block sandbox paths.
   delete envMap.OAK_DISABLE_SANDBOX;
-  envMap.HARNESS_SANDBOX_IMAGE = opts.sandboxImage ?? resolveHarnessSandboxImage();
+  envMap.HARNESS_SANDBOX_IMAGE =
+    opts.sandboxImage ?? config.sandbox?.image?.trim() ?? resolveHarnessSandboxImage();
   if (opts.harnessToolId) envMap.HARNESS_TOOL_ID = opts.harnessToolId;
   const mcporter = buildMcporterConfig({
     config,
