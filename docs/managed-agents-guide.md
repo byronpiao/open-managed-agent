@@ -5,22 +5,40 @@
 > **适用场景**：你要按官方 MA 文档或 SDK 习惯集成（`agents` / `environments` / `sessions` / SSE 事件流），而不是走 `magent run` 的 ACP 通道。  
 > **不适用**：默认托管 Agent（`runtime: managed`）— 该路径仍只有 ACP，见 [README](../README.md#快速开始)。
 
-协议细节与研发说明见 [managed-agents-http.md](./managed-agents-http.md) · 沙箱部署见 [harness-tutorial.md](./harness-tutorial.md)。
+**选型：** [Harness 用户故事](./harness-user-story.md) · 协议细节 [managed-agents-http.md](./managed-agents-http.md) · 沙箱部署 [harness-tutorial.md](./harness-tutorial.md)
 
 ---
 
 ## 这是什么？
 
-**Claude Managed Agents** 是 Anthropic 的托管 Agent 产品：用 REST + SSE 管理 Agent 配置、运行环境、会话与事件流。官方客户端包括：
+**Claude Managed Agents** 是 Anthropic 的托管 Agent 产品：用 REST + SSE 管理 Agent 配置、运行环境、会话与事件流。
 
-- **[ant CLI](https://platform.claude.com/docs/en/managed-agents/quickstart)** — 运维与脚本（连 `api.anthropic.com`）
-- **官方 TypeScript / Python SDK** — 应用集成
-- **任意 HTTP 客户端** — `curl` + SSE
+**OpenManagedAgent（OMA）** 在 `runtime: harness` 上提供**形状兼容**的 HTTP 面，后端是 **CloudBase 网关 + AGS 远程沙箱**，不是 Anthropic 云。
 
-**OpenManagedAgent（OMA）** 在 `runtime: harness` 上提供**形状兼容**的 HTTP 面，后端是 **CloudBase 网关 + AGS 远程沙箱**，不是 Anthropic 云。你可以：
+### 谁可以连我们的 MA HTTP？
 
-- 用 **`open-managed-agent-sdk`** 的 `createManagedAgentsClient` 或高层 `ManagedAgents` 类对话；
-- 或按 [官方 API 文档](https://platform.claude.com/docs/en/managed-agents) 自行发 HTTP，把 base URL 换成 CloudBase 网关即可。
+| 客户端 | 能否直接用 | 说明 |
+|--------|------------|------|
+| **`open-managed-agent-sdk`**（`createManagedAgentsClient` / `ManagedAgents`） | ✅ **推荐** | 专为 CloudBase 网关 + CAM 鉴权设计 |
+| **自研 HTTP**（`fetch` / `curl` + SSE） | ✅ | 按下方路径与请求头；base URL 换网关即可 |
+| **按官方 MA 文档写的应用** | ✅ 大部分流程 | 换 base URL + Bearer（CAM），`runtime: harness` 部署 |
+| **[ant CLI](https://platform.claude.com/docs/en/managed-agents/quickstart)** | ✗ | 固定 `api.anthropic.com` + Anthropic API Key |
+| **Anthropic 官方 TS/Python SDK（默认端点）** | ✗ | 不能把 endpoint 原样指向 OMA；请用我们的 SDK 或自写 HTTP |
+| **`magent run` / ACP 客户端** | 另一条路 | 走 `.../acp` JSON-RPC，不是 MA HTTP |
+
+### 协议实现了什么？（一览）
+
+| 类别 | 已实现 | 未实现 / 差异 |
+|------|--------|----------------|
+| **REST 资源** | `POST/GET /v1/agents` · `POST/GET/DELETE /v1/environments` · `POST/GET/DELETE /v1/sessions` | `sessions` **无 list** |
+| **事件** | `GET/POST /v1/sessions/{id}/events`（SSE + 入站事件） | — |
+| **入站事件类型** | `user.message` · `user.tool_confirmation` · `user.interrupt` | Multiagent / Outcomes 等预览能力 |
+| **出站事件** | 与官方 MA 事件形状对齐（含 HITL `requiresAction`） | 部分 toolset 细节随沙箱引擎而定 |
+| **请求头** | `Authorization: Bearer` · `anthropic-beta: managed-agents-2026-04-01` | 鉴权为 **CloudBase CAM**，非 `x-api-key` |
+| **配置语义** | Environment / Agent `metadata` 合并进有效 `agent.yaml` 再起箱 | `environment.config.packages` / `networking` 仅存未接 AGS |
+| **Runtime 范围** | 仅 **`runtime: harness`** | `runtime: managed` 仍只有 ACP |
+
+细节与缺口：[managed-agents-http.md](./managed-agents-http.md#已知缺口)。
 
 ---
 
@@ -45,8 +63,8 @@
 
 ```bash
 magent login
-export CLOUDBASE_ENV_ID=your-env-id
-export TCB_REGION=ap-shanghai
+tcb env use your-env-id
+# CI / 手填：见 harness-env.md#advanced-settings
 
 cp docs/examples/agent.sandbox.opencode.min.yaml ./agent.sandbox.yaml
 cd packages/agent-runtime && npm run build && cd ../..
@@ -56,13 +74,12 @@ magent agent:create \
   --runtime harness \
   --engine opencode \
   --file ./agent.sandbox.yaml \
-  --code ./packages/agent-runtime \
-  -e "$CLOUDBASE_ENV_ID"
+  --code ./packages/agent-runtime
 
 export CLOUDBASE_AGENT_ID=agent-xxxxxxxx
 ```
 
-凭证说明：[harness-credentials.md](./harness-credentials.md)。
+凭证：[harness-credentials.md](./harness-credentials.md) · CI：[Advanced settings](./harness-env.md#advanced-settings)。
 
 ### 2. 用 SDK 创建会话并发消息
 
@@ -268,4 +285,4 @@ MA Session               → 一次运行（起 AGS 沙箱 + 对话）
 
 **SDK：** `runtime: "harness"` 走 MA HTTP；`runtime: "managed"`（默认）走 ACP。
 
-云上协议验收：`node scripts/harness/managed-agents-protocol.mjs`（见 [acceptance-checklist.md](./acceptance-checklist.md)）。
+研发验收：`npm run ma-protocol`（需已部署的 harness Agent，`.env.harness` 里 `HARNESS_CLOUD_AGENT_ID` 或 `CLOUDBASE_AGENT_ID`）。见仓库根 [Harness一条龙.md](../../Harness一条龙.md)。

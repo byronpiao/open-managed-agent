@@ -10,19 +10,47 @@ import {
   loadEnv,
   assertHarnessCreds,
   applyHarnessLlmTier,
+  applyHarnessScenario,
+  applyScenarioEnv,
   applyHarnessTestDefaults,
+  hasAnthropicByokInMap,
+  parseHarnessEnginesArg,
+  harnessEnginesIncludeOpencode,
+  harnessEnginesIncludeClaude,
 } from "../../scripts/harness/load-env.mjs";
+
+/** Parent `envForHarnessTier` sets this before spawn; `loadEnv()` wipes it unless pinned first. */
+const harnessTierPin = process.env.HARNESS_LLM_TIER?.trim();
 loadEnv();
 
 const FULL = process.argv.includes("--full");
 const LLM_SUITE = process.argv.includes("--llm");
+const E2E_ENGINES = parseHarnessEnginesArg(process.argv.slice(2));
+const E2E_OPENCODE = harnessEnginesIncludeOpencode(E2E_ENGINES);
+const E2E_CLAUDE = harnessEnginesIncludeClaude(E2E_ENGINES);
 const FORCE_ZEN = process.env.HARNESS_FORCE_ZEN === "1";
 
-const tierFromEnv = process.env.HARNESS_LLM_TIER?.trim();
+function applyPinnedHarnessTier(tier) {
+  if (tier === "anthropic-byok") {
+    applyScenarioEnv("local-claude");
+    applyHarnessLlmTier("anthropic-byok");
+    return;
+  }
+  if (tier === "byok") {
+    applyScenarioEnv("local-opencode");
+    applyHarnessLlmTier("byok");
+    return;
+  }
+  applyHarnessLlmTier(tier);
+}
+
+const tierFromEnv = harnessTierPin;
 if (tierFromEnv) {
-  applyHarnessLlmTier(tierFromEnv);
+  applyPinnedHarnessTier(tierFromEnv);
 } else if (LLM_SUITE) {
   applyHarnessLlmTier("byok");
+} else if (FULL && E2E_CLAUDE && !E2E_OPENCODE) {
+  applyHarnessScenario("local-claude");
 } else if (FULL && FORCE_ZEN) {
   applyHarnessLlmTier("zen");
 } else if (FULL) {
@@ -727,29 +755,31 @@ async function testSyncPersistence() {
 
 function resolveClaudeAgentConfig() {
   const cfg = { ...BASE_AGENT_CONFIG, engine: "claude" };
-  if (hasCustomLlmInEnv() || process.env.ANTHROPIC_BASE_URL?.trim()) {
-    cfg.model = process.env.LLM_MODEL?.trim() ?? "mimo-v2.5-pro";
-  }
+  const model = process.env.LLM_MODEL?.trim();
+  if (model) cfg.model = model;
   return cfg;
 }
 
-function hasClaudeLlmForE2e() {
-  if (hasCustomLlmInEnv() && process.env.ANTHROPIC_BASE_URL?.trim()) return true;
-  return !!(
-    process.env.TCB_API_KEY?.trim() &&
-    (process.env.CLOUDBASE_ENV_ID?.trim() || process.env.TCB_ENV_ID?.trim()) &&
-    !FORCE_ZEN
-  );
+function restoreOpencodeHarnessTier() {
+  const tier = process.env.HARNESS_E2E_OPENCODE_TIER?.trim() || "zen";
+  applyHarnessLlmTier(tier);
+  applyHarnessTestDefaults();
+}
+
+/** Respect preflight tier (anthropic-byok fallback); do not reset to platform hy3. */
+function applyClaudeHarnessLlmTier() {
+  const tier = process.env.HARNESS_LLM_TIER?.trim();
+  if (tier === "anthropic-byok") {
+    applyScenarioEnv("local-claude");
+    applyHarnessLlmTier("anthropic-byok");
+    applyHarnessTestDefaults();
+    return;
+  }
+  applyHarnessScenario("local-claude");
 }
 
 async function testClaudeSessionPersistence() {
-  if (!hasClaudeLlmForE2e()) {
-    console.warn(
-      "⚠ claude SessionStore e2e skipped: need TCB_API_KEY (platform) or LLM_* + ANTHROPIC_BASE_URL",
-    );
-    return;
-  }
-
+  applyClaudeHarnessLlmTier();
   assertHarnessCreds();
   const envId = process.env.CLOUDBASE_ENV_ID;
   const token = `CLD${Date.now().toString(36)}`;
@@ -1062,14 +1092,28 @@ async function testSkillsLlmOptional() {
 }
 
 async function testEngineMatrix() {
-  const engines = LLM_SUITE ? ["opencode", "claude", "codebuddy"] : ["opencode"];
+  const engines = LLM_SUITE
+    ? ["opencode", "claude", "codebuddy"]
+    : E2E_ENGINES === "all"
+      ? ["opencode", "claude"]
+      : E2E_ENGINES === "claude"
+        ? ["claude"]
+        : ["opencode"];
   for (const engine of engines) {
     try {
       stopRuntime();
       await sleep(500);
+      if (engine === "claude") {
+        applyClaudeHarnessLlmTier();
+      } else {
+        restoreOpencodeHarnessTier();
+      }
       await startRuntime({
         useCloudDb: true,
-        agentConfig: { ...resolveFullAgentConfig(), engine },
+        agentConfig:
+          engine === "claude"
+            ? resolveClaudeAgentConfig()
+            : { ...resolveFullAgentConfig(), engine },
       });
       const sessionId = crypto.randomUUID();
       await rpc("/acp", "session/new", { sessionId, meta: { userId: `e2e-engine-${engine}` } });
@@ -1164,22 +1208,65 @@ async function main() {
     console.log("✓ Zed-style stdio bridge lifecycle");
 
     if (FULL) {
-      await testSyncPersistence();
-      console.log(
-        LLM_SUITE
-          ? "✓ opencode sync export → CloudBase → hydrate → session/load → token recall"
-          : "✓ opencode sync export → CloudBase → hydrate → session/load replay (platform)",
-      );
-      await testClaudeSessionPersistence();
-      console.log("✓ claude SessionStore → CloudBase → runtime restart → token recall");
-      await testSandboxPrompt();
-      console.log("✓ session/prompt → AGS sandbox SSE");
-      await testSandboxCustomToolLoop();
-      console.log("✓ sandbox custom tool MCP ↔ client ↔ agent");
-      await testZedStdioPrompt();
-      console.log("✓ Zed-style stdio prompt → sandbox");
+      if (E2E_OPENCODE) {
+        await testSyncPersistence();
+        console.log(
+          LLM_SUITE
+            ? "✓ opencode sync export → CloudBase → hydrate → session/load → token recall"
+            : "✓ opencode sync export → CloudBase → hydrate → session/load replay (platform)",
+        );
+      } else {
+        console.log("⊘ opencode sync（--engines claude）");
+      }
+      if (E2E_CLAUDE) {
+        if (!hasAnthropicByokInMap()) {
+          throw new Error(
+            "HARNESS --engines claude|all requires scenarios/.env.local-claude",
+          );
+        }
+        await testClaudeSessionPersistence();
+        console.log("✓ claude SessionStore → CloudBase → runtime restart → token recall");
+        if (E2E_OPENCODE) restoreOpencodeHarnessTier();
+      } else {
+        console.log("⊘ claude SessionStore（--engines claude|all 跑旁路）");
+      }
+      if (E2E_OPENCODE) {
+        await testSandboxPrompt();
+        console.log("✓ session/prompt → AGS sandbox SSE");
+        await testSandboxCustomToolLoop();
+        console.log("✓ sandbox custom tool MCP ↔ client ↔ agent");
+        await testZedStdioPrompt();
+        console.log("✓ Zed-style stdio prompt → sandbox");
+        await testSkillsLlmOptional();
+      } else {
+        console.log("⊘ opencode 真箱 prompt/tool/skills（--engines claude）");
+      }
       await testEngineMatrix();
-      await testSkillsLlmOptional();
+
+      const { parseDbPressureArgs, runE2eDbPressure } = await import(
+        "../../scripts/harness/db-pressure.mjs"
+      );
+      const dbPressure = parseDbPressureArgs(process.argv.slice(2));
+      if (dbPressure.enabled) {
+        const envId = process.env.CLOUDBASE_ENV_ID;
+        const deps = { sleep, startRuntime, stopRuntime, rpc, promptSessionText, waitSandboxReady };
+        if (E2E_OPENCODE) {
+          await runE2eDbPressure({
+            engine: "opencode",
+            rounds: dbPressure.rounds,
+            envId,
+            deps: { ...deps, agentConfig: resolveFullAgentConfig() },
+          });
+        }
+        if (E2E_CLAUDE) {
+          await runE2eDbPressure({
+            engine: "claude",
+            rounds: dbPressure.rounds,
+            envId,
+            deps: { ...deps, agentConfig: resolveClaudeAgentConfig() },
+          });
+        }
+      }
     }
   } finally {
     stopRuntime();

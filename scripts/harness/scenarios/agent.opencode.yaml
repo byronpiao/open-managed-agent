@@ -1,0 +1,10 @@
+name: Harness OpenCode
+runtime: harness
+engine: opencode
+system: |
+  You are a helpful coding assistant in a remote sandbox workspace.
+  Reply concisely.
+
+metadata:
+  runtime: open-managed-agent
+  harness: "1"

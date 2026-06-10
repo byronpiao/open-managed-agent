@@ -1,26 +1,29 @@
 # 沙箱 Agent — 凭证
 
-只谈 **OMA 沙箱 Agent**（`runtime: harness`）。填好下面四样即可部署、起箱、`magent run`；**不用**去控制台创建 API Key。
+只谈 **OMA 沙箱 Agent**（`runtime: harness`）。**不用**去控制台创建 API Key。
 
 ---
 
-## 必填
+## 快速开始（两条命令）
 
-| 变量 | 说明 |
-|------|------|
-| `CLOUDBASE_ENV_ID` | CloudBase 环境 ID |
-| `TCB_REGION` | 如 `ap-shanghai` |
-| `TCB_SECRET_ID` | 腾讯云 CAM SecretId |
-| `TCB_SECRET_KEY` | 腾讯云 CAM SecretKey |
+```bash
+magent login
+tcb env use your-env-id
+```
 
-推荐先执行 `magent login`，本机 CLI 会用登录态；未 login 时再 export 上表四列。
+然后直接 `magent agent:create ...` 或 `cp .env.harness.example .env.harness` 跑 harness 验收。  
+CAM、环境 ID、region 会由 CLI / deploy 自动解析；**不必**先 export 四列变量。
 
-**鉴权怎么工作：**
+| 你需要做的 | 自动获得什么 |
+|------------|--------------|
+| `magent login` | CAM 临时密钥（代替 `TCB_SECRET_*`） |
+| `tcb env use <envId>` | 默认 `CLOUDBASE_ENV_ID` |
+| （同上，deploy / load-env 时） | `TCB_REGION`（`tcb env detail`）写入进程 env，并 forward 进云上函数 |
 
-1. **CloudBase 网关**（`X-Cloudbase-Authorization`）— Runtime 用 CAM **自动换取**短期 JWT，起箱、调 CloudBase AI；你**不用**手填 API Key。
-2. **沙箱实例**（`X-Access-Token`，`sit_*`）— 起箱后 Runtime 调 `AcquireSandboxInstanceToken`，写入 `harness_sessions.instanceAccessToken`，打进网关 Header；**不用**你配置，也**不要**写进 `.env.harness`。
+**鉴权：**
 
-生产默认 `AuthMode: TOKEN`。你无需配置此项。
+1. **CloudBase 网关** — Runtime 用 CAM 自动换短期 JWT；不必手填 API Key。
+2. **沙箱实例**（`sit_*`）— 起箱后自动写入 session；不要写进 `.env`。
 
 ---
 
@@ -62,13 +65,20 @@
 
 ```bash
 magent login
-export CLOUDBASE_ENV_ID=your-env-id
-export TCB_REGION=ap-shanghai
+tcb env use your-env-id
 
 magent agent:create --runtime harness --engine opencode ...
 export CLOUDBASE_AGENT_ID=agent-...
-magent run -a "$CLOUDBASE_AGENT_ID" -e "$CLOUDBASE_ENV_ID" -m "hello"
+magent run -a "$CLOUDBASE_AGENT_ID" -m "hello"
 ```
+
+`magent run` 可省略 `-e`（沿用 `tcb env use` 或 `CLOUDBASE_ENV_ID`）。
+
+---
+
+## Advanced settings
+
+CI、多环境 pin、无 tcb 交互机器：见 [harness-env.md — Advanced settings](./harness-env.md#advanced-settings)。
 
 ---
 

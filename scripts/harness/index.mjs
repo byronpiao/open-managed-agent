@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Harness 验收入口：
+ * Harness 验收入口 — agent 驱动，无交互。
  *
- *   npm run harness -- local    # stub → 真箱 e2e（CloudBase AI）→ 矩阵 →（COS 硬门）
- *   npm run harness -- cloud-tcbr  # 云托管 tcbr + smoke（另跑，不进 test:full）
- *   npm run harness -- cloud-scf  # SCF + smoke（完整一条龙时与 cloud-tcbr 都跑）
+ *   npm run harness:smoke               # 合入默认：test:full + cloud-opencode
+ *   npm run harness:local-claude
+ *   npm run harness:cloud-claude
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
@@ -14,28 +14,71 @@ import {
   hydrateTcbApiKeyFromCam,
   applyHarnessLlmTier,
   applyHarnessScenario,
+  applyScenarioEnv,
+  applyHarnessTestDefaults,
   logHarnessScenario,
+  parseHarnessEnginesArg,
+  assertHarnessEnginesEnv,
+  harnessEnginesIncludeOpencode,
+  cloudHarnessScenario,
 } from "./load-env.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
 
-const HELP = `Usage: npm run harness -- <local|cloud-tcbr|cloud-scf> [options]
+const HELP = `Usage: npm run harness -- <command> [options]
 
-  local        stub + 真 AGS（CloudBase AI hy3-preview，CAM 鉴权）+ 矩阵
-  cloud-tcbr   云托管 tcbr：deploy opencode **zen** → gateway smoke
-  cloud-scf    SCF：deploy **自定义 LLM**（.env.harness ③ 段 LLM_*）→ smoke
+Local（--engines 默认 opencode 主力）:
+  local                 stub + 真 AGS + 矩阵（+ 可选 COS）
+  --engines opencode|claude|all
 
-  cloud-scf  deploy 前 probe LLM_*；cloud-tcbr 固定 zen（忽略 ③ 段）
-          --agent-id <id>   或 HARNESS_CLOUD_AGENT_ID / HARNESS_CLOUD_SCF_AGENT_ID
-          --verify-only     只 smoke
-          --no-verify       只 deploy
+Cloud（engine 后缀对等；无后缀 = opencode 主力）:
+  cloud                 cloud-tcbr-opencode ∥ cloud-scf-opencode
+  cloud-opencode        同上
+  cloud-claude          cloud-tcbr-claude ∥ cloud-scf-claude
+  cloud-tcbr-opencode   云托管 · opencode zen
+  cloud-scf-opencode    SCF · ③ OpenAI BYOK
+  cloud-tcbr-claude     云托管 · ③ Anthropic BYOK
+  cloud-scf-claude      SCF · ③ Anthropic BYOK
 
-日常：  npm run test:full && npm run harness -- cloud-tcbr
-完整：  上式 + npm run harness -- cloud-scf
+  兼容别名: cloud-tcbr → cloud-tcbr-opencode · cloud-scf → cloud-scf-opencode
 
-More: docs/harness-architecture.md · docs/harness-env.md
+  --agent-id <id>  或 .env.harness ⑤ HARNESS_CLOUD_{TCBR|SCF}_{OPENCODE|CLAUDE}_AGENT_ID
+  --verify-only / --no-verify
+
+可选（默认不跑）:
+  --db-pressure              10 轮会话 FlexDB 压力采样（可用 --db-pressure-rounds N）
+  本地在 e2e full 末尾；云上与 extended verify 之后
+
+编排: npm run harness:run -- [--engines …] [--cloud] [--cloud-claude] [--ma-protocol]
+文档: Harness一条龙.md
 `;
+
+function forwardE2eArgs(engines, extraArgs) {
+  const out = ["--full", "--engines", engines];
+  if (extraArgs.includes("--db-pressure")) out.push("--db-pressure");
+  const ri = extraArgs.indexOf("--db-pressure-rounds");
+  if (ri >= 0 && extraArgs[ri + 1]) {
+    out.push("--db-pressure-rounds", extraArgs[ri + 1]);
+  }
+  return out;
+}
+
+/** @returns {{ backend: "tcbr"|"scf"|null; engine: "opencode"|"claude"; parallel: boolean }|null} */
+function parseCloudCommand(cmd) {
+  const map = {
+    cloud: { backend: null, engine: "opencode", parallel: true },
+    "cloud-opencode": { backend: null, engine: "opencode", parallel: true },
+    "cloud-claude": { backend: null, engine: "claude", parallel: true },
+    "cloud-tcbr": { backend: "tcbr", engine: "opencode", parallel: false },
+    "cloud-scf": { backend: "scf", engine: "opencode", parallel: false },
+    "cloud-tcbr-opencode": { backend: "tcbr", engine: "opencode", parallel: false },
+    "cloud-scf-opencode": { backend: "scf", engine: "opencode", parallel: false },
+    "cloud-tcbr-claude": { backend: "tcbr", engine: "claude", parallel: false },
+    "cloud-scf-claude": { backend: "scf", engine: "claude", parallel: false },
+  };
+  return map[cmd] ?? null;
+}
 
 async function assertHarnessAgsRuntimeEnvSync() {
   const { assertHarnessAgsRuntimeEnv } = await import(
@@ -46,7 +89,17 @@ async function assertHarnessAgsRuntimeEnvSync() {
 
 function envForHarnessTier(tier) {
   const env = { ...process.env };
-  applyHarnessLlmTier(tier, env);
+  if (tier === "anthropic-byok") {
+    applyScenarioEnv("local-claude", env);
+    applyHarnessLlmTier("anthropic-byok", env);
+  } else if (tier === "byok") {
+    applyScenarioEnv("local-opencode", env);
+    applyHarnessLlmTier("byok", env);
+  } else if (tier === "zen") {
+    applyHarnessLlmTier("zen", env);
+  } else {
+    applyHarnessLlmTier("platform", env);
+  }
   applyHarnessTestDefaults(env);
   return env;
 }
@@ -66,67 +119,108 @@ function truthyCos() {
   return v === "1" || v === "true" || v === "yes";
 }
 
-async function runLocal() {
+function spawnHarnessChild(cmd, extraArgs = []) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [resolve(__dirname, "index.mjs"), cmd, ...extraArgs],
+      { cwd: repoRoot, stdio: "inherit", env: process.env },
+    );
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${cmd} failed (exit ${code ?? 1})`));
+    });
+  });
+}
+
+async function runCloudParallel(engine, extraArgs) {
   loadEnv();
-  const scenarioMeta = applyHarnessScenario("local");
-  logHarnessScenario(scenarioMeta);
+  await hydrateTcbApiKeyFromCam();
+  const tcbr = `cloud-tcbr-${engine}`;
+  const scf = `cloud-scf-${engine}`;
+  console.log(`=== harness cloud-${engine}: ${tcbr} + ${scf} in parallel ===\n`);
+  await Promise.all([spawnHarnessChild(tcbr, extraArgs), spawnHarnessChild(scf, extraArgs)]);
+  console.log(`\n✓ cloud-tcbr-${engine} + cloud-scf-${engine} both passed`);
+}
+
+async function runLocal(extraArgs = []) {
+  const engines = parseHarnessEnginesArg(extraArgs);
+  loadEnv();
+  try {
+    assertHarnessEnginesEnv(engines);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+
+  const scenario = engines === "claude" ? "local-claude" : "local-opencode";
+  logHarnessScenario(applyHarnessScenario(scenario));
 
   console.log("=== harness local: e2e stub（网关 + 假沙箱）===");
   runNode("tests/harness/e2e.test.mjs");
 
   await hydrateTcbApiKeyFromCam();
-  console.log("=== harness local: AGS env（CloudBase AI hy3-preview，CAM）===");
   await assertHarnessAgsRuntimeEnvSync();
 
-  console.log("=== harness local: platform LLM probe（30s，失败不进入 300s×N 真箱）===");
-  const {
-    probeCloudBasePlatformLlm,
-    formatPlatformProbeFailureGuide,
-    isPlatformQuotaExceeded,
-  } = await import("../../packages/agent-runtime/dist/harness/llm-probe.js");
-
-  let localTier = "platform";
-  const platformProbe = await probeCloudBasePlatformLlm();
-  if (!platformProbe.ok) {
-    if (isPlatformQuotaExceeded(platformProbe)) {
-      console.warn(
-        "⚠ hy3-preview quota exhausted (HTTP 429) — local harness continues with opencode zen.\n" +
-          "  Sandbox / CAM / AGS path still runs; this run does NOT validate CloudBase AI platform LLM.\n" +
-          "  To test hy3 again: recharge quota in console, then re-run test:full.\n",
-      );
-      localTier = "zen";
-    } else {
-      console.error(formatPlatformProbeFailureGuide(platformProbe));
-      process.exit(1);
-    }
-  } else {
+  const { runHarnessLlmPreflight } = await import("./llm-preflight.mjs");
+  const localScenario = engines === "claude" ? "local-claude" : "local-opencode";
+  console.log(`=== harness local: LLM preflight (${localScenario}) ===`);
+  let preflight;
+  try {
+    preflight = await runHarnessLlmPreflight(localScenario, { allowTestFallback: true });
+  } catch (err) {
+    console.error(err.message ?? err);
+    process.exit(1);
+  }
+  if (preflight.probe?.ok) {
     console.log(
-      `✓ platform LLM ${platformProbe.latencyMs}ms model=${platformProbe.model} reply=${platformProbe.replySnippet ?? "(empty)"}`,
+      `✓ ${preflight.protocol} tier=${preflight.tier} ${preflight.probe.latencyMs}ms ` +
+        `model=${preflight.probe.model} reply=${preflight.probe.replySnippet ?? "(empty)"}`,
     );
+  } else if (preflight.tier === "zen") {
+    console.log(`✓ tier=zen (${preflight.fallback ?? "platform unavailable"})`);
+  }
+  applyHarnessTestDefaults();
+  const localTier = preflight.tier;
+  if (engines !== "claude") {
+    process.env.HARNESS_E2E_OPENCODE_TIER = localTier === "zen" ? "zen" : "platform";
   }
 
-  applyHarnessLlmTier(localTier);
-  applyHarnessTestDefaults();
+  const engineLabel =
+    engines === "claude"
+      ? preflight.tier === "anthropic-byok"
+        ? "BYOK Anthropic"
+        : "hy3-preview"
+      : localTier === "zen"
+        ? "zen"
+        : "hy3-preview";
+  console.log(`=== harness local: e2e full（engines=${engines}，llm=${engineLabel}）===`);
+  runNode("tests/harness/e2e.test.mjs", forwardE2eArgs(engines, extraArgs), { tier: localTier });
 
-  console.log(
-    `=== harness local: e2e full（真 AGS + ${localTier === "zen" ? "opencode zen" : "平台 hy3-preview"} / sync）===`,
-  );
-  runNode("tests/harness/e2e.test.mjs", ["--full"], { tier: localTier });
-
-  console.log("=== harness local: matrix parity（#1–#2 TRW #8 MCP #9 CloudBase #10 Skills）===");
-  await assertHarnessAgsRuntimeEnvSync();
-  runNode("tests/harness/matrix-parity.test.mjs", [], { tier: localTier });
+  if (harnessEnginesIncludeOpencode(engines)) {
+    console.log("=== harness local: matrix parity ===");
+    await assertHarnessAgsRuntimeEnvSync();
+    runNode("tests/harness/matrix-parity.test.mjs", [], { tier: localTier });
+  }
 
   if (truthyCos()) {
     const { assertHarnessCosEnv } = await import(
       "../../packages/agent-runtime/dist/harness/harness-env.js"
     );
     assertHarnessCosEnv();
-    console.log("=== harness local: cos（工作区快照，HARNESS_COS_ENABLED=1 硬门）===");
+    console.log("=== harness local: cos-e2e ===");
     runNode("scripts/harness/cos-e2e.mjs");
   } else {
-    console.log("(skip cos — 在 .env.harness 设 HARNESS_COS_ENABLED=1，见 docs/harness-env.md)");
+    console.log("(skip cos — HARNESS_COS_ENABLED=1 时硬门)");
   }
+}
+
+async function runCloudSingle(backend, engine, extraArgs) {
+  loadEnv();
+  logHarnessScenario(applyHarnessScenario(cloudHarnessScenario(backend, engine)));
+  const { runCloudHarness } = await import("./cloud.mjs");
+  await runCloudHarness(extraArgs, { backend, engine });
 }
 
 async function main() {
@@ -138,29 +232,24 @@ async function main() {
     process.exit(cmd ? 0 : 1);
   }
 
-  switch (cmd) {
-    case "local":
-      await runLocal();
-      break;
-    case "cloud-tcbr":
-    case "cloud-scf": {
-      loadEnv();
-      const scenario = cmd === "cloud-scf" ? "cloud-scf" : "cloud-tcbr";
-      logHarnessScenario(applyHarnessScenario(scenario));
-      const { runCloudHarness } = await import("./cloud.mjs");
-      const backend = cmd === "cloud-scf" ? "scf" : "tcbr";
-      await runCloudHarness(args.slice(1), { backend });
-      break;
-    }
-    default:
-      if (cmd === "cloud") {
-        console.error("Renamed: use cloud-tcbr (tcbr) or cloud-scf (SCF), not cloud.\n");
-      } else {
-        console.error(`Unknown command: ${cmd}\n`);
-      }
-      console.log(HELP);
-      process.exit(1);
+  if (cmd === "local") {
+    await runLocal(args.slice(1));
+    return;
   }
+
+  const cloud = parseCloudCommand(cmd);
+  if (cloud) {
+    if (cloud.parallel) {
+      await runCloudParallel(cloud.engine, args.slice(1));
+    } else {
+      await runCloudSingle(cloud.backend, cloud.engine, args.slice(1));
+    }
+    return;
+  }
+
+  console.error(`Unknown command: ${cmd}\n`);
+  console.log(HELP);
+  process.exit(1);
 }
 
 main().catch((err) => {

@@ -9,8 +9,7 @@
  * Steps:
  *   1. quickstart  — agent.sandbox.min.yaml + no-cos + platform (tutorial)
  *   2. test:full    — local stub/e2e/matrix + optional COS from .env.harness ⑥
- *   3. cloud-tcbr   — agent.harness.cloud + zen + no-cos
- *   4. cloud-scf    — agent.harness.cloud + BYOK ③ + no-cos
+ *   3. harness:cloud-opencode — tcbr zen + scf OpenAI BYOK
  */
 import { spawnSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
@@ -44,7 +43,7 @@ async function main() {
   console.log("Harness delivery — each step uses its own scenario (see scripts/harness/scenarios/README.md)\n");
 
   if (!hasFlag("--skip-quickstart")) {
-    runStep("1/4 quickstart (tutorial yaml, no-cos)", process.execPath, [
+    runStep("1/3 quickstart (tutorial yaml, no-cos)", process.execPath, [
       resolve(__dirname, "quickstart.mjs"),
       "--keep-agent",
     ]);
@@ -52,15 +51,14 @@ async function main() {
     console.log("(skip quickstart — --skip-quickstart)\n");
   }
 
-  runStep("2/4 test:full (local platform + optional COS)", "npm", ["run", "test:full"]);
+  runStep("2/3 test:full (local platform + optional COS)", "npm", ["run", "test:full"]);
 
   if (hasFlag("--skip-cloud")) {
     console.log("\n(skip cloud — --skip-cloud)\n✓ delivery (local only) done");
     return;
   }
 
-  runStep("3/4 cloud-tcbr (zen, no-cos)", "npm", ["run", "harness", "--", "cloud-tcbr"]);
-  runStep("4/4 cloud-scf (BYOK, no-cos)", "npm", ["run", "harness", "--", "cloud-scf"]);
+  runStep("3/3 harness:cloud-opencode", "npm", ["run", "harness:cloud-opencode"]);
 
   console.log("\n✓ harness delivery pipeline complete");
 }

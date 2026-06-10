@@ -251,4 +251,4 @@ Export 细节（`opencode-sync.ts`）：
 - [harness-architecture.md](./harness-architecture.md) — 运行时总架构  
 - [harness-opencode.md](./harness-opencode.md) — OpenCode 对客配置  
 - [harness-claude-code.md](./harness-claude-code.md) — Claude 对客配置  
-- [harness-env.md](./harness-env.md) — `TCB_SECRET_*` 与 `.env.harness`
+- [harness-env.md](./harness-env.md) — `TCB_REGION`（FlexDB）、`.env.harness` 与 [Advanced settings](./harness-env.md#advanced-settings)

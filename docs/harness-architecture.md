@@ -16,8 +16,9 @@ engine: opencode
 ```
 
 ```bash
-magent agent:create -n MyAgent --runtime harness --engine opencode -f agent.yaml -e "$CLOUDBASE_ENV_ID"
-magent agent:update -i "$AGENT_ID" --runtime harness --engine opencode -f agent.yaml -e "$CLOUDBASE_ENV_ID"
+# 先 magent login && tcb env use <envId>（-e 可省略）
+magent agent:create -n MyAgent --runtime harness --engine opencode -f agent.yaml
+magent agent:update -i "$AGENT_ID" --runtime harness --engine opencode -f agent.yaml
 ```
 
 云上进程读 `AGENT_CONFIG` → `resolveRuntime()` → `runtime=harness`。支持 SCF、tcbr、scf-image。

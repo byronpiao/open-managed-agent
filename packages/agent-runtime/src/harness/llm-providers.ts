@@ -190,20 +190,42 @@ export function stripOpenAiV1Suffix(url: string): string {
   return url.replace(/\/v1\/?$/, "").replace(/\/$/, "") || url;
 }
 
+/**
+ * Host-side Anthropic probe headers — send both auth shapes; gateways pick what they accept.
+ * (Claude Code in sandbox only emits one credential; see `anthropicCompatToTrwEnv`.)
+ */
+export function buildAnthropicCompatFetchHeaders(
+  apiKey: string,
+  _baseUrl?: string,
+): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "anthropic-version": "2023-06-01",
+    Authorization: `Bearer ${apiKey}`,
+    "x-api-key": apiKey,
+  };
+}
+
 /** TRW claude ACP sidecar env (Anthropic protocol). */
 export function anthropicCompatToTrwEnv(
   provider: CompatLlmProvider,
 ): Array<{ Name: string; Value: string }> {
   const out: Array<{ Name: string; Value: string }> = [];
   if (provider.apiKey) {
-    out.push({ Name: "ANTHROPIC_API_KEY", Value: provider.apiKey });
+    // Claude Code precedence: AUTH_TOKEN (Bearer) before API_KEY (x-api-key).
     out.push({ Name: "ANTHROPIC_AUTH_TOKEN", Value: provider.apiKey });
+    out.push({ Name: "ANTHROPIC_API_KEY", Value: provider.apiKey });
   }
   if (provider.baseUrl) {
     out.push({ Name: "ANTHROPIC_BASE_URL", Value: provider.baseUrl });
   }
   if (provider.model) {
-    out.push({ Name: "ANTHROPIC_MODEL", Value: provider.model });
+    const model = provider.model;
+    out.push({ Name: "ANTHROPIC_MODEL", Value: model });
+    // Third-party Anthropic gateways: pin Claude Code aliases to the served model id.
+    out.push({ Name: "ANTHROPIC_DEFAULT_HAIKU_MODEL", Value: model });
+    out.push({ Name: "ANTHROPIC_DEFAULT_SONNET_MODEL", Value: model });
+    out.push({ Name: "ANTHROPIC_DEFAULT_OPUS_MODEL", Value: model });
   }
   return out;
 }

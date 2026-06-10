@@ -1,31 +1,50 @@
-# Harness 验收场景矩阵
+# Harness 场景矩阵
 
-每条验收路径 = **agent.yaml 形态** + **env 场景** + **AGS tool 变体**。不要用一个「全开」的 `.env.harness` 跑所有步骤。
+**3 部署面 × 2 engine = 6 格**。每格一对文件；agent 只按 **engine** 分两份（对称、好记）。
 
-`load-env.mjs` 的 `applyHarnessScenario()` 在运行时裁剪 env；COS ⑥ 段可以写在文件里，但 **cloud 步骤会自动 strip**，避免 `MountOption` 指向无 `StorageMounts` 的 tool。
+```
+                 │ opencode                    │ claude
+─────────────────┼─────────────────────────────┼──────────────────────────────
+local            │ .env.local-opencode         │ .env.local-claude
+                 │ agent.opencode.yaml         │ agent.claude.yaml
+cloud-tcbr       │ .env.cloud-tcbr-opencode    │ .env.cloud-tcbr-claude
+cloud-scf        │ .env.cloud-scf-opencode     │ .env.cloud-scf-claude
+```
 
-| 步骤 | 命令 | agent yaml | env 场景 | AGS tool | LLM |
-|------|------|------------|----------|----------|-----|
-| 对客快速开始 | `node scripts/harness/quickstart.mjs` | `docs/examples/agent.sandbox.opencode.min.yaml` | `quickstart` | `{env}-no-cos` | CloudBase AI |
-| 合入 / local | `npm run test:full` | （本机 orchestrator） | `local` | ⑥ 开 → `-with-cos`，否则 `-no-cos` | hy3（429→zen） |
-| 云托管 | `npm run harness -- cloud-tcbr` | `agent.harness.cloud.yaml` → zen | `cloud-tcbr` | **强制** `-no-cos` | opencode zen |
-| 云函数 BYOK | `npm run harness -- cloud-scf` | `agent.harness.cloud.yaml` → ③ 段 | `cloud-scf` | **强制** `-no-cos` | 自定义 OpenAI-compat |
-| **交付一条龙** | `npm run test:delivery` | 上表顺序全跑 | 每步自动切换 | 见上 | 三条路径 |
+| 格子 | LLM tier | `.env.*` 内容 | preflight |
+|------|----------|----------------|-----------|
+| `local-opencode` | platform（429→zen） | 可为空 | OpenAI Chat |
+| `local-claude` | 先 platform hy3；测试 fallback ③ | ③ 可选（fallback 用） | Anthropic Messages + sandbox-compat |
+| `cloud-tcbr-opencode` | zen | 可为空 |
+| `cloud-scf-opencode` | OpenAI BYOK ③ | `LLM_*` + `OPENAI_BASE_URL` |
+| `cloud-tcbr-claude` | Anthropic ③ | `LLM_*` + `ANTHROPIC_BASE_URL` |
+| `cloud-scf-claude` | Anthropic ③ | 同上 |
 
-## `.env.harness` 建议写法
+基座 **`/.env.harness`**：①④⑤⑥（镜像、COS、pin；① CloudBase 默认留空）。不含 ③。
 
-- **① 必填** + **④ 镜像/RoleArn**：所有步骤共用。
-- **③ BYOK**：只给 `cloud-scf`；`load-env` 在其它场景会删掉 `LLM_*`。
-- **⑥ COS**：只影响 `test:full` / `harness -- local`；云上验收**不读**（即使文件里写了 `HARNESS_COS_ENABLED=1`）。
-- **⑤ pin**：交付前清空 `HARNESS_TOOL_ID` / `HARNESS_CLOUD_*`。
+```bash
+magent login && tcb env use <envId>    # ① 段通常不必手填
+cd scripts/harness/scenarios
+cp .env.local-claude.example .env.local-claude      # 填入 LLM_API_KEY（gitignore，勿提交）
+cp .env.cloud-scf-opencode.example .env.cloud-scf-opencode
+# …其余格子同理；local-opencode / cloud-tcbr-opencode 可空文件
+```
 
-## 本地工作文件（勿 commit）
+模板为 `.env.<scenario>.example`（可提交）；真实 ③ 写在 `.env.<scenario>`（被 `.gitignore` 忽略）。
 
-| 文件 | 来源 |
-|------|------|
-| `agent.sandbox.yaml` | `cp docs/examples/agent.sandbox.opencode.min.yaml`（quickstart 会自动写） |
-| `packages/agent-runtime/agent.harness.yaml` | `cloud.mjs` 生成 |
+`applyHarnessScenario(<格子 id>)` → 载入 `.env.<格子>` → 写入标准 `LLM_API_KEY` / `LLM_MODEL` / URL 键。
 
-## 研发并行 tool
+## npm 入口
 
-`.env.harness` 未写 `HARNESS_TOOL_COS_NAME_SUFFIX` 时，`load-env` 默认 `=1` → `-no-cos` / `-with-cos` 两个 tool 可并存同一环境。
+| 格子 / 组 | npm |
+|-----------|-----|
+| local opencode | `test:full` · `harness:local` |
+| local claude | `harness:local-claude` |
+| 本地双引擎 | `harness:local-all` |
+| 云 opencode 并行 | `harness:cloud-opencode` |
+| 云 claude 并行 | `harness:cloud-claude` |
+| 单格 | `harness:cloud-{tcbr\|scf}-{opencode\|claude}` |
+
+别名：`local` → `local-opencode` · `cloud-tcbr` → `cloud-tcbr-opencode` · `cloud-scf` → `cloud-scf-opencode`
+
+实现：`scenario-matrix.mjs` · `load-env.mjs`
