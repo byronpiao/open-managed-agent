@@ -67,12 +67,12 @@ Harness 运行时（`resolveCamControlPlaneCredentials`）：SCF 内优先 `TENC
 
 | 段 | 内容 |
 |----|------|
-| ② | `CLOUDBASE_AGENT_ID`（`magent run` / `ma-protocol`；与 `HARNESS_CLOUD_*` pin 无关） |
+| ② | `CLOUDBASE_AGENT_ID`（`magent run` 省写 agent id；**`ma-protocol` 改走** `scenarios/.env.ma-protocol`） |
 | ③ | **不在此文件** — 见 `scripts/harness/scenarios/.env.<scenario>`（模板 `.env.<scenario>.example`） |
 | ④ | 沙箱镜像 / **`HARNESS_TOOL_ROLE_ARN`**（无 `HARNESS_TOOL_ID` 时创 AGS tool 必填）/ `HARNESS_TOOL_ID` |
 | ⑥ | `HARNESS_COS_*`（仅 **local** 验收；cloud 步骤自动忽略，见上表） |
 
-**研发 pin（勿写进对客 example）**：`HARNESS_CLOUD_{TCBR|SCF}_{OPENCODE|CLAUDE}_AGENT_ID`（或 legacy `HARNESS_CLOUD_AGENT_ID` / `HARNESS_CLOUD_SCF_AGENT_ID`）— 仅 `harness:cloud-*` 部署复用；**`ma-protocol` 只用 ② `CLOUDBASE_AGENT_ID`**。`HARNESS_TOOL_COS_NAME_SUFFIX=1`：同环境并行 no-cos/with-cos tool。
+**研发 pin（勿写进对客 example）**：`HARNESS_CLOUD_{TCBR|SCF}_{OPENCODE|CLAUDE}_AGENT_ID`（或 legacy `HARNESS_CLOUD_AGENT_ID` / `HARNESS_CLOUD_SCF_AGENT_ID`）— 仅 `harness:cloud-*` 部署复用。**`ma-protocol`**：`scenarios/.env.ma-protocol` 内 `HARNESS_MA_PROTOCOL_AGENT_ID`（模板 `.env.ma-protocol.example`），yaml 为 `agent.ma-protocol.yaml`。`HARNESS_TOOL_COS_NAME_SUFFIX=1`：同环境并行 no-cos/with-cos tool。
 
 Tool 名（对客 / 生产）：`oma-harness-{env}`（COS 只影响 `StorageMounts`，不在名字里体现）。研发验收同一环境并行 no-cos / with-cos 时 `.env.harness` 设 `HARNESS_TOOL_COS_NAME_SUFFIX=1` → `oma-harness-{env}-no-cos` / `-with-cos`。
 

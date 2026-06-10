@@ -2,14 +2,26 @@
 /**
  * Managed Agents HTTP protocol — cloud acceptance on deployed harness agent.
  *
- *   node scripts/harness/managed-agents-protocol.mjs
+ *   npm run ma-protocol
  *   node scripts/harness/managed-agents-protocol.mjs --base-url https://...
+ *
+ * Scenario: scripts/harness/scenarios/agent.ma-protocol.yaml
+ *           + scripts/harness/scenarios/.env.ma-protocol (HARNESS_MA_PROTOCOL_AGENT_ID)
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadEnv, assertHarnessCreds, hydrateTcbApiKeyFromCam } from "./load-env.mjs";
+import { parse as parseYaml } from "yaml";
+import {
+  loadEnv,
+  assertHarnessCreds,
+  hydrateTcbApiKeyFromCam,
+  applyHarnessScenario,
+  logHarnessScenario,
+} from "./load-env.mjs";
+import { resolveHarnessAgentYaml } from "./scenario-matrix.mjs";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -29,18 +41,31 @@ function parseArgs() {
   return { baseUrl };
 }
 
-async function runStory(client, label) {
+function loadMaProtocolAgentSpec() {
+  const yamlPath = resolveHarnessAgentYaml("ma-protocol");
+  const doc = parseYaml(readFileSync(yamlPath, "utf8"));
+  const engine = doc.engine === "claude" || doc.engine === "codebuddy" || doc.engine === "hermes"
+    ? doc.engine
+    : "opencode";
+  const system =
+    typeof doc.system === "string" && doc.system.trim()
+      ? doc.system.trim()
+      : "Reply concisely for acceptance.";
+  return { yamlPath, engine, system };
+}
+
+async function runStory(client, label, { engine, system }) {
   console.log(`\n=== managed-agents-protocol: ${label} ===`);
 
   const environment = await client.createEnvironment({
     name: `${label}-env`,
-    metadata: { engine: "opencode" },
+    metadata: { engine },
   });
   assert.ok(environment.id, `${label}: environment`);
 
   const agent = await client.createAgent({
     name: `${label}-agent`,
-    metadata: { system: "Reply concisely for acceptance." },
+    metadata: { system },
   });
   assert.ok(agent.id, `${label}: agent`);
 
@@ -84,14 +109,20 @@ async function main() {
   assertHarnessCreds();
   await hydrateTcbApiKeyFromCam();
 
+  const scenarioMeta = applyHarnessScenario("ma-protocol");
+  logHarnessScenario(scenarioMeta);
+
   const envId = process.env.CLOUDBASE_ENV_ID?.trim();
   const agentId = process.env.CLOUDBASE_AGENT_ID?.trim();
   if (!envId) throw new Error("CLOUDBASE_ENV_ID required");
   if (!agentId) {
     throw new Error(
-      "CLOUDBASE_AGENT_ID required — set in .env.harness ② after magent agent:create (ma-protocol targets your deployed agent, not HARNESS_CLOUD_* pins)",
+      "HARNESS_MA_PROTOCOL_AGENT_ID required — cp scripts/harness/scenarios/.env.ma-protocol.example scripts/harness/scenarios/.env.ma-protocol",
     );
   }
+
+  const agentSpec = loadMaProtocolAgentSpec();
+  console.log(`ma-protocol agent yaml: ${agentSpec.yamlPath} (engine=${agentSpec.engine})`);
 
   const token = await getAccessToken(envId);
   const { createManagedAgentsClient } = await import(
@@ -105,6 +136,7 @@ async function main() {
   await runStory(
     createManagedAgentsClient({ envId, agentId, accessKey: token, baseURL: gatewayBase }),
     "gateway",
+    agentSpec,
   );
 
   console.log("\n✓ managed-agents-protocol complete");

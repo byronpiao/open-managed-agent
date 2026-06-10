@@ -15,3 +15,9 @@ packages/agent-runtime/agent.yml
 packages/agent-runtime/agent.harness.yaml
 # Local copy from docs/examples (see harness-tutorial.md)
 agent.sandbox.yaml
+
+# CocoIndex Code (ccc) — local semantic index
+.cocoindex_code/
+
+# Cursor — local IDE config (not shared)
+.cursor/

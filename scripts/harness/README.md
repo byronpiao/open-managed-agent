@@ -11,7 +11,7 @@
 | **云上双后端** | `npm run harness:cloud` | **strip** no-cos |
 | 云上 tcbr（单跑） | `npm run harness:cloud-tcbr` | **strip** no-cos |
 | 云上 SCF（单跑） | `npm run harness:cloud-scf` | **strip** no-cos |
-| **MA HTTP 协议** | `npm run ma-protocol` | — |
+| **MA HTTP 协议** | `npm run ma-protocol` | `agent.ma-protocol.yaml` × `.env.ma-protocol` |
 | **交付一条龙** | `npm run test:delivery` | quickstart → full → cloud |
 
 ```bash
