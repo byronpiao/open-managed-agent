@@ -67,12 +67,12 @@ Harness 运行时（`resolveCamControlPlaneCredentials`）：SCF 内优先 `TENC
 
 | 段 | 内容 |
 |----|------|
-| ② | `CLOUDBASE_AGENT_ID` |
-| ③ | `LLM_*`（仅 `harness -- cloud-scf` 自定义模型；local 用 CloudBase AI；tcbr 用 zen） |
+| ② | `CLOUDBASE_AGENT_ID`（`magent run` / `ma-protocol`；与 `HARNESS_CLOUD_*` pin 无关） |
+| ③ | **不在此文件** — 见 `scripts/harness/scenarios/.env.<scenario>`（模板 `.env.<scenario>.example`） |
 | ④ | 沙箱镜像 / **`HARNESS_TOOL_ROLE_ARN`**（无 `HARNESS_TOOL_ID` 时创 AGS tool 必填）/ `HARNESS_TOOL_ID` |
 | ⑥ | `HARNESS_COS_*`（仅 **local** 验收；cloud 步骤自动忽略，见上表） |
 
-**研发 pin（勿写进对客 example）**：`HARNESS_CLOUD_AGENT_ID` / `HARNESS_CLOUD_SCF_AGENT_ID`（`npm run harness -- cloud-tcbr|cloud-scf` 复用云上 agent）、`HARNESS_TOOL_COS_NAME_SUFFIX=1`（同环境并行 no-cos/with-cos tool）。
+**研发 pin（勿写进对客 example）**：`HARNESS_CLOUD_{TCBR|SCF}_{OPENCODE|CLAUDE}_AGENT_ID`（或 legacy `HARNESS_CLOUD_AGENT_ID` / `HARNESS_CLOUD_SCF_AGENT_ID`）— 仅 `harness:cloud-*` 部署复用；**`ma-protocol` 只用 ② `CLOUDBASE_AGENT_ID`**。`HARNESS_TOOL_COS_NAME_SUFFIX=1`：同环境并行 no-cos/with-cos tool。
 
 Tool 名（对客 / 生产）：`oma-harness-{env}`（COS 只影响 `StorageMounts`，不在名字里体现）。研发验收同一环境并行 no-cos / with-cos 时 `.env.harness` 设 `HARNESS_TOOL_COS_NAME_SUFFIX=1` → `oma-harness-{env}-no-cos` / `-with-cos`。
 
@@ -100,14 +100,16 @@ Tool 名（对客 / 生产）：`oma-harness-{env}`（COS 只影响 `StorageMoun
 
 有 `CLOUDBASE_ENV_ID` + CAM 且未配置自定义 LLM 时，Runtime 自动使用 CloudBase AI（`hy3-preview`）。详见 [harness-opencode.md](./harness-opencode.md) / [harness-claude-code.md](./harness-claude-code.md)。
 
-### 自定义 LLM（`.env.harness` ③ 段，研发 / BYOK）
+### 自定义 LLM（`scenarios/.env.<scenario>`，研发 / BYOK）
 
 | 变量 | 说明 |
 |------|------|
 | `LLM_API_KEY` | 第三方 API Key |
 | `LLM_MODEL` | 模型 ID |
-| `OPENAI_BASE_URL` | OpenCode / codebuddy |
-| `ANTHROPIC_BASE_URL` | Claude Code |
+| `OPENAI_BASE_URL` | OpenCode / `cloud-scf-opencode` |
+| `ANTHROPIC_BASE_URL` | Claude / `local-claude` fallback、`cloud-*-claude` |
+
+矩阵与 `cp` 示例：[scenarios/README.md](../scripts/harness/scenarios/README.md)。
 
 ---
 

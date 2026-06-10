@@ -87,7 +87,7 @@ async function assertHarnessAgsRuntimeEnvSync() {
   assertHarnessAgsRuntimeEnv();
 }
 
-function envForHarnessTier(tier) {
+function envForHarnessTier(tier, { claudeTier } = {}) {
   const env = { ...process.env };
   if (tier === "anthropic-byok") {
     applyScenarioEnv("local-claude", env);
@@ -100,16 +100,19 @@ function envForHarnessTier(tier) {
   } else {
     applyHarnessLlmTier("platform", env);
   }
+  if (claudeTier?.trim()) {
+    env.HARNESS_E2E_CLAUDE_TIER = claudeTier.trim();
+  }
   applyHarnessTestDefaults(env);
   return env;
 }
 
-function runNode(scriptRel, extraArgs = [], { tier } = {}) {
+function runNode(scriptRel, extraArgs = [], { tier, claudeTier } = {}) {
   const script = resolve(repoRoot, scriptRel);
   const r = spawnSync(process.execPath, [script, ...extraArgs], {
     cwd: repoRoot,
     stdio: "inherit",
-    env: tier ? envForHarnessTier(tier) : process.env,
+    env: tier ? envForHarnessTier(tier, { claudeTier }) : process.env,
   });
   if (r.status !== 0) process.exit(r.status ?? 1);
 }
@@ -187,16 +190,40 @@ async function runLocal(extraArgs = []) {
     process.env.HARNESS_E2E_OPENCODE_TIER = localTier === "zen" ? "zen" : "platform";
   }
 
+  let claudeTierForE2e = engines === "claude" ? preflight.tier : null;
+  if (engines === "all") {
+    console.log("=== harness local: LLM preflight (local-claude) ===");
+    let claudePreflight;
+    try {
+      claudePreflight = await runHarnessLlmPreflight("local-claude", { allowTestFallback: true });
+    } catch (err) {
+      console.error(err.message ?? err);
+      process.exit(1);
+    }
+    claudeTierForE2e = claudePreflight.tier;
+    if (claudePreflight.probe?.ok) {
+      console.log(
+        `✓ ${claudePreflight.protocol} tier=${claudePreflight.tier} ` +
+          `${claudePreflight.probe.latencyMs}ms model=${claudePreflight.probe.model}`,
+      );
+    }
+  }
+
   const engineLabel =
     engines === "claude"
       ? preflight.tier === "anthropic-byok"
         ? "BYOK Anthropic"
         : "hy3-preview"
-      : localTier === "zen"
-        ? "zen"
-        : "hy3-preview";
+      : engines === "all"
+        ? `opencode=${localTier === "zen" ? "zen" : "hy3"} + claude=${claudeTierForE2e === "anthropic-byok" ? "BYOK" : claudeTierForE2e}`
+        : localTier === "zen"
+          ? "zen"
+          : "hy3-preview";
   console.log(`=== harness local: e2e full（engines=${engines}，llm=${engineLabel}）===`);
-  runNode("tests/harness/e2e.test.mjs", forwardE2eArgs(engines, extraArgs), { tier: localTier });
+  runNode("tests/harness/e2e.test.mjs", forwardE2eArgs(engines, extraArgs), {
+    tier: localTier,
+    claudeTier: claudeTierForE2e,
+  });
 
   if (harnessEnginesIncludeOpencode(engines)) {
     console.log("=== harness local: matrix parity ===");

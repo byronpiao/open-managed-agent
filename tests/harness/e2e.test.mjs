@@ -768,10 +768,20 @@ function restoreOpencodeHarnessTier() {
 
 /** Respect preflight tier (anthropic-byok fallback); do not reset to platform hy3. */
 function applyClaudeHarnessLlmTier() {
-  const tier = process.env.HARNESS_LLM_TIER?.trim();
+  const tier =
+    process.env.HARNESS_E2E_CLAUDE_TIER?.trim() || process.env.HARNESS_LLM_TIER?.trim();
   if (tier === "anthropic-byok") {
     applyScenarioEnv("local-claude");
     applyHarnessLlmTier("anthropic-byok");
+    applyHarnessTestDefaults();
+    return;
+  }
+  if (tier === "platform" || tier === "zen") {
+    applyHarnessScenario("local-claude");
+    return;
+  }
+  if (tier) {
+    applyPinnedHarnessTier(tier);
     applyHarnessTestDefaults();
     return;
   }

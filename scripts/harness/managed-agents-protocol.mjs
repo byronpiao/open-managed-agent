@@ -85,11 +85,12 @@ async function main() {
   await hydrateTcbApiKeyFromCam();
 
   const envId = process.env.CLOUDBASE_ENV_ID?.trim();
-  const agentId =
-    process.env.HARNESS_CLOUD_AGENT_ID?.trim() ?? process.env.CLOUDBASE_AGENT_ID?.trim();
+  const agentId = process.env.CLOUDBASE_AGENT_ID?.trim();
   if (!envId) throw new Error("CLOUDBASE_ENV_ID required");
   if (!agentId) {
-    throw new Error("HARNESS_CLOUD_AGENT_ID or CLOUDBASE_AGENT_ID required (harness deployment)");
+    throw new Error(
+      "CLOUDBASE_AGENT_ID required — set in .env.harness ② after magent agent:create (ma-protocol targets your deployed agent, not HARNESS_CLOUD_* pins)",
+    );
   }
 
   const token = await getAccessToken(envId);

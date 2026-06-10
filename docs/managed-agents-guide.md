@@ -285,4 +285,4 @@ MA Session               → 一次运行（起 AGS 沙箱 + 对话）
 
 **SDK：** `runtime: "harness"` 走 MA HTTP；`runtime: "managed"`（默认）走 ACP。
 
-研发验收：`npm run ma-protocol`（需已部署的 harness Agent，`.env.harness` 里 `HARNESS_CLOUD_AGENT_ID` 或 `CLOUDBASE_AGENT_ID`）。见仓库根 [Harness一条龙.md](../../Harness一条龙.md)。
+研发验收：`npm run ma-protocol`（需已部署的 harness Agent，`.env.harness` ② `CLOUDBASE_AGENT_ID`）。见仓库根 [Harness一条龙.md](../../Harness一条龙.md)。
