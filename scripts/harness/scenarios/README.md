@@ -51,6 +51,22 @@ cp .env.cloud-scf-opencode.example .env.cloud-scf-opencode
 
 实现：`scenario-matrix.mjs` · `load-env.mjs`
 
+## ma-protocol（旁路 · MA HTTP）
+
+| 文件 | 说明 |
+|------|------|
+| `agent.ma-protocol.yaml` | 已部署 **harness Runtime** 的 agent 配置模板（`runtime: harness`） |
+| `.env.ma-protocol` | pin `HARNESS_MA_PROTOCOL_AGENT_ID`（`CLOUDBASE_AGENT_ID` 可作别名） |
+
+```bash
+cd scripts/harness/scenarios
+cp .env.ma-protocol.example .env.ma-protocol
+# 填入 magent agent:create / harness:cloud-* 产出的 agent id
+npm run ma-protocol
+```
+
+与 6 格区别：**不部署 AGS 矩阵**，只打已上线 Runtime 的 `/v1/agents|environments|sessions` HTTP。`load-env.mjs --check` 在 sidecar 段显示就绪状态。
+
 ## Hermes（内部 · Talos，未接 manage node）
 
 | 项 | 说明 |

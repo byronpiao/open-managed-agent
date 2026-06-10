@@ -288,6 +288,26 @@ test("harness matrix has 6 scenarios and 2 agent yaml by engine", async () => {
   }
 });
 
+test("ma-protocol sidecar resolves dedicated agent yaml", async () => {
+  const { resolveHarnessAgentYaml, pinnedMaProtocolAgentId } = await import(
+    "../../scripts/harness/scenario-matrix.mjs"
+  );
+  assert.ok(resolveHarnessAgentYaml("ma-protocol").endsWith("agent.ma-protocol.yaml"));
+  assert.equal(
+    pinnedMaProtocolAgentId(
+      new Map([
+        ["HARNESS_MA_PROTOCOL_AGENT_ID", "agent-ma-test"],
+        ["CLOUDBASE_AGENT_ID", "agent-legacy"],
+      ]),
+    ),
+    "agent-ma-test",
+  );
+  assert.equal(
+    pinnedMaProtocolAgentId(new Map([["CLOUDBASE_AGENT_ID", "agent-legacy"]])),
+    "agent-legacy",
+  );
+});
+
 test("resolveHarnessToolName uses -no-cos|-with-cos when HARNESS_TOOL_COS_NAME_SUFFIX=1", () => {
   const prev = process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
   process.env.HARNESS_TOOL_COS_NAME_SUFFIX = "1";

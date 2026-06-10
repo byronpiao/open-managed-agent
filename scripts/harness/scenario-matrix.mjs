@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const HARNESS_SCENARIOS_DIR = resolve(__dirname, "scenarios");
 
-/** 6 格主矩阵（quickstart / delivery 旁路，不在此表） */
+/** 6 格主矩阵（quickstart / ma-protocol 旁路，不在此表） */
 export const HARNESS_MATRIX_SCENARIOS = [
   "local-opencode",
   "local-claude",
@@ -22,6 +22,11 @@ export const HARNESS_MATRIX_SCENARIOS = [
   "cloud-tcbr-claude",
   "cloud-scf-claude",
 ];
+
+/** 旁路验收：独立 agent.yaml × .env.<scenario>，不进 6 格 LLM 矩阵 */
+export const HARNESS_SIDECAR_SCENARIOS = ["quickstart", "ma-protocol"];
+
+export const HARNESS_MA_PROTOCOL_SCENARIO = "ma-protocol";
 
 const LLM_KEYS = [
   "LLM_API_KEY",
@@ -81,6 +86,10 @@ export function scenarioAgentYamlPath(engine) {
   return resolve(HARNESS_SCENARIOS_DIR, `agent.${engine}.yaml`);
 }
 
+export function scenarioMaProtocolAgentYamlPath() {
+  return resolve(HARNESS_SCENARIOS_DIR, "agent.ma-protocol.yaml");
+}
+
 export function readScenarioEnvMap(scenario) {
   return readEnvFileMap(scenarioEnvPath(scenario));
 }
@@ -131,10 +140,21 @@ export function hasAnthropicTripleInMap(map) {
   );
 }
 
+export function pinnedMaProtocolAgentId(map = readScenarioEnvMap(HARNESS_MA_PROTOCOL_SCENARIO)) {
+  return (
+    map.get("HARNESS_MA_PROTOCOL_AGENT_ID")?.trim() ||
+    map.get("CLOUDBASE_AGENT_ID")?.trim() ||
+    ""
+  );
+}
+
 export function scenarioEnvReady(scenario) {
   const id = normalizeHarnessScenario(scenario);
   if (!scenarioEnvFileExists(id)) return false;
   const map = readScenarioEnvMap(id);
+  if (id === HARNESS_MA_PROTOCOL_SCENARIO) {
+    return Boolean(pinnedMaProtocolAgentId(map));
+  }
   if (scenarioNeedsOpenAiByok(id)) return hasOpenAiTripleInMap(map);
   if (scenarioNeedsAnthropicByok(id)) return hasAnthropicTripleInMap(map);
   if (id === "local-claude") return true;
@@ -178,11 +198,18 @@ export function applyScenarioEnv(scenario, target = process.env) {
   return map;
 }
 
-/** engine → agent yaml（opencode | claude） */
+/** Scenario → agent yaml（6 格按 engine；旁路各有一份） */
 export function resolveHarnessAgentYaml(scenario) {
   const id = normalizeHarnessScenario(scenario);
   if (id === "quickstart") {
     return resolve(__dirname, "../../docs/examples/agent.sandbox.opencode.min.yaml");
+  }
+  if (id === HARNESS_MA_PROTOCOL_SCENARIO) {
+    const path = scenarioMaProtocolAgentYamlPath();
+    if (!existsSync(path)) {
+      throw new Error(`Missing ${path} for scenario ${id}`);
+    }
+    return path;
   }
   const engine = scenarioEngine(id);
   const path = scenarioAgentYamlPath(engine);

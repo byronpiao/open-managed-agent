@@ -28,10 +28,14 @@ import {
   hasOpenAiScenarioEnv,
   hasOpenAiTripleInMap,
   HARNESS_MATRIX_SCENARIOS,
+  HARNESS_MA_PROTOCOL_SCENARIO,
+  HARNESS_SIDECAR_SCENARIOS,
   normalizeHarnessScenario,
+  pinnedMaProtocolAgentId,
   readScenarioEnvMap,
   resolveHarnessAgentYaml,
   scenarioAgentYamlPath,
+  scenarioMaProtocolAgentYamlPath,
   scenarioEngine,
   scenarioEnvFileExists,
   scenarioEnvPath,
@@ -44,8 +48,12 @@ export {
   resolveHarnessAgentYaml,
   normalizeHarnessScenario,
   HARNESS_MATRIX_SCENARIOS,
+  HARNESS_MA_PROTOCOL_SCENARIO,
+  HARNESS_SIDECAR_SCENARIOS,
+  pinnedMaProtocolAgentId,
   scenarioEngine,
   scenarioAgentYamlPath,
+  scenarioMaProtocolAgentYamlPath,
 };
 
 const ALIASES = [
@@ -181,6 +189,22 @@ export function applyHarnessScenario(scenario, target = process.env) {
     };
   }
 
+  if (scenario === HARNESS_MA_PROTOCOL_SCENARIO) {
+    applyScenarioEnv(scenario, target);
+    const deployedAgentId = pinnedMaProtocolAgentId(readScenarioEnvMap(scenario));
+    if (deployedAgentId) target.CLOUDBASE_AGENT_ID = deployedAgentId;
+    target.HARNESS_SCENARIO = scenario;
+    applyHarnessTestDefaults(target);
+    return {
+      scenario,
+      cosEnabled: false,
+      toolName: "",
+      engine: "opencode",
+      agentYaml: scenarioMaProtocolAgentYamlPath(),
+      deployedAgentId,
+    };
+  }
+
   const cloudLocal = scenario.startsWith("cloud-") || scenario.startsWith("local-");
   if (!cloudLocal || !HARNESS_MATRIX_SCENARIOS.includes(scenario)) {
     throw new Error(`unknown harness scenario: ${scenario}`);
@@ -232,6 +256,12 @@ export function applyHarnessScenario(scenario, target = process.env) {
 
 export function logHarnessScenario(meta) {
   if (!meta?.scenario) return;
+  if (meta.scenario === HARNESS_MA_PROTOCOL_SCENARIO) {
+    console.log(
+      `harness scenario: ma-protocol → deployed ${meta.deployedAgentId || "(unset)"} · yaml ${meta.agentYaml || scenarioMaProtocolAgentYamlPath()}`,
+    );
+    return;
+  }
   const cos = meta.cosEnabled ? "with-cos" : "no-cos";
   console.log(
     `harness scenario: ${meta.scenario} → AGS tool ${meta.toolName || "(unset)"} (${cos})`,
@@ -389,6 +419,25 @@ if (isCli) {
         const engine = scenarioEngine(id);
         const status = !fileOk ? "missing .env" : ready ? "ok" : "incomplete ③";
         console.log(`    ${id} → agent.${engine}.yaml : ${status}`);
+      }
+      console.log("  sidecar (agent.yaml × .env.<scenario>):");
+      for (const id of HARNESS_SIDECAR_SCENARIOS) {
+        if (id === "quickstart") {
+          console.log(`    ${id} → docs/examples/agent.sandbox.opencode.min.yaml : (no .env)`);
+          continue;
+        }
+        const fileOk = scenarioEnvFileExists(id);
+        const ready = scenarioEnvReady(id);
+        const yaml =
+          id === HARNESS_MA_PROTOCOL_SCENARIO
+            ? "agent.ma-protocol.yaml"
+            : resolveHarnessAgentYaml(id).split("/").pop();
+        const status = !fileOk
+          ? "missing .env"
+          : ready
+            ? "ok"
+            : "incomplete HARNESS_MA_PROTOCOL_AGENT_ID";
+        console.log(`    ${id} → ${yaml} : ${status}`);
       }
       console.log(`  HARNESS_COS_ENABLED=${process.env.HARNESS_COS_ENABLED ?? "(unset)"}`);
       const publicTag = HARNESS_PUBLIC_MAGENT_IMAGE.split(":").pop();

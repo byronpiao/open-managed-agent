@@ -1,0 +1,14 @@
+# Deployed harness Runtime for Managed Agents HTTP acceptance (ma-protocol).
+# magent agent:update -f scripts/harness/scenarios/agent.ma-protocol.yaml -i <agent-id>
+name: Harness MA Protocol
+runtime: harness
+engine: opencode
+sandbox:
+  infra: serverless
+system: |
+  Reply concisely for Managed Agents HTTP acceptance.
+
+metadata:
+  runtime: open-managed-agent
+  harness: "1"
+  acceptance: ma-protocol
