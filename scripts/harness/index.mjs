@@ -49,6 +49,9 @@ Cloud（engine 后缀对等；无后缀 = opencode 主力）:
 db-pressure（只跑 FlexDB 行数/体积采样，不跑完整 e2e）:
   db-pressure [--engines opencode|claude|all] [--db-pressure-rounds N]
 
+product-acceptance（产品向验收，不合入 smoke）:
+  product-acceptance [--engines opencode|claude|all]
+
 可选（默认不跑）:
   --db-pressure              同上 N 默认 10；也可挂在 local full 末尾或 cloud verify 之后
 
@@ -147,6 +150,79 @@ async function runCloudParallel(engine, extraArgs) {
   console.log(`=== harness cloud-${engine}: ${tcbr} + ${scf} in parallel ===\n`);
   await Promise.all([spawnHarnessChild(tcbr, extraArgs), spawnHarnessChild(scf, extraArgs)]);
   console.log(`\n✓ cloud-tcbr-${engine} + cloud-scf-${engine} both passed`);
+}
+
+async function runProductAcceptance(extraArgs = []) {
+  const engines = parseHarnessEnginesArg(extraArgs);
+  loadEnv();
+  try {
+    assertHarnessEnginesEnv(engines);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+
+  const scenario = engines === "claude" ? "local-claude" : "local-opencode";
+  logHarnessScenario(applyHarnessScenario(scenario));
+
+  await hydrateTcbApiKeyFromCam();
+  await assertHarnessAgsRuntimeEnvSync();
+
+  const { runHarnessLlmPreflight } = await import("./llm-preflight.mjs");
+  const localScenario = engines === "claude" ? "local-claude" : "local-opencode";
+  console.log(`=== harness product-acceptance: LLM preflight (${localScenario}) ===`);
+  let preflight;
+  try {
+    preflight = await runHarnessLlmPreflight(localScenario, { allowTestFallback: true });
+  } catch (err) {
+    console.error(err.message ?? err);
+    process.exit(1);
+  }
+  if (preflight.probe?.ok) {
+    console.log(
+      `✓ ${preflight.protocol} tier=${preflight.tier} ${preflight.probe.latencyMs}ms ` +
+        `model=${preflight.probe.model}`,
+    );
+  } else if (preflight.tier === "zen") {
+    console.log(`✓ tier=zen (${preflight.fallback ?? "platform unavailable"})`);
+  }
+
+  applyHarnessTestDefaults();
+  const localTier = preflight.tier;
+  let claudeTierForE2e = engines === "claude" ? preflight.tier : null;
+  if (engines === "all") {
+    console.log("=== harness product-acceptance: LLM preflight (local-claude) ===");
+    let claudePreflight;
+    try {
+      claudePreflight = await runHarnessLlmPreflight("local-claude", { allowTestFallback: true });
+    } catch (err) {
+      console.error(err.message ?? err);
+      process.exit(1);
+    }
+    claudeTierForE2e = claudePreflight.tier;
+    if (claudePreflight.probe?.ok) {
+      console.log(
+        `✓ ${claudePreflight.protocol} tier=${claudePreflight.tier} ` +
+          `${claudePreflight.probe.latencyMs}ms model=${claudePreflight.probe.model}`,
+      );
+    }
+  }
+
+  if (engines !== "claude") {
+    process.env.HARNESS_E2E_OPENCODE_TIER = localTier === "zen" ? "zen" : "platform";
+    applyHarnessLlmTier(localTier === "zen" ? "zen" : "platform");
+  }
+  if (claudeTierForE2e) {
+    process.env.HARNESS_E2E_CLAUDE_TIER = claudeTierForE2e;
+  }
+
+  console.log(
+    `=== harness product-acceptance (engines=${engines}, opencodeTier=${process.env.HARNESS_E2E_OPENCODE_TIER}) ===`,
+  );
+  runNode("scripts/harness/product-acceptance.mjs", ["--engines", engines], {
+    tier: engines === "claude" ? (claudeTierForE2e ?? preflight.tier) : localTier,
+    claudeTier: claudeTierForE2e,
+  });
 }
 
 async function runLocal(extraArgs = []) {
@@ -263,6 +339,11 @@ async function main() {
 
   if (cmd === "local") {
     await runLocal(args.slice(1));
+    return;
+  }
+
+  if (cmd === "product-acceptance") {
+    await runProductAcceptance(args.slice(1));
     return;
   }
 

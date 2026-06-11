@@ -36,3 +36,14 @@ npm run harness -- cloud-tcbr-claude   --verify-only --db-pressure --db-pressure
 ```
 
 OpenCode 看 `harness_sync_events`；Claude 看 `harness_claude_session_entries`（不是同一张表）。详见 [harness-agent-session-storage.md §10](./harness-agent-session-storage.md#10-flexdb-压测实测db-pressure)。
+
+## product-acceptance（产品向，不合入 smoke）
+
+比 `harness:smoke` 多验：同会话多轮开发、Skill 模型遵守、agent 经 bash 调 mcporter（CloudBase / 外部 MCP）、真箱 HITL、`session/load` 重连、可选 Claude 引擎。约 5–15 分钟，LLM 脆，**独立命令**：
+
+```bash
+npm run harness:product-acceptance
+npm run harness -- product-acceptance --engines all   # 含 Claude
+```
+
+入口与 `harness -- local` 相同：`.env.harness`、preflight tier、端口 19090。
