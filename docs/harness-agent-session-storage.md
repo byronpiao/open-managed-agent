@@ -140,7 +140,7 @@ Export 细节（`opencode-sync.ts`）：
 | 操作 | 粒度 | 说明 |
 |------|------|------|
 | **export（写 FlexDB）** | **增量** | cursor = 已有 `maxSeq`；只 append 新 event；`doc(ev.id)` 已存在则跳过 |
-| **hydrate（读 FlexDB → 写箱）** | **对该会话全量** | `listEventsForAggregate` 取出该 `aggregateId` 下事件（当前单次查询 `limit(5000)`），整包 `POST /sync/replay` |
+| **hydrate（读 FlexDB → 写箱）** | **对该会话全量** | `listEventsForAggregate` 按 `seq` 分页读（100 条/页），整包 `POST /sync/replay` |
 
 持久化是 **事件溯源式追加**；恢复是 **（有上限的）全量 replay**。
 
@@ -251,4 +251,50 @@ Export 细节（`opencode-sync.ts`）：
 - [harness-architecture.md](./harness-architecture.md) — 运行时总架构  
 - [harness-opencode.md](./harness-opencode.md) — OpenCode 对客配置  
 - [harness-claude-code.md](./harness-claude-code.md) — Claude 对客配置  
-- [harness-env.md](./harness-env.md) — `TCB_REGION`（FlexDB）、`.env.harness` 与 [Advanced settings](./harness-env.md#advanced-settings)
+- [harness-env.md](./harness-env.md) — `TCB_REGION`（FlexDB）、`.env.harness` 与 [Advanced settings](./harness-env.md#advanced-settings)  
+- [harness-ops-notes.md](./harness-ops-notes.md) — 运维备忘（丢话、副本、db-pressure 命令）
+
+---
+
+## 10. FlexDB 压测实测（db-pressure）
+
+脚本：`npm run harness -- db-pressure --engines opencode --db-pressure-rounds N`（真 AGS + 真 FlexDB，每轮新建会话、发一句短 prompt、统计 `harness_sync_events` 行数与 JSON 体积）。详见 [harness-ops-notes.md](./harness-ops-notes.md)。
+
+### 10.1 样本（2026-06-11，opencode，platform LLM）
+
+环境：`test-6g2rfs50c69b7fb8`，magent 镜像 `260610-1736-d89aa8-magent`，prompt 为 `Round N: reply with exactly the word ok`。
+
+| 轮次 | `harness_sync_events` 行数 | 体积约（JSON） |
+|------|---------------------------|----------------|
+| 1 | 7 | 3.6 KB |
+| 2 | 7 | 3.6 KB |
+| 3 | 7 | 3.6 KB |
+| **合计 / 均** | **21 / ~7 行** | **~10.9 KB / ~3.6 KB** |
+
+另：每轮 `harness_sessions` +1 行（仅元数据，不含对话正文）。
+
+### 10.2 是否符合预期
+
+**符合。** 一句极短回复，opencode sync 仍会产生多条事件（会话/用户消息/助手输出等元数据），**7 行量级正常**，不是「一句一行」。
+
+每轮 **FlexDB 写放大**（OpenCode，粗算）：
+
+| 操作 | 次数量级 |
+|------|----------|
+| `harness_sessions` create / bind / delete | 每轮数次 upsert |
+| export 前 `maxSeq` | **1 次读**（`limit 1`） |
+| `appendEvents` | **≈ 新增 event 条数** 次 `doc.set`（先 `id in` 批量查重） |
+| hydrate（仅 re-acquire） | 分页读全会话 event，与历史长度成正比 |
+
+**对 DB 有压力吗？** 对这种短 prompt：**几乎没有**。瓶颈在 LLM 与起箱（实测每轮 prompt ~90s），不在 FlexDB。
+
+需要心里有数的场景：
+
+| 场景 | 压力来源 |
+|------|----------|
+| 高频短聊 | 每轮 1 次 export + 若干行 append；7 行/轮 × 100 轮/天仍很小 |
+| 多 tool 轮次 | **event 条数随 tool 轮增多**，不是随 token 流式增多 |
+| 长会话 re-acquire | hydrate **读**全会话（分页 100/页）；写库仍按轮增量 |
+| 多会话并发 | 各会话独立行；看 FlexDB 配额与 env 总 QPS |
+
+**结论：** 当前「每轮结束 export 一次」的设计，对 FlexDB **偏保守**；正常单用户/单会话用量不用担心打爆库。真要盯的是 **超长会话 + 频繁 re-acquire** 的读放大，以及 **多 tool 长对话** 的行数增长——可用 `--db-pressure-rounds` 加大样本，或换更长 prompt / 多 tool 场景复测。
