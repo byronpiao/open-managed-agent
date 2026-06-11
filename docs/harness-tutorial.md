@@ -12,6 +12,8 @@
 **按引擎：** [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md)  
 **按 MA HTTP 协议：** [Managed Agents 使用指南](./managed-agents-guide.md)
 
+![Harness runtime stack](./diagrams/harness-runtime-stack.svg)
+
 ---
 
 ## 开始之前
@@ -27,6 +29,8 @@
 ## 用户故事：从零到第一次对话
 
 目标：用 **CloudBase AI 默认模型** 跑通一条命令，**无需**第三方 LLM Key，**无需** COS。
+
+![Quickstart flow](./diagrams/harness-quickstart-flow.svg)
 
 ### 1. 登录并选环境
 
@@ -228,9 +232,7 @@ magent agent:update -f ./agent.sandbox.yaml -i "$CLOUDBASE_AGENT_ID"
 
 ## 运行时结构
 
-```text
-客户端 (SDK / magent) → OMA Runtime → AGS 远程沙箱 → OpenCode / Claude Code
-```
+见 [架构参考 · Runtime Stack](./harness-architecture.md)（`harness-runtime-stack.svg`）。
 
 `magent agent:update` 改配置约数十秒；**Runtime 代码**变更需重新 `agent:create` 或按 [README](../README.md) 部署章节更新代码包。
 

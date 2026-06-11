@@ -11,6 +11,8 @@
 
 **Harness 只读 `.env.harness`，不读、不叠加 `.env`。**
 
+![Harness environment layers](./diagrams/harness-env-layers.svg)
+
 ```bash
 node scripts/harness/load-env.mjs --check
 node scripts/harness/load-env.mjs --check --probe-llm
@@ -78,6 +80,8 @@ Tool 名（对客 / 生产）：`oma-harness-{env}`（COS 只影响 `StorageMoun
 
 ### ⑥ COS — 工作区 vs 对话
 
+![Conversation vs COS workspace](./diagrams/harness-cos-persistence.svg)
+
 | | 不启用 COS（默认） | 启用 `HARNESS_COS_ENABLED=1` |
 |--|-------------------|------------------------------|
 | **多轮对话** | `harness_sessions` + `harness_sync_events` replay | 同上 |
@@ -89,6 +93,8 @@ Tool 名（对客 / 生产）：`oma-harness-{env}`（COS 只影响 `StorageMoun
 ---
 
 ## 运行时三层（自动，勿手填进 example）
+
+文首 [环境分层图](./diagrams/harness-env-layers.svg) 中 OMA / TRW 即此处「自动注入」层。
 
 | 层 | 说明 |
 |----|------|

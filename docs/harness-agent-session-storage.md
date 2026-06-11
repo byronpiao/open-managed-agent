@@ -15,7 +15,7 @@
 
 ![Harness session external storage architecture](./diagrams/harness-session-storage-architecture.svg)
 
-> 图源：`docs/diagrams/harness-session-storage-architecture.svg`（深色架构图，可 `python3 docs/diagrams/generate-harness-diagrams.py` 重生成）
+> 图源：`docs/diagrams/` · 全部 harness 图示：`python3 docs/diagrams/generate-harness-diagrams.py`
 
 | 角色 | 集合 | 谁写入 | 存什么 |
 |------|------|--------|--------|

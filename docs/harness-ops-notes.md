@@ -1,5 +1,7 @@
 # Harness 运维备忘（大白话）
 
+![Harness test scenarios (internal)](./diagrams/harness-test-scenarios.svg)
+
 ## OpenCode 对话会不会丢？
 
 - **每轮聊完**才会把 opencode 事件抄进 FlexDB（`harness_sync_events`）。

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" width="960" height="420">
+  <defs><marker id="ab" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/></marker></defs>
+  <rect width="960" height="420" fill="#ffffff"/>
+  <text x="480" y="32" fill="#111827" font-size="17" font-weight="600" text-anchor="middle">Harness Environment Layers</text>
+  <text x="480" y="54" fill="#6b7280" font-size="12" text-anchor="middle">Harness reads .env.harness only — not .env</text>
+  <rect x="80" y="80" width="800" height="72" rx="10" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text x="480" y="108" fill="#1d4ed8" font-size="13" font-weight="600" text-anchor="middle">Host · .env.harness + scenarios/.env.*</text>
+  <text x="480" y="130" fill="#6b7280" font-size="11" text-anchor="middle">CLOUDBASE_ENV_ID · HARNESS_TOOL_* · HARNESS_COS_* · LLM_* (BYOK scenarios)</text>
+  <line x1="480" y1="152" x2="480" y2="178" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <text x="496" y="168" fill="#2563eb" font-size="10">deploy / load-env</text>
+  <rect x="80" y="178" width="800" height="72" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <text x="480" y="206" fill="#15803d" font-size="13" font-weight="600" text-anchor="middle">OMA Runtime process</text>
+  <text x="480" y="228" fill="#6b7280" font-size="11" text-anchor="middle">AGENT_CONFIG · TCB_SECRET_* or TENCENTCLOUD_* (tcbr vs SCF) · PORT</text>
+  <line x1="480" y1="250" x2="480" y2="276" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <text x="496" y="266" fill="#2563eb" font-size="10">sandbox start inject</text>
+  <rect x="80" y="276" width="800" height="72" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+  <text x="480" y="304" fill="#c2410c" font-size="13" font-weight="600" text-anchor="middle">TRW sandbox (magent image)</text>
+  <text x="480" y="326" fill="#6b7280" font-size="11" text-anchor="middle">OPENCODE_CONFIG_CONTENT · HARNESS_* · TENCENTCLOUD_* for in-box FlexDB</text>
+  <rect x="80" y="368" width="380" height="36" rx="6" fill="#f9fafb" stroke="#e5e7eb"/>
+  <text x="270" y="390" fill="#374151" font-size="11" text-anchor="middle">.env.harness ≠ .env (managed agent / SDK)</text>
+  <rect x="500" y="368" width="380" height="36" rx="6" fill="#f9fafb" stroke="#e5e7eb"/>
+  <text x="690" y="390" fill="#374151" font-size="11" text-anchor="middle">scenarios strip COS / BYOK per matrix</text>
+</svg>
