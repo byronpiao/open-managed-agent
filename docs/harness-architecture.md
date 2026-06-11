@@ -236,4 +236,5 @@ OpenCode 箱内路径：`/home/user/.opencode` · `OPENCODE_CONFIG_CONTENT` · `
 |------|------|
 | [harness-tutorial.md](./harness-tutorial.md) | 对客上手 |
 | [harness-env.md](./harness-env.md) | 环境变量 |
+| [harness-ops-notes.md](./harness-ops-notes.md) | 运维备忘（丢话、副本、db-pressure） |
 | [product-guide.md](./product-guide.md) | 托管 Agent |

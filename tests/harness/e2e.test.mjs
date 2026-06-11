@@ -1195,8 +1195,55 @@ async function testZedStdioPrompt() {
   bridgeChild = null;
 }
 
+const DB_PRESSURE_ONLY = process.argv.includes("--db-pressure-only");
+
+async function runDbPressureOnly() {
+  const { parseDbPressureArgs, runE2eDbPressure } = await import(
+    "../../scripts/harness/db-pressure.mjs"
+  );
+  const dbPressure = parseDbPressureArgs(process.argv.slice(2));
+  if (!dbPressure.enabled) {
+    throw new Error("--db-pressure-only requires --db-pressure");
+  }
+  const envId = process.env.CLOUDBASE_ENV_ID;
+  if (!envId?.trim()) {
+    throw new Error("CLOUDBASE_ENV_ID required for db-pressure (real FlexDB)");
+  }
+  const deps = { sleep, startRuntime, stopRuntime, rpc, promptSessionText, waitSandboxReady };
+  try {
+    if (E2E_OPENCODE) {
+      await runE2eDbPressure({
+        engine: "opencode",
+        rounds: dbPressure.rounds,
+        envId,
+        deps: { ...deps, agentConfig: resolveFullAgentConfig() },
+      });
+    }
+    if (E2E_CLAUDE) {
+      if (!hasAnthropicByokInMap()) {
+        throw new Error("db-pressure claude requires scenarios/.env.local-claude");
+      }
+      await runE2eDbPressure({
+        engine: "claude",
+        rounds: dbPressure.rounds,
+        envId,
+        deps: { ...deps, agentConfig: resolveClaudeAgentConfig() },
+      });
+    }
+  } finally {
+    stopRuntime();
+  }
+}
+
 async function main() {
   try {
+    if (DB_PRESSURE_ONLY) {
+      const { teardownHarnessSandboxes } = await import("../../scripts/harness/ags-teardown.mjs");
+      console.log("teardown (pre-flight, db-pressure-only)…");
+      await teardownHarnessSandboxes();
+      await runDbPressureOnly();
+      return;
+    }
     if (FULL) {
       const { teardownHarnessSandboxes } = await import("../../scripts/harness/ags-teardown.mjs");
       console.log("teardown (pre-flight)…");
