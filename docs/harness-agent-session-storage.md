@@ -273,28 +273,45 @@ Export 细节（`opencode-sync.ts`）：
 
 另：每轮 `harness_sessions` +1 行（仅元数据，不含对话正文）。
 
-### 10.2 是否符合预期
+### 10.2 怎么读这组数
 
-**符合。** 一句极短回复，opencode sync 仍会产生多条事件（会话/用户消息/助手输出等元数据），**7 行量级正常**，不是「一句一行」。
+**结论先说：符合预期，对这种短 prompt，FlexDB 几乎不是瓶颈。**
 
-每轮 **FlexDB 写放大**（OpenCode，粗算）：
+#### 为啥 7 行，不是 1 行？
 
-| 操作 | 次数量级 |
-|------|----------|
-| `harness_sessions` create / bind / delete | 每轮数次 upsert |
-| export 前 `maxSeq` | **1 次读**（`limit 1`） |
-| `appendEvents` | **≈ 新增 event 条数** 次 `doc.set`（先 `id in` 批量查重） |
-| hydrate（仅 re-acquire） | 分页读全会话 event，与历史长度成正比 |
+OpenCode 外置存的是 **sync 事件流**（建会话、用户消息、助手输出等），不是「用户一句话 = 数据库一行」。让模型只回一个 `ok`，出现 **7 条 event、合计 ~3.6 KB** 是正常量级，不必按聊天句数去估行数。
 
-**对 DB 有压力吗？** 对这种短 prompt：**几乎没有**。瓶颈在 LLM 与起箱（实测每轮 prompt ~90s），不在 FlexDB。
+#### 每轮实际打几次库？
 
-需要心里有数的场景：
+粗算一轮完整对话（`session/new` → `prompt` → export → `session/delete`）：
 
-| 场景 | 压力来源 |
-|------|----------|
-| 高频短聊 | 每轮 1 次 export + 若干行 append；7 行/轮 × 100 轮/天仍很小 |
-| 多 tool 轮次 | **event 条数随 tool 轮增多**，不是随 token 流式增多 |
-| 长会话 re-acquire | hydrate **读**全会话（分页 100/页）；写库仍按轮增量 |
-| 多会话并发 | 各会话独立行；看 FlexDB 配额与 env 总 QPS |
+| 方向 | 做什么 | 次数量级 |
+|------|--------|----------|
+| 写 | `harness_sessions` 创建 / 绑箱 / 删会话 | 每轮 **数次** upsert（单行元数据，很小） |
+| 写 | `harness_sync_events` export | **≈ 本轮新增 event 条数** 次 `doc.set`（写入前先 `id in` 批量查重） |
+| 读 | export 前查 cursor | **1 次** `maxSeq`（`orderBy seq desc limit 1`） |
+| 读 | hydrate（**仅**沙箱回收后 re-acquire） | 按会话历史 **分页读回**（100 条/页），与已存 event 总数成正比 |
 
-**结论：** 当前「每轮结束 export 一次」的设计，对 FlexDB **偏保守**；正常单用户/单会话用量不用担心打爆库。真要盯的是 **超长会话 + 频繁 re-acquire** 的读放大，以及 **多 tool 长对话** 的行数增长——可用 `--db-pressure-rounds` 加大样本，或换更长 prompt / 多 tool 场景复测。
+同一次压测里，每轮 `prompt` 墙钟约 **~90s**，时间主要在 **LLM 推理 + AGS 起箱**，不在 FlexDB。
+
+#### 对 DB 有压力吗？
+
+对 **§10.1 这种极短 prompt**：**几乎没有**。当前设计是「每轮聊完 export 一次」，相对流式每个 token 写库，对 FlexDB **偏保守**；正常单用户、单会话、一天上百轮短聊，行数仍是个位数/轮量级，不用担心打爆库。
+
+#### 啥时候才值得盯？
+
+| 场景 | 原因 |
+|------|------|
+| **多 tool、多轮 agent 循环** | event **随 tool 轮次变多**，不随 SSE token 变多；行数可能比 7 大一个数量级 |
+| **超长对话 + 频繁 re-acquire** | 写库仍按轮增量，但 hydrate 要把 **全会话历史读回来**，读放大随历史变长 |
+| **很多会话同时聊** | 各会话独立行；压力在 env 总 QPS / FlexDB 配额，不是单会话体积 |
+
+上面两类（长历史读、多 tool 写）才是后续要压测或盯指标的方向；短聊不是。
+
+#### 复测建议
+
+- 加大样本：`--db-pressure-rounds 10`（默认 10 轮）。  
+- 换场景：更长 prompt、强制多 tool 的 prompt，对比 §10.1 基线。  
+- Claude 引擎：同命令加 `--engines claude`，看 `harness_claude_session_entries` 行数（边聊边 append，粒度与 OpenCode 不同）。
+
+**总括：** §10.1 说明「按轮 export」在典型短对话下 **库压力很轻**；设计目标（避免 token 级写放大）和实测一致。真要评估上限，用更长、更 tool-heavy 的会话复跑 db-pressure，而不是用一句 `ok` 外推最坏情况。
