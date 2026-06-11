@@ -1,6 +1,9 @@
 # CMA vendor notice
 
-Protocol-layer code vendored from [mosoo-agent-driver](https://github.com/langgenius/mosoo-agent-driver) (Apache-2.0).
+Protocol-layer code vendored from [mosoo-agent-driver](https://github.com/langgenius/mosoo-agent-driver).
+
+- **License:** Apache License, Version 2.0 — [`LICENSE.txt`](./LICENSE.txt) (upstream copy)
+- **Repository root index:** [`THIRD_PARTY_NOTICES.md`](../../../../../THIRD_PARTY_NOTICES.md)
 
 | File | Upstream path |
 |------|----------------|
