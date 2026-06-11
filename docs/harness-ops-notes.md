@@ -19,12 +19,14 @@
 只关心数据库行数/体积时，不必跑完整 `harness -- local`：
 
 ```bash
-# 本地进程 + 真 AGS + 真 FlexDB（每轮 session 聊一句后统计行数/字节）
 npm run build:runtime
-npm run harness -- db-pressure --db-pressure-rounds 10
+npm run harness -- db-pressure --engines opencode --db-pressure-rounds 10
+npm run harness -- db-pressure --engines claude   --db-pressure-rounds 10   # 要 .env.local-claude
+npm run harness -- db-pressure --engines all      --db-pressure-rounds 10
 
-# 云上已有 agent（跳过 deploy，只 verify + 压测）
+# 云上（跳过 deploy）
 npm run harness -- cloud-tcbr-opencode --verify-only --db-pressure --db-pressure-rounds 10
+npm run harness -- cloud-tcbr-claude   --verify-only --db-pressure --db-pressure-rounds 10
 ```
 
-输出里看 `round | collection rows | bytes~` 和末尾 `avg/round`。
+OpenCode 看 `harness_sync_events`；Claude 看 `harness_claude_session_entries`（不是同一张表）。详见 [harness-agent-session-storage.md §10](./harness-agent-session-storage.md#10-flexdb-压测实测db-pressure)。
