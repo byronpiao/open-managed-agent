@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 280" width="960" height="280">
+  <defs><marker id="ac" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><polygon points="0 0, 8 4, 0 8" fill="#5a5a5a"/></marker></defs>
+  <rect width="960" height="280" fill="#f8f6f3"/>
+  <text x="480" y="36" fill="#1a1a1a" font-size="19" font-weight="700" text-anchor="middle">Claude Code Model Routing</text>
+  <text x="480" y="58" fill="#6a6a6a" font-size="13" text-anchor="middle">No zen built-in — use CloudBase AI or BYOK</text>
+  <rect x="80" y="90" width="360" height="150" rx="12" fill="#a8c5e6" stroke="#4a4a4a" stroke-width="2.5"/>
+  <text x="260" y="125" fill="#1a1a1a" font-size="15" font-weight="600" text-anchor="middle">Default · CloudBase AI</text>
+  <text x="260" y="150" fill="#6a6a6a" font-size="12" text-anchor="middle">hy3-preview via Anthropic-compatible gateway</text>
+  <text x="260" y="175" fill="#6a6a6a" font-size="11" text-anchor="middle">magent login — no Anthropic.com key</text>
+  <text x="260" y="210" fill="#1a1a1a" font-size="12" font-weight="600" text-anchor="middle">Recommended start</text>
+  <rect x="520" y="90" width="360" height="150" rx="12" fill="#f4e4c1" stroke="#4a4a4a" stroke-width="2.5"/>
+  <text x="700" y="125" fill="#1a1a1a" font-size="15" font-weight="600" text-anchor="middle">Custom BYOK</text>
+  <text x="700" y="150" fill="#6a6a6a" font-size="12" text-anchor="middle">LLM_* + ANTHROPIC_BASE_URL</text>
+  <text x="700" y="175" fill="#6a6a6a" font-size="11" text-anchor="middle">Third-party Anthropic-compatible endpoint</text>
+  <text x="700" y="210" fill="#6a6a6a" font-size="11" text-anchor="middle">Do not set LLM_* if using default AI</text>
+</svg>

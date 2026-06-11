@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540">
+  <defs>
+    <marker id="ab" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/></marker>
+    <marker id="ag" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#16a34a"/></marker>
+    <marker id="ap" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#9333ea"/></marker>
+  </defs>
+  <rect width="960" height="540" fill="#ffffff"/>
+  <text x="480" y="40" fill="#111827" font-family="Helvetica Neue, Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" font-weight="600" text-anchor="middle">OpenCode Write Path (per-round export)</text>
+  <text x="480" y="64" fill="#6b7280" font-size="13" text-anchor="middle">FlexDB writes happen after each prompt ends — not during streaming</text>
+  <rect x="40" y="100" width="120" height="56" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+  <text x="100" y="125" fill="#111827" font-size="13" font-weight="600" text-anchor="middle">Client</text>
+  <text x="100" y="142" fill="#6b7280" font-size="11" text-anchor="middle">prompt</text>
+  <path d="M 160 128 L 200 128" fill="none" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <rect x="200" y="100" width="140" height="56" rx="8" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+  <text x="270" y="125" fill="#111827" font-size="13" font-weight="600" text-anchor="middle">OMA acp-endpoint</text>
+  <text x="270" y="142" fill="#6b7280" font-size="11" text-anchor="middle">SSE stream</text>
+  <path d="M 340 128 L 380 128" fill="none" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <rect x="380" y="88" width="160" height="76" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <text x="460" y="115" fill="#111827" font-size="13" font-weight="600" text-anchor="middle">AGS · OpenCode</text>
+  <text x="460" y="132" fill="#6b7280" font-size="11" text-anchor="middle">SQLite in sandbox</text>
+  <text x="460" y="148" fill="#6b7280" font-size="10" text-anchor="middle">events accumulate</text>
+  <path d="M 540 128 L 580 128" fill="none" stroke="#9333ea" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#ap)"/>
+  <text x="560" y="118" fill="#9333ea" font-size="10" text-anchor="middle">SSE</text>
+  <rect x="580" y="100" width="140" height="56" rx="8" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+  <text x="650" y="125" fill="#111827" font-size="13" font-weight="600" text-anchor="middle">Client receives</text>
+  <text x="650" y="142" fill="#6b7280" font-size="11" text-anchor="middle">tokens / tools</text>
+  <path d="M 270 156 L 270 210 L 760 210 L 760 168" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#ag)"/>
+  <rect x="300" y="192" width="200" height="36" rx="6" fill="#ffffff" stroke="#ffffff"/>
+  <text x="400" y="214" fill="#16a34a" font-size="12" font-weight="600" text-anchor="middle">prompt_end → persistOpencodeSyncForSession</text>
+  <rect x="680" y="112" width="240" height="56" rx="8" fill="#faf5ff" stroke="#d8b4fe" stroke-width="1.5"/>
+  <text x="800" y="135" fill="#111827" font-size="13" font-weight="600" text-anchor="middle">FlexDB</text>
+  <text x="800" y="152" fill="#6b7280" font-size="11" text-anchor="middle">harness_sync_events (+sessions)</text>
+  <text x="460" y="200" fill="#6b7280" font-size="10" text-anchor="middle">GET /sync/history (cursor=maxSeq) → idempotent doc.set</text>
+  <rect x="40" y="280" width="880" height="200" rx="10" fill="#f9fafb" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="6,4"/>
+  <text x="60" y="306" fill="#111827" font-size="14" font-weight="600">Re-acquire (new sandbox)</text>
+  <rect x="60" y="330" width="150" height="56" rx="8" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+  <text x="135" y="355" fill="#111827" font-size="12" font-weight="600" text-anchor="middle">sandbox-prewarm</text>
+  <text x="135" y="372" fill="#6b7280" font-size="10" text-anchor="middle">bind new instance</text>
+  <path d="M 210 358 L 250 358" fill="none" stroke="#16a34a" stroke-width="1.5" marker-end="url(#ag)"/>
+  <text x="230" y="348" fill="#16a34a" font-size="9">read</text>
+  <rect x="250" y="330" width="200" height="56" rx="8" fill="#faf5ff" stroke="#d8b4fe" stroke-width="1.5"/>
+  <text x="350" y="355" fill="#111827" font-size="12" font-weight="600" text-anchor="middle">FlexDB listEvents</text>
+  <text x="350" y="372" fill="#6b7280" font-size="10" text-anchor="middle">paginate 100/page · full session</text>
+  <path d="M 450 358 L 490 358" fill="none" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <text x="470" y="348" fill="#2563eb" font-size="9">replay</text>
+  <rect x="490" y="330" width="180" height="56" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <text x="580" y="355" fill="#111827" font-size="12" font-weight="600" text-anchor="middle">POST /sync/replay</text>
+  <text x="580" y="372" fill="#6b7280" font-size="10" text-anchor="middle">into fresh OpenCode</text>
+  <rect x="60" y="410" width="840" height="52" rx="8" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5"/>
+  <text x="480" y="432" fill="#991b1b" font-size="12" font-weight="600" text-anchor="middle">Risk: crash mid-prompt → events after last export may be lost (§3.1)</text>
+  <text x="480" y="450" fill="#b91c1c" font-size="11" text-anchor="middle">Mitigations: idle_pause export · session_delete export · export retry + syncExportFailedAt</text>
+  <line x1="60" y1="510" x2="100" y2="510" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/><text x="108" y="514" fill="#6b7280" font-size="11">Request / replay</text>
+  <line x1="240" y1="510" x2="280" y2="510" stroke="#16a34a" stroke-width="1.5" marker-end="url(#ag)"/><text x="288" y="514" fill="#6b7280" font-size="11">FlexDB persist / read</text>
+  <line x1="460" y1="510" x2="500" y2="510" stroke="#9333ea" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#ap)"/><text x="508" y="514" fill="#6b7280" font-size="11">Streaming (no DB)</text>
+</svg>

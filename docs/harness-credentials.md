@@ -14,6 +14,8 @@ tcb env use your-env-id
 然后直接 `magent agent:create ...` 或 `cp .env.harness.example .env.harness` 跑 harness 验收。  
 CAM、环境 ID、region 会由 CLI / deploy 自动解析；**不必**先 export 四列变量。
 
+![Credentials flow](./diagrams/harness-credentials-flow.svg)
+
 | 你需要做的 | 自动获得什么 |
 |------------|--------------|
 | `magent login` | CAM 临时密钥（代替 `TCB_SECRET_*`） |

@@ -13,51 +13,9 @@
 
 ## 1. 总览
 
-```mermaid
-flowchart TB
-  subgraph client [Client]
-    P[prompt / session API]
-  end
+![Harness session external storage architecture](./diagrams/harness-session-storage-architecture.svg)
 
-  subgraph oma [OMA Runtime]
-    ACP[acp-endpoint]
-    IDX[harness_sessions]
-    SYNC[harness_sync_events]
-    PW[sandbox bind / prewarm]
-  end
-
-  subgraph box_oc [沙箱 OpenCode]
-    SERVE[opencode serve /sync/*]
-    SQLITE[箱内 SQLite 临时]
-  end
-
-  subgraph box_cl [沙箱 Claude]
-    HARNESS[claude-acp-harness.js]
-    STORE[SDK SessionStore]
-    TMP["/tmp/.claude 缓存"]
-  end
-
-  subgraph flexdb [CloudBase 文档库 FlexDB]
-    T1[harness_sessions]
-    T2[harness_sync_events]
-    T3[harness_claude_session_entries 等]
-  end
-
-  P --> ACP
-  ACP --> IDX --> T1
-
-  ACP -->|轮末 export| SERVE
-  SERVE --> SQLITE
-  ACP --> SYNC --> T2
-  PW -->|re-acquire hydrate| T2
-  T2 -->|全量 replay| SERVE
-
-  ACP --> HARNESS --> STORE
-  STORE -->|turn 内 append| T3
-  STORE --> TMP
-  PW -->|session/load| HARNESS
-  T3 -->|分页 load| STORE
-```
+> 图源：`docs/diagrams/` · 全部 harness 图示：`python3 docs/diagrams/generate-harness-diagrams.py`
 
 | 角色 | 集合 | 谁写入 | 存什么 |
 |------|------|--------|--------|
@@ -101,6 +59,8 @@ flowchart TB
 
 ### 3.1 OpenCode — 按「轮次」批量写
 
+![OpenCode export-at-prompt-end flow](./diagrams/harness-opencode-export-flow.svg)
+
 | 时机 | 代码路径 | 同步/异步 | 说明 |
 |------|----------|-----------|------|
 | **每轮 prompt 结束** | `acp-endpoint.ts` → `persistOpencodeSyncForSession` | 异步 | SSE 收尾后 export（含重试）；不阻塞用户收流 |
@@ -121,6 +81,8 @@ Export 细节（`opencode-sync.ts`）：
 
 ### 3.2 Claude Code — SDK 在 turn 内增量写
 
+![Claude Code turn-time append flow](./diagrams/harness-claude-session-flow.svg)
+
 | 时机 | 说明 |
 |------|------|
 | **SDK 处理 turn 时** | `claude-agent-sdk` 调用 `SessionStore.append()`，**边生成边写** FlexDB |
@@ -140,7 +102,7 @@ Export 细节（`opencode-sync.ts`）：
 | 操作 | 粒度 | 说明 |
 |------|------|------|
 | **export（写 FlexDB）** | **增量** | cursor = 已有 `maxSeq`；只 append 新 event；`doc(ev.id)` 已存在则跳过 |
-| **hydrate（读 FlexDB → 写箱）** | **对该会话全量** | `listEventsForAggregate` 取出该 `aggregateId` 下事件（当前单次查询 `limit(5000)`），整包 `POST /sync/replay` |
+| **hydrate（读 FlexDB → 写箱）** | **对该会话全量** | `listEventsForAggregate` 按 `seq` 分页读（100 条/页），整包 `POST /sync/replay` |
 
 持久化是 **事件溯源式追加**；恢复是 **（有上限的）全量 replay**。
 
@@ -251,4 +213,106 @@ Export 细节（`opencode-sync.ts`）：
 - [harness-architecture.md](./harness-architecture.md) — 运行时总架构  
 - [harness-opencode.md](./harness-opencode.md) — OpenCode 对客配置  
 - [harness-claude-code.md](./harness-claude-code.md) — Claude 对客配置  
-- [harness-env.md](./harness-env.md) — `TCB_REGION`（FlexDB）、`.env.harness` 与 [Advanced settings](./harness-env.md#advanced-settings)
+- [harness-env.md](./harness-env.md) — `TCB_REGION`（FlexDB）、`.env.harness` 与 [Advanced settings](./harness-env.md#advanced-settings)  
+- [harness-ops-notes.md](./harness-ops-notes.md) — 运维备忘（丢话、副本、db-pressure 命令）
+
+---
+
+## 10. FlexDB 压测实测（db-pressure）
+
+脚本（真 AGS + 真 FlexDB，每轮新建会话、同一句短 prompt、统计行数）：
+
+```bash
+npm run harness -- db-pressure --engines opencode --db-pressure-rounds N
+npm run harness -- db-pressure --engines claude   --db-pressure-rounds N   # 需 scenarios/.env.local-claude
+npm run harness -- db-pressure --engines all      --db-pressure-rounds N   # 两条都跑
+```
+
+详见 [harness-ops-notes.md](./harness-ops-notes.md)。**OpenCode 与 Claude 测的不是同一张表、也不是同一条写库路径**（见 §10.3）。
+
+### 10.1 OpenCode 样本（2026-06-11，platform LLM）
+
+环境：`test-6g2rfs50c69b7fb8`，magent `260610-1736-d89aa8-magent`，prompt：`Round N: reply with exactly the word ok`。
+
+| 轮次 | 集合 | 行数 | 体积约 |
+|------|------|------|--------|
+| 1–3 | `harness_sync_events` | 各 **7** | 各 **~3.6 KB**（`listEvents` 后 JSON 字节） |
+| **均** | | **~7 行/轮** | **~3.6 KB/轮** |
+
+另：每轮 `harness_sessions` +1 行（元数据）。写库方：**OMA 网关**，每轮 prompt 结束后 `persistOpencodeSyncForSession` export。
+
+墙钟：每轮 prompt **~90s**（LLM + 起箱为主）。
+
+### 10.2 Claude Code 样本（2026-06-11，Anthropic BYOK）
+
+同上环境与 prompt；`scenarios/.env.local-claude` 提供 `LLM_*` + `ANTHROPIC_BASE_URL`。
+
+| 轮次 | 集合 | 行数 | 体积约 |
+|------|------|------|--------|
+| 1–3 | `harness_claude_session_entries` | 各 **6** | 各 **~3 KB**（脚本按 `行数×512B` 粗估，非实测 JSON） |
+| **均** | | **~6 行/轮** | **~3 KB/轮（粗估）** |
+
+另：每轮 `harness_sessions` +1 行。写库方：**箱内** `claude-acp-harness` + SessionStore，SDK turn 过程中 **append**（不经 OMA export）。
+
+墙钟：每轮 prompt **~3 分钟**（同 prompt 下比 OpenCode 慢，与模型/路由有关，与 DB 无关）。
+
+压测脚本**只数** `harness_claude_session_entries`（主 transcript）；`harness_claude_session_messages` / `summaries` 等未计入，实际略大于上表。
+
+### 10.3 两条链路差在哪（为啥要分开测）
+
+![db-pressure collection comparison](./diagrams/harness-db-pressure-compare.svg)
+
+| | **OpenCode** | **Claude Code** |
+|---|----------------|-----------------|
+| 外置集合 | `harness_sync_events` | `harness_claude_session_entries`（+ messages/summaries 等） |
+| 谁写 FlexDB | OMA Runtime（export） | 沙箱内 SessionStore |
+| 何时写 | **每轮 prompt 结束**（+ idle pause / delete） | **turn 处理中** append |
+| 箱挂在中途 | 上轮 export 之后的可能丢段（§3.1） | 已 append 的 entry 一般能留下 |
+| db-pressure 量什么 | export 后的 event 行数 + JSON 体积 | entry 行数 + 粗估字节 |
+
+同一句 `ok`，OpenCode **7 行**、Claude **6 行**，量级接近，都说明 **短聊不会把库打爆**；但不能把 OpenCode 的数字直接套到 Claude 上。
+
+### 10.4 怎么读这组数
+
+**结论：两条引擎在这种极短 prompt 下，FlexDB 都几乎不是瓶颈。**
+
+#### 为啥不是「一句话一行」？
+
+- **OpenCode**：存的是 sync **事件流**（会话/消息/输出等元数据），7 条 event 正常。  
+- **Claude**：存的是 SDK **transcript entry**（一轮 turn 里可能多条 append），6 条 entry 正常。
+
+#### 每轮打几次库？（粗算）
+
+**OpenCode**
+
+| 方向 | 次数量级 |
+|------|----------|
+| 写 `harness_sessions` | 数次 upsert/轮 |
+| 写 `harness_sync_events` | ≈ 本轮新增 event 数（先 `id in` 查重） |
+| 读 `maxSeq` | **1 次/轮**（export 前） |
+| 读 hydrate | 仅 re-acquire；分页读全会话历史 |
+
+**Claude**
+
+| 方向 | 次数量级 |
+|------|----------|
+| 写 `harness_sessions` | 数次 upsert/轮 |
+| 写 `harness_claude_session_entries` | turn 内 **数次 append**（查重 + `add`，可能双写 messages） |
+| OMA export | **无**（不走路径） |
+| 读 `session/load` | re-acquire 时 **分页读全会话** entry |
+
+#### 啥时候才值得盯？
+
+| 场景 | OpenCode | Claude |
+|------|----------|--------|
+| 多 tool 长对话 | event 随行数增 | entry 随 turn/step 增 |
+| 超长会话 + 常 re-acquire | hydrate 读放大 | `session/load` 读放大 |
+| 高频短聊 | ~7 行/轮，很轻 | ~6 行/轮，很轻 |
+
+#### 复测
+
+- `--db-pressure-rounds 10` 加大样本。  
+- 更长 prompt / 多 tool 场景对比 §10.1 / §10.2 基线。  
+- `--engines all` 一次跑齐两条链路。
+
+**总括：** 已实测 OpenCode（按轮 export）与 Claude（按 turn append）；短 prompt 下 **行数个位数、体积几 KB/轮**，与「别每个 token 写库」的设计一致。评估上限请用长会话、多 tool 复测，不要用一句 `ok` 外推。

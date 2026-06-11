@@ -39,6 +39,8 @@ magent run -a "$CLOUDBASE_AGENT_ID" \
 
 ## 模型
 
+![OpenCode model routing](./diagrams/harness-opencode-models.svg)
+
 | 顺序 | 配置 | 说明 |
 |------|------|------|
 | 1 | 省略 `model` 或 `hy3-preview` | CloudBase AI + 环境 API Key；额度不足时在控制台 [购买 Token](https://docs.cloudbase.net/ai/model/openai-sdk-access) |

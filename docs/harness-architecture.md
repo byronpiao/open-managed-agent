@@ -4,6 +4,10 @@
 
 `runtime=harness`：思考循环在 **AGS 沙箱内 engine**（opencode / claude / codebuddy）跑 ACP；OMA Runtime 负责会话索引、sync、client tool 桥、MCP relay。
 
+![Harness runtime stack](./diagrams/harness-runtime-stack.svg)
+
+> 图源：`docs/diagrams/` · 重生成：`python3 docs/diagrams/generate-harness-diagrams.py`
+
 ---
 
 ## 1. 入口
@@ -69,6 +73,8 @@ npm run harness -- cloud-scf
 
 Pin：`.env.harness` 中 `HARNESS_CLOUD_AGENT_ID`（tcbr）、`HARNESS_CLOUD_SCF_AGENT_ID`（scf）。
 
+![Harness acceptance scenarios](./diagrams/harness-test-scenarios.svg)
+
 ---
 
 ## 2. 验收脚本
@@ -103,6 +109,8 @@ tool update 后约 **120s** 再 start。
 ### COS（可选 — 工作区跨沙箱）
 
 **默认不启用**：对话连续性靠 `harness_sync_events`（opencode sync replay）；沙箱本地磁盘随 AGS 实例 TTL 清空，属设计预期。
+
+![Conversation vs COS workspace](./diagrams/harness-cos-persistence.svg)
 
 **启用 COS**（`.env.harness` ⑥ 段）：AGS 挂载 COS 工作区，`session/delete` 时 `workspace/snapshot` → **跨沙箱 / re-acquire 保留文件现场**（与对话 replay 互补）。
 
@@ -142,11 +150,7 @@ tool update 后约 **120s** 再 start。
 
 ## 4a. OpenCode sync（`engine=opencode`）
 
-```text
-prompt 结束 → POST …/opencode/sync/history → harness_sync_events
-新箱 acquire → replay → ACP session/load
-session/delete → export + 可选 workspace/snapshot（COS）
-```
+![OpenCode export flow](./diagrams/harness-opencode-export-flow.svg)
 
 `harness_sessions`：`acpSessionId` ↔ `engineSessionId`。对话记录在 `harness_sync_events`（event `id` 幂等）。
 
@@ -156,13 +160,9 @@ session/delete → export + 可选 workspace/snapshot（COS）
 
 ## 4b. Claude SessionStore（`engine=claude`）
 
-```text
-SDK turn 内 append → SessionStore → harness_claude_session_entries（CloudBase）
-AGS TTL / re-acquire → session/load（replay:false）从 CloudBase 恢复 SDK 会话
-箱内进程：claude-acp-harness.js（HARNESS_CLAUDE_SESSION_STORE=1）
-```
+![Claude turn-time append](./diagrams/harness-claude-session-flow.svg)
 
-详见 [harness-agent-session-storage.md](./harness-agent-session-storage.md)。
+箱内进程：`claude-acp-harness.js`（`HARNESS_CLAUDE_SESSION_STORE=1`）。详见 [harness-agent-session-storage.md](./harness-agent-session-storage.md)。
 
 | 项 | 说明 |
 |----|------|
@@ -236,4 +236,8 @@ OpenCode 箱内路径：`/home/user/.opencode` · `OPENCODE_CONFIG_CONTENT` · `
 |------|------|
 | [harness-tutorial.md](./harness-tutorial.md) | 对客上手 |
 | [harness-env.md](./harness-env.md) | 环境变量 |
+| [harness-ops-notes.md](./harness-ops-notes.md) | 运维备忘（丢话、副本、db-pressure） |
+| [harness-agent-session-storage.md](./harness-agent-session-storage.md) | 会话外置 · FlexDB 压测 |
 | [product-guide.md](./product-guide.md) | 托管 Agent |
+
+图示目录：`docs/diagrams/harness-*.svg`（`generate-harness-diagrams.py` 统一生成）。

@@ -46,9 +46,11 @@ Cloud（engine 后缀对等；无后缀 = opencode 主力）:
   --agent-id <id>  或 .env.harness ⑤ HARNESS_CLOUD_{TCBR|SCF}_{OPENCODE|CLAUDE}_AGENT_ID
   --verify-only / --no-verify
 
+db-pressure（只跑 FlexDB 行数/体积采样，不跑完整 e2e）:
+  db-pressure [--engines opencode|claude|all] [--db-pressure-rounds N]
+
 可选（默认不跑）:
-  --db-pressure              10 轮会话 FlexDB 压力采样（可用 --db-pressure-rounds N）
-  本地在 e2e full 末尾；云上与 extended verify 之后
+  --db-pressure              同上 N 默认 10；也可挂在 local full 末尾或 cloud verify 之后
 
 编排: npm run harness:run -- [--engines …] [--cloud] [--cloud-claude] [--ma-protocol]
 文档: Harness一条龙.md
@@ -261,6 +263,34 @@ async function main() {
 
   if (cmd === "local") {
     await runLocal(args.slice(1));
+    return;
+  }
+
+  if (cmd === "db-pressure") {
+    const extraArgs = args.slice(1);
+    const engines = parseHarnessEnginesArg(extraArgs);
+    loadEnv();
+    try {
+      assertHarnessEnginesEnv(engines);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    const scenario = engines === "claude" ? "local-claude" : "local-opencode";
+    logHarnessScenario(applyHarnessScenario(scenario));
+    await hydrateTcbApiKeyFromCam();
+    await assertHarnessAgsRuntimeEnvSync();
+    applyHarnessTestDefaults();
+    if (engines !== "claude") {
+      process.env.HARNESS_E2E_OPENCODE_TIER = "platform";
+    }
+    const forward = ["--db-pressure-only", "--db-pressure", "--engines", engines];
+    const ri = extraArgs.indexOf("--db-pressure-rounds");
+    if (ri >= 0 && extraArgs[ri + 1]) {
+      forward.push("--db-pressure-rounds", extraArgs[ri + 1]);
+    }
+    console.log(`=== harness db-pressure only (engines=${engines}, FlexDB) ===`);
+    runNode("tests/harness/e2e.test.mjs", forward, { tier: "platform" });
     return;
   }
 

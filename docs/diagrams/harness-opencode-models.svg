@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 320" width="960" height="320">
+  <defs><marker id="ab" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/></marker></defs>
+  <rect width="960" height="320" fill="#ffffff"/>
+  <text x="480" y="32" fill="#111827" font-size="17" font-weight="600" text-anchor="middle">OpenCode Model Routing (priority)</text>
+  <rect x="60" y="70" width="250" height="200" rx="10" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+  <text x="185" y="100" fill="#1d4ed8" font-size="13" font-weight="600" text-anchor="middle">1 · Default</text>
+  <text x="185" y="130" fill="#111827" font-size="12" text-anchor="middle">omit model or hy3-preview</text>
+  <text x="185" y="155" fill="#6b7280" font-size="11" text-anchor="middle">TCB_API_KEY + CAM</text>
+  <text x="185" y="178" fill="#6b7280" font-size="11" text-anchor="middle">CloudBase AI gateway</text>
+  <text x="185" y="210" fill="#16a34a" font-size="11" font-weight="600" text-anchor="middle">Recommended start</text>
+  <rect x="355" y="70" width="250" height="200" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="2"/>
+  <text x="480" y="100" fill="#15803d" font-size="13" font-weight="600" text-anchor="middle">2 · zen (opencode only)</text>
+  <text x="480" y="130" fill="#111827" font-size="12" text-anchor="middle">model: zen in yaml</text>
+  <text x="480" y="155" fill="#6b7280" font-size="11" text-anchor="middle">Built into sandbox image</text>
+  <text x="480" y="178" fill="#6b7280" font-size="11" text-anchor="middle">No CloudBase AI quota</text>
+  <text x="480" y="210" fill="#6b7280" font-size="11" text-anchor="middle">cloud-tcbr harness scenario</text>
+  <rect x="650" y="70" width="250" height="200" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
+  <text x="775" y="100" fill="#c2410c" font-size="13" font-weight="600" text-anchor="middle">3 · Custom BYOK</text>
+  <text x="775" y="130" fill="#111827" font-size="12" text-anchor="middle">LLM_* + OPENAI_BASE_URL</text>
+  <text x="775" y="155" fill="#6b7280" font-size="11" text-anchor="middle">or ModelSpec in yaml</text>
+  <text x="775" y="178" fill="#6b7280" font-size="11" text-anchor="middle">OpenAI-compatible vendor</text>
+  <text x="775" y="210" fill="#dc2626" font-size="11" text-anchor="middle">Mutually exclusive w/ default AI</text>
+  <text x="480" y="300" fill="#6b7280" font-size="11" text-anchor="middle">Set before agent:create · update env or redeploy to rotate keys</text>
+</svg>

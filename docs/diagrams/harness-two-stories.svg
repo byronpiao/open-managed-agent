@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" width="960" height="480">
+  <defs><marker id="ab" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/></marker></defs>
+  <rect width="960" height="480" fill="#ffffff"/>
+  <text x="480" y="36" fill="#111827" font-size="18" font-weight="600" text-anchor="middle">Two Client Stories on One Harness Deploy</text>
+  <rect x="380" y="70" width="200" height="48" rx="8" fill="#fef3c7" stroke="#fcd34d" stroke-width="1.5"/>
+  <text x="480" y="100" fill="#111827" font-size="13" font-weight="600" text-anchor="middle">CloudBase Agent</text>
+  <text x="480" y="108" fill="#6b7280" font-size="10" text-anchor="middle">runtime: harness</text>
+  <path d="M 380 118 L 240 118 L 240 150" fill="none" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <path d="M 580 118 L 720 118 L 720 150" fill="none" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <rect x="80" y="150" width="320" height="120" rx="10" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text x="240" y="180" fill="#1d4ed8" font-size="14" font-weight="600" text-anchor="middle">Story A · Harness runtime</text>
+  <text x="240" y="202" fill="#374151" font-size="12" text-anchor="middle">magent run · JSON-RPC ACP</text>
+  <text x="240" y="222" fill="#6b7280" font-size="11" text-anchor="middle">POST .../acp</text>
+  <text x="240" y="248" fill="#6b7280" font-size="10" text-anchor="middle">session/new · session/prompt</text>
+  <rect x="560" y="150" width="320" height="120" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <text x="720" y="180" fill="#15803d" font-size="14" font-weight="600" text-anchor="middle">Story B · MA HTTP</text>
+  <text x="720" y="202" fill="#374151" font-size="12" text-anchor="middle">SDK / REST + SSE</text>
+  <text x="720" y="222" fill="#6b7280" font-size="11" text-anchor="middle">/v1/agents · sessions · events</text>
+  <text x="720" y="248" fill="#6b7280" font-size="10" text-anchor="middle">user.message · tool_confirmation</text>
+  <path d="M 240 270 L 240 310 L 480 310 L 480 340" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#ab)"/>
+  <path d="M 720 270 L 720 310 L 480 310" fill="none" stroke="#2563eb" stroke-width="2"/>
+  <rect x="330" y="340" width="300" height="72" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+  <text x="480" y="370" fill="#111827" font-size="14" font-weight="600" text-anchor="middle">AGS Remote Sandbox</text>
+  <text x="480" y="392" fill="#6b7280" font-size="11" text-anchor="middle">OpenCode / Claude Code engine</text>
+  <text x="480" y="456" fill="#6b7280" font-size="11" text-anchor="middle">Same deploy — do not mix session ID semantics across protocols</text>
+</svg>

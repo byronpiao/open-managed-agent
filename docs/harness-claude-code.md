@@ -39,6 +39,8 @@ magent run -a "$CLOUDBASE_AGENT_ID" \
 
 ## 模型
 
+![Claude Code model routing](./diagrams/harness-claude-models.svg)
+
 | 配置 | 说明 |
 |------|------|
 | 省略 `model` 或 `hy3-preview` | **推荐起步**：CloudBase AI + 环境 API Key；可 [购买 Token 资源包](https://docs.cloudbase.net/ai/model/openai-sdk-access) |

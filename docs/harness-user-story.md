@@ -5,23 +5,7 @@
 
 同一份 CloudBase 部署（`runtime: harness`）上，可以走 **两条接入面**。它们服务不同角色，可以并存，但不要混用协议语义。
 
-```text
-                    CloudBase 环境（envId）
-                              │
-                    已部署 Agent（runtime: harness）
-                              │
-              ┌───────────────┴───────────────┐
-              │                               │
-        故事 A：Harness 运行时              故事 B：MA HTTP 协议
-        magent / ACP / 终端试跑              应用 / 自动化 / MA 形 API
-              │                               │
-              ▼                               ▼
-        POST .../acp（JSON-RPC）        /v1/agents|sessions|events
-              │                               │
-              └───────────────┬───────────────┘
-                              ▼
-                    AGS 远程沙箱（OpenCode / Claude Code）
-```
+![Two client stories on one harness deploy](./diagrams/harness-two-stories.svg)
 
 ---
 
@@ -123,11 +107,8 @@
 
 ## 两条故事如何并存
 
-```text
-同一 CloudBase Agent 部署（runtime: harness）
-  ├─ 运维 / 开发自测  → magent run（ACP）           ← 故事 A
-  └─ 线上业务流量      → /v1/sessions/...（MA HTTP）  ← 故事 B
-```
+- **运维 / 开发自测** → `magent run`（ACP）· 故事 A  
+- **线上业务流量** → `/v1/sessions/...`（MA HTTP）· 故事 B  
 
 - **配置基线**：部署时的 `agent.yaml` 是 Host 进程默认值；MA 的 Environment / Agent `metadata` 在 `createSession` 时合并进有效配置（见 [managed-agents-guide 概念对照](./managed-agents-guide.md#概念对照官方-ma--cloudbase--oma)）。
 - **隔离边界**：CloudBase `envId` 是平台租户；MA 的 Environment / Agent 是会话编排与配置源，不是 `envId` 本身。
