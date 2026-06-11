@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" width="960" height="400">
+  <defs><marker id="ab" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/></marker></defs>
+  <rect width="960" height="400" fill="#ffffff"/>
+  <text x="480" y="36" fill="#111827" font-size="17" font-weight="600" text-anchor="middle">db-pressure: what gets counted (short prompt baseline)</text>
+  <rect x="40" y="70" width="420" height="280" rx="10" fill="#f9fafb" stroke="#d1d5db" stroke-width="1.5"/>
+  <text x="250" y="100" fill="#111827" font-size="15" font-weight="600" text-anchor="middle">OpenCode</text>
+  <rect x="70" y="120" width="360" height="44" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+  <text x="250" y="147" fill="#111827" font-size="13" text-anchor="middle">harness_sync_events · ~7 rows/round · ~3.6 KB JSON</text>
+  <text x="250" y="175" fill="#6b7280" font-size="11" text-anchor="middle">Measured after OMA export (listEvents byte size)</text>
+  <text x="250" y="210" fill="#6b7280" font-size="11" text-anchor="middle">+ harness_sessions metadata (not in row count)</text>
+  <text x="250" y="250" fill="#16a34a" font-size="12" font-weight="600" text-anchor="middle">Wall ~90s/round (LLM + sandbox)</text>
+  <rect x="500" y="70" width="420" height="280" rx="10" fill="#f9fafb" stroke="#d1d5db" stroke-width="1.5"/>
+  <text x="710" y="100" fill="#111827" font-size="15" font-weight="600" text-anchor="middle">Claude Code</text>
+  <rect x="530" y="120" width="360" height="44" rx="8" fill="#faf5ff" stroke="#d8b4fe" stroke-width="1.5"/>
+  <text x="710" y="147" fill="#111827" font-size="13" text-anchor="middle">harness_claude_session_entries · ~6 rows/round</text>
+  <text x="710" y="175" fill="#6b7280" font-size="11" text-anchor="middle">bytes~ = rows × 512B estimate (not real JSON)</text>
+  <text x="710" y="210" fill="#6b7280" font-size="11" text-anchor="middle">messages/summaries not counted</text>
+  <text x="710" y="250" fill="#16a34a" font-size="12" font-weight="600" text-anchor="middle">Wall ~3 min/round (model/route)</text>
+  <text x="480" y="375" fill="#6b7280" font-size="12" text-anchor="middle">npm run harness -- db-pressure --engines all</text>
+</svg>

@@ -6,6 +6,10 @@
 - **聊的过程中**箱子挂了（OOM、AGS 强杀），上一轮抄完之后的新内容**可能没了**。
 - 要强一点用 **Claude 引擎**（边聊边写库）；OpenCode 目前没有「聊一半就存」。
 
+**OpenCode（轮末 export）** — ![OpenCode flow](./diagrams/harness-opencode-export-flow.svg)
+
+**Claude（turn 内 append）** — ![Claude flow](./diagrams/harness-claude-session-flow.svg)
+
 详见 [harness-agent-session-storage.md](./harness-agent-session-storage.md)。
 
 ## 云托管开几个副本？

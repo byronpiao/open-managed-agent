@@ -13,51 +13,9 @@
 
 ## 1. 总览
 
-```mermaid
-flowchart TB
-  subgraph client [Client]
-    P[prompt / session API]
-  end
+![Harness session external storage architecture](./diagrams/harness-session-storage-architecture.svg)
 
-  subgraph oma [OMA Runtime]
-    ACP[acp-endpoint]
-    IDX[harness_sessions]
-    SYNC[harness_sync_events]
-    PW[sandbox bind / prewarm]
-  end
-
-  subgraph box_oc [沙箱 OpenCode]
-    SERVE[opencode serve /sync/*]
-    SQLITE[箱内 SQLite 临时]
-  end
-
-  subgraph box_cl [沙箱 Claude]
-    HARNESS[claude-acp-harness.js]
-    STORE[SDK SessionStore]
-    TMP["/tmp/.claude 缓存"]
-  end
-
-  subgraph flexdb [CloudBase 文档库 FlexDB]
-    T1[harness_sessions]
-    T2[harness_sync_events]
-    T3[harness_claude_session_entries 等]
-  end
-
-  P --> ACP
-  ACP --> IDX --> T1
-
-  ACP -->|轮末 export| SERVE
-  SERVE --> SQLITE
-  ACP --> SYNC --> T2
-  PW -->|re-acquire hydrate| T2
-  T2 -->|全量 replay| SERVE
-
-  ACP --> HARNESS --> STORE
-  STORE -->|turn 内 append| T3
-  STORE --> TMP
-  PW -->|session/load| HARNESS
-  T3 -->|分页 load| STORE
-```
+> 图源：`docs/diagrams/harness-session-storage-architecture.svg`（深色架构图，可 `python3 docs/diagrams/generate-harness-diagrams.py` 重生成）
 
 | 角色 | 集合 | 谁写入 | 存什么 |
 |------|------|--------|--------|
@@ -101,6 +59,8 @@ flowchart TB
 
 ### 3.1 OpenCode — 按「轮次」批量写
 
+![OpenCode export-at-prompt-end flow](./diagrams/harness-opencode-export-flow.svg)
+
 | 时机 | 代码路径 | 同步/异步 | 说明 |
 |------|----------|-----------|------|
 | **每轮 prompt 结束** | `acp-endpoint.ts` → `persistOpencodeSyncForSession` | 异步 | SSE 收尾后 export（含重试）；不阻塞用户收流 |
@@ -120,6 +80,8 @@ Export 细节（`opencode-sync.ts`）：
 3. 按 event `id` 幂等写入 `harness_sync_events`
 
 ### 3.2 Claude Code — SDK 在 turn 内增量写
+
+![Claude Code turn-time append flow](./diagrams/harness-claude-session-flow.svg)
 
 | 时机 | 说明 |
 |------|------|
@@ -297,6 +259,8 @@ npm run harness -- db-pressure --engines all      --db-pressure-rounds N   # 两
 压测脚本**只数** `harness_claude_session_entries`（主 transcript）；`harness_claude_session_messages` / `summaries` 等未计入，实际略大于上表。
 
 ### 10.3 两条链路差在哪（为啥要分开测）
+
+![db-pressure collection comparison](./diagrams/harness-db-pressure-compare.svg)
 
 | | **OpenCode** | **Claude Code** |
 |---|----------------|-----------------|
