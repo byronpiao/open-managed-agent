@@ -180,18 +180,22 @@ magent agent:create --name my-sandbox --runtime harness --engine opencode \
 
 ### 首次使用：沙箱工具与 RoleArn
 
-每个 CloudBase 环境需有 **AGS 沙箱工具**（定义沙箱镜像与资源）。首次在本环境部署沙箱 Agent 时，Runtime 会尝试自动注册；若环境里还没有工具，需提供一个 **CAM 角色 ARN**（`HARNESS_TOOL_ROLE_ARN`），与控制台或 `tcb sandbox tool create --role-arn` 填的是同一类配置。
+部署前运行 `node scripts/check-harness-ready.mjs`（或 `npm run check:harness`）。`magent agent:create --runtime harness` 会做同一套检查，缺配置时**拒绝部署**。
 
 | 你的情况 | 要做什么 |
 |----------|----------|
-| 控制台 / `tcb sandbox tool list` 里已有沙箱工具 | 直接部署，**不用**配 RoleArn |
-| 第一次在本环境用沙箱 Agent，且希望自动创建工具 | 部署前 `export HARNESS_TOOL_ROLE_ARN=...`（见 [使用指南](./docs/harness-tutorial.md#首次起箱沙箱工具与-rolearn)） |
+| 自检通过（已有 `oma-harness-<envId>` 工具） | 直接 `agent:create` |
+| 自检提示缺 RoleArn | 按 [凭证 · 控制台逐步操作](./docs/harness-credentials.md#控制台逐步操作照填) 建 CAM 角色后 `export HARNESS_TOOL_ROLE_ARN=...`，再自检 |
 
-日常对话、换模型、更新 `agent.yaml` **都不需要**再碰 RoleArn。
+日常对话、换模型、更新 `agent.yaml` **不需要**再碰 RoleArn。
+
+### 自定义数据面镜像（可选）
+
+默认不必改镜像。要预装工具或 starter 工程：从 [镜像包](https://github.com/RealAlexandreAI/tcb-remote-workspace/pkgs/container/tcb-remote-workspace) 拉 `ghcr.io/realalexandreai/tcb-remote-workspace:<tag>` 扩展后，**自行推到与沙箱同地域的腾讯云 TCR**，再 `export HARNESS_SANDBOX_IMAGE=ccr.ccs.tencentyun.com/...`。步骤见 [使用指南 · 快速开始 §6](./docs/harness-tutorial.md#6-自定义数据面镜像可选)。
 
 ### 更多能力
 
-自定义模型、自有镜像、COS 工作区持久化等，见 [沙箱内 Agent 使用指南](./docs/harness-tutorial.md) 的 **进阶** 一节。
+自定义模型、COS 工作区持久化等，见 [沙箱内 Agent 使用指南](./docs/harness-tutorial.md) 的 **进阶** 一节。
 
 ---
 

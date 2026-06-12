@@ -2,6 +2,8 @@
 name: My Claude Sandbox Agent
 runtime: harness
 engine: claude
+# sandbox:
+#   image: ccr.ccs.tencentyun.com/<命名空间>/<镜像>:<tag>
 system: |
   You are a helpful coding assistant in a remote sandbox workspace.
   Reply concisely.

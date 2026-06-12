@@ -69,6 +69,7 @@ import {
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { parseHarnessRoleArn } from "../../lib/harness-preflight.mjs";
 
 const tests = [];
 function test(name, fn) {
@@ -1314,6 +1315,18 @@ test("resolveHarnessSandboxIdlePauseMs defaults to 20 minutes", () => {
   assert.equal(resolveHarnessSandboxIdlePauseMs(), 60000);
   if (prev === undefined) delete process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS;
   else process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS = prev;
+});
+
+test("parseHarnessRoleArn accepts standard CAM ARN", () => {
+  assert.deepEqual(parseHarnessRoleArn("qcs::cam::uin/691612481:roleName/agent-sandbox"), {
+    uin: "691612481",
+    roleName: "agent-sandbox",
+  });
+});
+
+test("parseHarnessRoleArn rejects garbage", () => {
+  assert.equal(parseHarnessRoleArn(""), null);
+  assert.equal(parseHarnessRoleArn("arn:aws:iam::123:role/x"), null);
 });
 
 let failed = 0;
