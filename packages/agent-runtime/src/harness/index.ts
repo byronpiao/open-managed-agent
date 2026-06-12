@@ -44,7 +44,24 @@ export {
   harnessLog,
   harnessTrace,
   isHarnessLogDebug,
+  harnessRequestId,
+  harnessTraceId,
+  harnessOutboundCorrelationHeaders,
+  runWithHarnessRequestContext,
+  resolveHarnessRequestId,
+  resolveHarnessCorrelationFromHeaders,
+  parseCloudbaseTraceHeader,
+  normalizeInboundRequestId,
+  buildHarnessOutboundCorrelationHeaders,
 } from "./logging.js";
+
+export {
+  recordHarnessAcquireDuration,
+  recordHarnessPromptDuration,
+  recordHarnessPermissionFrames,
+  recordHarnessSyncExported,
+  recordHarnessAcceptanceOutcome,
+} from "./metrics.js";
 
 export {
   HARNESS_SYNC_EVENTS_COLLECTION,

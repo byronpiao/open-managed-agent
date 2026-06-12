@@ -46,6 +46,7 @@ import {
 } from "./sandbox/session-store.js";
 import { isScfServerless } from "./harness-env.js";
 import { harnessLog, runWithHarnessRequestContext } from "./logging.js";
+import { recordHarnessPermissionFrames, recordHarnessPromptDuration } from "./metrics.js";
 import {
   persistOpencodeSyncForSession,
   snapshotWorkspaceIfAvailable,
@@ -288,11 +289,13 @@ async function pipeSandboxSseToClient(
   config: AgentConfig,
 ): Promise<void> {
   const startedAt = Date.now();
+  const { engine } = resolveRuntime(config);
   const wl = harnessLog({
     lane: "acp",
     operation: "sse.pipe",
     acpSessionId,
     rpcId,
+    engine,
   });
   const sse = makeHarnessStreamingSseSink(res);
   sseStart(res);
@@ -377,7 +380,10 @@ async function pipeSandboxSseToClient(
         sawResult,
         sseUpdateTypes: [...sseUpdateTypes],
       });
-      wl.emit({ status: "sse", durationMs: Date.now() - startedAt });
+      const durationMs = Date.now() - startedAt;
+      wl.emit({ status: "sse", durationMs });
+      recordHarnessPromptDuration(durationMs, { engine, status: "sse" });
+      recordHarnessPermissionFrames(permissionFrames, engine);
       return;
     }
 
@@ -413,7 +419,10 @@ async function pipeSandboxSseToClient(
       permissionFrames,
       sseUpdateTypes: [...sseUpdateTypes],
     });
-    wl.emit({ status: "sse", durationMs: Date.now() - startedAt });
+    const durationMs = Date.now() - startedAt;
+    wl.emit({ status: "sse", durationMs });
+    recordHarnessPromptDuration(durationMs, { engine, status: "sse" });
+    recordHarnessPermissionFrames(permissionFrames, engine);
   } finally {
     mcpPump?.stop();
     unregisterActivePrompt(acpSessionId);
@@ -787,7 +796,7 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
     res.setHeader("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, X-Task-Id, X-Tenant-Id",
+      "Content-Type, Authorization, X-Task-Id, X-Tenant-Id, X-Request-Id, X-Cloudbase-Trace, x-cloudbase-trace",
     );
     if (req.method === "OPTIONS") {
       res.status(204).end();

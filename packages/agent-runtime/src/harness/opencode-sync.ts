@@ -6,6 +6,7 @@ import type { AgentConfig } from "../config.js";
 import { resolveRuntime } from "../config.js";
 import { DEFAULT_HARNESS_SANDBOX_CWD } from "./deploy.js";
 import { harnessLog } from "./logging.js";
+import { recordHarnessSyncExported } from "./metrics.js";
 import { isE2eStubSandboxEnabled } from "./sandbox/e2e-stub.js";
 import { getCachedSandboxHandle } from "./sandbox/orchestrator.js";
 import { getHarnessSessionStore } from "./sandbox/session-store.js";
@@ -193,6 +194,7 @@ export async function exportOpencodeSyncEvents(args: {
       inserted,
       lastSeq,
     });
+    recordHarnessSyncExported(inserted);
     return { pulled: forAggregate.length, inserted };
   } catch (err) {
     wl.error(err);

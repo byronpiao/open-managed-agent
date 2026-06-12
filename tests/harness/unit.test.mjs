@@ -44,6 +44,10 @@ import {
   resolveHarnessSandboxIdlePauseMs,
   resetSandboxPrewarmForTests,
   openAiChatCompletionsUrl,
+  normalizeInboundRequestId,
+  parseCloudbaseTraceHeader,
+  resolveHarnessCorrelationFromHeaders,
+  buildHarnessOutboundCorrelationHeaders,
 } from "../../packages/agent-runtime/dist/harness/index.js";
 import {
   getHarnessSessionStore,
@@ -1187,6 +1191,42 @@ test("platform probe quota failure is classified and documented", async () => {
   assert.match(guide, /EXCEED_TOKEN_QUOTA_LIMIT|quota/i);
   assert.match(guide, /auto-falls back to opencode zen/i);
   assert.match(guide, /cloud-tcbr/);
+});
+
+test("normalizeInboundRequestId rejects unsafe values", () => {
+  assert.equal(normalizeInboundRequestId("abc-123_ok"), "abc-123_ok");
+  assert.equal(normalizeInboundRequestId("a".repeat(300)), undefined);
+  assert.equal(normalizeInboundRequestId("bad id space"), undefined);
+});
+
+test("parseCloudbaseTraceHeader decodes traceId", () => {
+  const traceId = "8f431b7e-bfcc-423e-99d8-cda72471ff49";
+  const spanId = "bbe75687-fffb-6cb8";
+  const raw = Buffer.from(`${traceId},${spanId},on`, "utf-8").toString("base64");
+  const parsed = parseCloudbaseTraceHeader(raw);
+  assert.equal(parsed.traceId, traceId);
+  assert.equal(parsed.raw, raw);
+  assert.deepEqual(parseCloudbaseTraceHeader("not-base64!!!"), {});
+});
+
+test("resolveHarnessCorrelationFromHeaders uses inbound or generates", () => {
+  const inbound = resolveHarnessCorrelationFromHeaders({
+    "x-scf-request-id": "scf-req-1",
+  });
+  assert.equal(inbound.requestId, "scf-req-1");
+  const generated = resolveHarnessCorrelationFromHeaders({});
+  assert.match(generated.requestId, /^[0-9a-f-]{36}$/i);
+});
+
+test("buildHarnessOutboundCorrelationHeaders never forges scf headers", () => {
+  const headers = buildHarnessOutboundCorrelationHeaders({
+    requestId: "oma-1",
+    traceId: "trace-abc",
+    cloudbaseTrace: "b64payload",
+  });
+  assert.equal(headers["X-Request-Id"], "oma-1");
+  assert.equal(headers["x-cloudbase-trace"], "b64payload");
+  assert.equal(headers["x-scf-request-id"], undefined);
 });
 
 test("resolveHarnessSandboxIdlePauseMs defaults to 20 minutes", () => {

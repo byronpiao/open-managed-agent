@@ -78,6 +78,7 @@ const httpAgent = new Agent({
 const sandboxFetch = (url, init = {}) => fetch(url, { ...init, dispatcher: httpAgent });
 
 const results = [];
+let primaryAcpSessionId;
 
 function record(id, status, detail = "") {
   results.push({ id, status, detail });
@@ -831,7 +832,7 @@ async function runClaudeChecks() {
   }
 }
 
-function printSummary() {
+async function printSummary() {
   console.log("\n══════════════════════════════════════");
   console.log(" PRODUCT ACCEPTANCE SUMMARY");
   console.log("══════════════════════════════════════");
@@ -843,6 +844,26 @@ function printSummary() {
   const pass = results.filter((r) => r.status === "PASS").length;
   const skip = results.filter((r) => r.status === "SKIP").length;
   console.log(`\n  PASS ${pass}  WARN ${warn}  FAIL ${fail}  SKIP ${skip}`);
+  const summary = {
+    event: "product_acceptance_summary",
+    engines: ENGINES,
+    sessionId: primaryAcpSessionId ?? null,
+    pass,
+    warn,
+    fail,
+    skip,
+  };
+  console.log(JSON.stringify(summary));
+  try {
+    const { recordHarnessAcceptanceOutcome } = await import(
+      "../../packages/agent-runtime/dist/harness/metrics.js"
+    );
+    for (const r of results) {
+      recordHarnessAcceptanceOutcome(r.status.toLowerCase(), r.id);
+    }
+  } catch {
+    // metrics noop without build
+  }
   if (fail > 0) process.exitCode = 1;
 }
 
@@ -867,7 +888,7 @@ async function main() {
       record("A-matrix-parity", "PASS", "MCP + skills infra");
     } catch (e) {
       record("A-matrix-parity", "FAIL", e.message);
-      printSummary();
+      await printSummary();
       process.exit(1);
     }
   } else {
@@ -884,6 +905,7 @@ async function main() {
         clientInfo: { name: "product-acceptance", version: "1.0" },
       });
       await rpc("session/new", { sessionId, meta: { userId: "product-acceptance" } });
+      primaryAcpSessionId = sessionId;
       console.log("sessionId:", sessionId);
       await waitSandboxReady(sessionId);
       await sleep(8000);
@@ -905,12 +927,12 @@ async function main() {
 
   console.log("\nteardown (post-flight)…");
   await teardownHarnessSandboxes().catch(() => {});
-  printSummary();
+  await printSummary();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err);
   stopRuntime();
-  printSummary();
+  await printSummary();
   process.exit(1);
 });
