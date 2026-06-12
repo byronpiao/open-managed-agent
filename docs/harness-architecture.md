@@ -197,16 +197,22 @@ OMA re-acquire 后 `claude-session-warm.ts` 调箱内 `session/load`（`replay:f
 
 | 层 | 日志位置 | 关联字段 |
 |----|----------|----------|
-| OMA Runtime | tcbr/SCF **stdout**（`harnessLog` / evlog） | `requestId`, `acpSessionId`, `instanceId`, `lane`, `phase` |
-| TRW | `/var/log/trw/*.ndjson` + stdout | `request_id`, `harness_acp_session_id`, `event=agent_acp` |
+| OMA Runtime | tcbr/SCF **stdout**（`harnessLog` / evlog） | `traceId`, `requestId`, `acpSessionId`, `instanceId`, `lane`, `phase` |
+| TRW | `/var/log/trw/*.ndjson` + stdout | `trace_id`, `request_id`, `harness_acp_session_id`, `event=access\|tool_call` |
 | opencode | stderr → TRW `agent_stderr` | `agent=opencode-acp` |
+| CloudBase 控制台 | [服务调用日志](https://docs.cloudbase.net/logger/tracelog) | `traceId`（来自 `x-cloudbase-trace`） |
+
+**关联策略（OMA / TRW 一致）**：入站只读 `x-cloudbase-trace`、`x-cloudbase-request-id`、`x-scf-request-id`、`x-request-id`、`x-trace-id`；非法则丢弃。无入站 `requestId` 时本进程生成 UUID。会话级用已有 `acpSessionId` / `HARNESS_ACP_SESSION_ID`（不新造 env）。OMA→TRW 数据面仅透传 `x-cloudbase-trace` 与 `X-Request-Id`；**禁止**伪造 `X-Scf-*`。
 
 ```bash
-# OMA（SCF）
-tcb fn log <agent-id> -e "$CLOUDBASE_ENV_ID" | rg 'phase|session\.new|orchestrator'
+# 云上（控制台服务调用日志）
+traceId:8f431b7e-bfcc-423e-99d8-cda72471ff49
+
+# OMA（SCF / tcbr stdout）
+tcb fn log <agent-id> -e "$CLOUDBASE_ENV_ID" | rg 'traceId|requestId|acpSessionId'
 
 # TRW（进 AGS 实例）
-sudo tail -n 200 /var/log/trw/*.ndjson | rg 'agent_acp|harness_acp_session_id'
+sudo tail -n 200 /var/log/trw/*.ndjson | rg 'trace_id|request_id|harness_acp_session_id'
 
 # 本地
 LOG_LEVEL=debug npm run harness -- local

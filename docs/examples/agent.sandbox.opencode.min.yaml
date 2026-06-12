@@ -2,6 +2,12 @@
 name: My Sandbox Agent
 runtime: harness
 engine: opencode
+sandbox:
+  # image: ccr.ccs.tencentyun.com/<命名空间>/<镜像>:<tag>
+  # 可选：覆盖部署时的 HARNESS_SANDBOX_IMAGE（TCR，与沙箱同地域）
+  env:
+    # Optional TRW tuning at instance start (see docs/sandbox.md § sandbox.env)
+    # MY_FEATURE_FLAG: "on"
 system: |
   You are a helpful coding assistant in a remote sandbox workspace.
   Reply concisely.

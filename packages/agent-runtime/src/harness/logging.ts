@@ -4,8 +4,15 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createRequestLogger, initLogger, log } from "evlog";
+import {
+  type HarnessCorrelationContext,
+  buildHarnessOutboundCorrelationHeaders,
+  headerOne,
+  resolveHarnessCorrelationFromHeaders,
+  resolveInboundRequestIdFromHeaders,
+} from "./correlation.js";
 
-const requestContext = new AsyncLocalStorage<{ requestId?: string }>();
+const requestContext = new AsyncLocalStorage<HarnessCorrelationContext>();
 
 const REDACT_KEY = /secret|password|token|authorization|apikey|api_key|b64|credential/i;
 
@@ -55,52 +62,70 @@ export interface HarnessLogHandle {
   emit(extra?: Record<string, unknown>): void;
 }
 
-function headerOne(
-  headers: Record<string, string | string[] | undefined>,
-  name: string,
-): string {
-  const raw = headers[name] ?? headers[name.toLowerCase()];
-  if (Array.isArray(raw)) return raw[0]?.trim() ?? "";
-  return typeof raw === "string" ? raw.trim() : "";
-}
+export {
+  normalizeInboundRequestId,
+  parseCloudbaseTraceHeader,
+  resolveInboundRequestIdFromHeaders,
+  resolveHarnessCorrelationFromHeaders,
+  buildHarnessOutboundCorrelationHeaders,
+  INBOUND_REQUEST_ID_HEADERS,
+  CLOUDBASE_TRACE_HEADER,
+} from "./correlation.js";
 
-/** Gateway / SCF request id for cross-layer correlation. */
+/** Inbound request id only (no generation). */
 export function resolveHarnessRequestId(
   headers: Record<string, string | string[] | undefined>,
 ): string | undefined {
-  for (const key of [
-    "x-request-id",
-    "x-scf-request-id",
-    "x-cloudbase-request-id",
-    "x-trace-id",
-  ]) {
-    const v = headerOne(headers, key);
-    if (v) return v;
-  }
-  return undefined;
+  return resolveInboundRequestIdFromHeaders((name) => {
+    const v = headerOne(headers, name);
+    return v || undefined;
+  });
 }
 
 export function harnessRequestId(): string | undefined {
   return requestContext.getStore()?.requestId;
 }
 
+export function harnessTraceId(): string | undefined {
+  return requestContext.getStore()?.traceId;
+}
+
+export function harnessCorrelationContext(): HarnessCorrelationContext | undefined {
+  return requestContext.getStore();
+}
+
+/** Headers for sandbox data-plane fetch (x-cloudbase-trace + X-Request-Id). */
+export function harnessOutboundCorrelationHeaders(): Record<string, string> {
+  const ctx = requestContext.getStore();
+  if (!ctx) return {};
+  return buildHarnessOutboundCorrelationHeaders(ctx);
+}
+
+function correlationLogFields(): Record<string, unknown> {
+  const ctx = requestContext.getStore();
+  if (!ctx) return {};
+  return {
+    requestId: ctx.requestId,
+    ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+  };
+}
+
 export async function runWithHarnessRequestContext<T>(
   headers: Record<string, string | string[] | undefined>,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const requestId = resolveHarnessRequestId(headers);
-  if (!requestId) return fn();
-  return requestContext.run({ requestId }, fn);
+  const ctx = resolveHarnessCorrelationFromHeaders(headers);
+  return requestContext.run(ctx, fn);
 }
 
 /** One wide event per logical operation (ACP RPC, acquire, MCP call, …). */
 export function harnessLog(scope: Record<string, unknown>): HarnessLogHandle {
   initHarnessLogging();
-  const rid = harnessRequestId();
+  const corr = correlationLogFields();
   const wl = createRequestLogger(
     sanitizeHarnessLogFields({
       component: "harness",
-      ...(rid ? { requestId: rid } : {}),
+      ...corr,
       ...scope,
     }),
   );
@@ -122,7 +147,7 @@ export function harnessLog(scope: Record<string, unknown>): HarnessLogHandle {
           sanitizeHarnessLogFields({
             component: "harness",
             phase: name,
-            ...(rid ? { requestId: rid } : {}),
+            ...corr,
             ...scope,
             ...fields,
           }),
@@ -133,7 +158,7 @@ export function harnessLog(scope: Record<string, unknown>): HarnessLogHandle {
       const payload = sanitizeHarnessLogFields({
         component: "harness",
         phase: name,
-        ...(rid ? { requestId: rid } : {}),
+        ...corr,
         ...scope,
         ...fields,
       });
@@ -157,5 +182,7 @@ export function harnessLog(scope: Record<string, unknown>): HarnessLogHandle {
 export function harnessTrace(scope: string, fields?: Record<string, unknown>): void {
   if (!isHarnessLogDebug()) return;
   initHarnessLogging();
-  log.debug(sanitizeHarnessLogFields({ component: "harness", scope, ...fields }));
+  log.debug(
+    sanitizeHarnessLogFields({ component: "harness", scope, ...correlationLogFields(), ...fields }),
+  );
 }

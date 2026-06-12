@@ -108,6 +108,33 @@ for await (const event of client.sessions.prompt(session.id, "列出当前工作
 }
 ```
 
+### 6. 自定义数据面镜像（可选）
+
+默认使用平台沙箱镜像，**快速开始不必改**。
+
+若需预装依赖或 starter 工程：
+
+1. 说明：[tcb-remote-workspace](https://github.com/RealAlexandreAI/tcb-remote-workspace) · 镜像包 [pkgs/container/tcb-remote-workspace](https://github.com/RealAlexandreAI/tcb-remote-workspace/pkgs/container/tcb-remote-workspace)（GHCR 仅作**参考构建源**）
+2. `docker pull ghcr.io/realalexandreai/tcb-remote-workspace:<tag>` → `FROM` 扩展 → `docker build`
+3. **推到腾讯云 TCR**（个人版 / 企业版），且与沙箱环境**同地域**；AGS 侧一般**不支持**直接填 `ghcr.io/...`
+4. 部署前指定 **TCR** 镜像地址（二选一）：
+
+```bash
+# 方式 A：部署前 export（magent 不自动读 .env.harness）
+export HARNESS_SANDBOX_IMAGE=ccr.ccs.tencentyun.com/<命名空间>/<镜像>:<tag>
+magent agent:create --runtime harness ...
+```
+
+或在 `agent.yaml` 写 `sandbox.image: ccr.ccs.tencentyun.com/...`（与 export 等价，写入 Runtime env）。
+
+企业版 TCR 时另设 `export HARNESS_SANDBOX_IMAGE_REGISTRY_TYPE=enterprise`（个人版默认 `personal`，可不写）。
+
+5. **换镜像 tag** 后：用**同一组** `export` 再执行 `magent agent:update -f ./agent.sandbox.yaml -a <agentId>`，下次起箱时 Runtime 会把新地址同步到 AGS Tool。
+
+首次创 AGS 沙箱工具时，`HARNESS_TOOL_ROLE_ARN` 需能拉取该 TCR 仓库（通常关联 `QcloudTCRReadOnlyAccess`），见 [凭证说明 · CAM 角色](./harness-credentials.md#首次创沙箱工具cam-角色harvestool_role_arn)。
+
+> 研发验收可把 ④ 写在 `.env.harness`，但须先 `node scripts/harness/load-env.mjs` 注入进程 env，再 `magent agent:create`；日常对客部署用方式 A 即可。
+
 ---
 
 ## 用户故事：选择模型
@@ -163,25 +190,31 @@ export ANTHROPIC_BASE_URL=https://your-endpoint/anthropic
 
 ## 首次起箱：沙箱工具与 RoleArn
 
-**什么时候会遇到：** 本 CloudBase 环境**从未**创建过 AGS 沙箱工具，第一次 `magent agent:create --runtime harness` 时。
-
-**不需要 RoleArn 的情况：** 控制台 **AGS → 沙箱工具** 里已有工具，或团队已用 `tcb sandbox tool create` 创建过。
-
-**需要 RoleArn 的情况：** 希望由 Runtime **自动创建**沙箱工具。在 `agent:create` **之前**执行：
+**部署前自检（推荐）：**
 
 ```bash
-export HARNESS_TOOL_ROLE_ARN=qcs::cam::uin/<你的UIN>:roleName/<角色名>
+magent login && tcb env use <envId>
+node scripts/check-harness-ready.mjs
 ```
 
-角色从哪来（详见 [harness-credentials.md · CAM 角色](./harness-credentials.md)）：
+脚本会告诉你：是否已登录、环境里有没有 `oma-harness-<envId>`、缺不缺 `HARNESS_TOOL_ROLE_ARN`。  
+`magent agent:create --runtime harness` 会做**同一套检查**，缺 RoleArn 时**直接拒绝部署**，不会拖到第一次 `magent run`。
 
-1. **推荐**：复制环境里**已有沙箱工具**详情页上的 RoleArn（`tcb sandbox tool list` 亦可查看）。
-2. CAM 新建：**产品服务 → Agent 沙箱服务 (AGS)**，载体 `ags.cloud.tencent.com`；策略至少 `QcloudTCRReadOnlyAccess`（私有镜像），启用 COS 再加 `QcloudCOSFullAccess`。
-3. 自行 `tcb sandbox tool create ... --role-arn ...` 创建工具后，再部署 Agent（此后不必再配 RoleArn）。
+**不需要 RoleArn：** `tcb sandbox tool list` 里已有 `oma-harness-<envId>`（或已 pin `HARNESS_TOOL_ID`）。
 
-`HARNESS_TOOL_ROLE_ARN` 是**沙箱实例**在云上运行的身份，**不是**云函数执行角色，也**不是** API Key。
+**需要 RoleArn：** 本环境第一次自动创建沙箱工具。在 `agent:create` **之前**：
 
-自动创建的工具在控制台显示为 **`oma-harness-<你的环境 ID>`**（与是否启用 COS 无关；COS 只影响挂载配置，不会出现在工具名称里）。
+```bash
+export HARNESS_TOOL_ROLE_ARN='qcs::cam::uin/<uin>:roleName/<角色名>'
+```
+
+**角色从哪来：** 见 [harness-credentials.md · 控制台逐步操作](./harness-credentials.md#控制台逐步操作照填)（CAM 每一步填什么、链到哪）。
+
+要点：
+
+- `HARNESS_TOOL_ROLE_ARN` = 沙箱**拉镜像 / 挂 COS** 的执行身份，≠ 云函数角色，≠ `magent login` 的 CAM。
+- 服务相关角色 `AGS_QCSLinkedRoleInSandboxTool` **不用你配**。
+- 自动创建的工具名：**`oma-harness-<环境 ID>`**。
 
 ---
 
@@ -189,16 +222,7 @@ export HARNESS_TOOL_ROLE_ARN=qcs::cam::uin/<你的UIN>:roleName/<角色名>
 
 ### 自定义沙箱镜像
 
-默认使用平台提供的公开 **magent** 沙箱镜像，**一般不用改**。
-
-若你方构建了私有镜像，在 **部署 Agent 之前**指定：
-
-```bash
-export HARNESS_SANDBOX_IMAGE=ccr.ccs.tencentyun.com/<命名空间>/<镜像>:<tag>
-magent agent:create --runtime harness ...
-```
-
-镜像需为 magent 预设（含 TRW + OpenCode/Claude Code）。自建镜像流程请联系交付或参考团队内部构建文档。
+见上文 [自定义数据面镜像（可选）](#6-自定义数据面镜像可选)。镜像构建与 entrypoint 约定以 [tcb-remote-workspace](https://github.com/RealAlexandreAI/tcb-remote-workspace) 为准。
 
 ### 工作区持久化（COS）
 
@@ -218,7 +242,9 @@ export HARNESS_COS_MOUNT_NAME=ags-cos-workspace    # 与 AGS 工具挂载名一�
 export HARNESS_COS_MOUNT_DIR=/mnt/workspace
 ```
 
-需已在 AGS 沙箱工具上配置好同名 **StorageMount**。首次启用建议与运维确认桶路径与 CAM 权限。
+需已在 AGS 沙箱工具上配置好同名 **StorageMount**。
+
+**CAM 角色：** `HARNESS_TOOL_ROLE_ARN` 除 `QcloudTCRReadOnlyAccess` 外，须允许对目标桶 **写入**（`workspace/snapshot` 会 Put 对象）。预设可加 `QcloudCOSFullAccess`，或桶级自定义策略 — 见 [凭证 · COS 与快照](./harness-credentials.md#cos-工作区与快照角色还要什么权限)。
 
 ### 导出与回写配置
 

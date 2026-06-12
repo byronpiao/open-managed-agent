@@ -61,7 +61,24 @@ Harness 运行时（`resolveCamControlPlaneCredentials`）：SCF 内优先 `TENC
 
 **`HARNESS_TOOL_ID`**：仅写在 `.env.harness`；`load-env.mjs` / `lib/harness-env-file.mjs` 会忽略 shell `export` 泄漏。未 pin 时 orchestrator 自动 `ensureHarnessTool`；镜像推送后用 `scripts/harness/sync-tool.mjs`（按 `oma-harness-{env}` 名解析 tool）。
 
-**镜像 tag 三处对齐**：`HARNESS_PUBLIC_MAGENT_IMAGE`（源码常量）= `.env.harness` `HARNESS_SANDBOX_IMAGE` = AGS tool `Image`。`./scripts/harness/build-push-magent-public.sh` 一次更新前两处并 `sync-tool`；`load-env.mjs --check` 校验。
+**对客自定义镜像（链路）**
+
+| 步骤 | 说明 |
+|------|------|
+| 构建 | [说明](https://github.com/RealAlexandreAI/tcb-remote-workspace) · [镜像包](https://github.com/RealAlexandreAI/tcb-remote-workspace/pkgs/container/tcb-remote-workspace) → `docker pull ghcr.io/realalexandreai/tcb-remote-workspace:<tag>` → `FROM` 扩展 |
+| 入库 | **自行 push** 到与沙箱**同地域**的腾讯云 TCR（`ccr.ccs.tencentyun.com/...`）；AGS 一般不直接拉 `ghcr.io` |
+| 部署 | `export HARNESS_SANDBOX_IMAGE=ccr...` 或 `agent.yaml` → `sandbox.image`，再 `magent agent:create` / `agent:update` |
+| 起箱 | Runtime 写入 env → `ensureHarnessTool` 更新 AGS Tool `Image` → `StartSandboxInstance` |
+| 企业 TCR | 部署前 `export HARNESS_SANDBOX_IMAGE_REGISTRY_TYPE=enterprise`（默认 `personal`） |
+
+`magent` **不会**自动加载 `.env.harness`；④ 段仅供 `load-env.mjs` / harness 脚本。对客部署用 shell `export` 或 yaml `sandbox.image`。
+
+<details>
+<summary>研发：镜像 tag 三处对齐</summary>
+
+`HARNESS_PUBLIC_MAGENT_IMAGE`（源码）= `.env.harness` `HARNESS_SANDBOX_IMAGE` = AGS tool `Image`。`./scripts/harness/build-push-magent-public.sh` + `sync-tool.mjs`；`load-env.mjs --check` 校验。
+
+</details>
 
 ---
 

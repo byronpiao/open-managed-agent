@@ -36,3 +36,24 @@ npm run harness -- cloud-tcbr-claude   --verify-only --db-pressure --db-pressure
 ```
 
 OpenCode 看 `harness_sync_events`；Claude 看 `harness_claude_session_entries`（不是同一张表）。详见 [harness-agent-session-storage.md §10](./harness-agent-session-storage.md#10-flexdb-压测实测db-pressure)。
+
+## product-acceptance（产品向，不合入 smoke）
+
+比 `harness:smoke` 多验：同会话多轮开发、Skill 模型遵守、agent 经 bash 调 mcporter（CloudBase / 外部 MCP）、真箱 HITL、`session/load` 重连、可选 Claude 引擎。约 5–15 分钟，LLM 脆，**独立命令**：
+
+```bash
+npm run harness:product-acceptance
+npm run harness -- product-acceptance --engines all   # 含 Claude
+```
+
+入口与 `harness -- local` 相同：`.env.harness`、preflight tier、端口 19090。
+
+## 日志关联（OMA ↔ TRW）
+
+| 字段 | OMA | TRW | 用途 |
+|------|-----|-----|------|
+| `traceId` / `trace_id` | `harnessLog` | access / tool_call | CloudBase 服务调用日志 |
+| `requestId` / `request_id` | `harnessLog` | Hono access | 单次 HTTP |
+| `acpSessionId` / `harness_acp_session_id` | scope + 已有 env | 已有 env | harness 会话 |
+
+链路可从 OMA 或直连 TRW 开始；无入站 id 时各自生成 `requestId`。产品验收结束会打一行 `product_acceptance_summary` JSON（含 `sessionId`）。

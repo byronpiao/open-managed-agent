@@ -556,6 +556,13 @@ export {
   applyResolvedSandboxToConfig,
 } from "./harness/sandbox/sandbox-config.js";
 
+export {
+  normalizeSandboxEnv,
+  mergeHarnessInstanceEnv,
+  sandboxEnvToHarnessVars,
+  SANDBOX_ENV_DENY_EXACT,
+} from "./harness/sandbox/sandbox-env.js";
+
 /** Apply sandbox defaults after YAML / AGENT_CONFIG parse (harness or explicit sandbox block). */
 export function normalizeAgentConfig(config: AgentConfig): AgentConfig {
   const { runtime } = resolveRuntime(config);

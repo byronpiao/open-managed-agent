@@ -20,7 +20,8 @@ import {
 } from "../harness-env.js";
 import { fetchGatewayAccessToken } from "../tcb-gateway-token.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
-import { harnessTrace, harnessLog } from "../logging.js";
+import { harnessTrace, harnessLog, harnessOutboundCorrelationHeaders } from "../logging.js";
+import { recordHarnessAcquireDuration } from "../metrics.js";
 import {
   buildCosMountOptions,
   buildCosStorageMounts,
@@ -498,11 +499,13 @@ function buildHarnessSandboxHandle(args: {
     instanceAccessToken: args.accessToken,
     request(path: string, init?: RequestInit) {
       const p = path.startsWith("/") ? path : `/${path}`;
+      const initHeaders = (init?.headers as Record<string, string> | undefined) ?? {};
       return fetch(`${args.baseUrl}${p}`, {
         ...init,
         headers: {
           ...headers,
-          ...((init?.headers as Record<string, string> | undefined) ?? {}),
+          ...harnessOutboundCorrelationHeaders(),
+          ...initHeaders,
         },
       });
     },
@@ -735,10 +738,14 @@ export class AgsStatefulSandboxOrchestrator {
       wl.phase("harness.init");
       await this.trwWorkspaceInit(baseUrl, headers, instanceEnv, wl);
 
-      wl.emit({ status: "ok", durationMs: Date.now() - startedAt });
+      const durationMs = Date.now() - startedAt;
+      wl.emit({ status: "ok", durationMs });
+      recordHarnessAcquireDuration(durationMs, { engine: args.engine, status: "ok" });
     } catch (err) {
       wl.error(err);
-      wl.emit({ status: "error", durationMs: Date.now() - startedAt });
+      const durationMs = Date.now() - startedAt;
+      wl.emit({ status: "error", durationMs });
+      recordHarnessAcquireDuration(durationMs, { engine: args.engine, status: "error" });
       throw err;
     }
 

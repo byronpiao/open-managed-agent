@@ -25,7 +25,24 @@ sandbox:
     memory: "2Gi"
   # image: ...            # 高级：覆盖 HARNESS_SANDBOX_IMAGE / 部署模板
   # timeout: 30m          # serverless：AGS DefaultTimeout；durable：0 = 长驻（Talos，未接线）
+  env:                    # 可选：起箱时注入 TRW 实例 env（显式白名单式 passthrough）
+    MY_FEATURE_FLAG: "on"
+    WORKSPACE_FOLDER_PATHS: "/custom"   # 可覆盖 OMA 默认值（非 deny 键）
 ```
+
+### `sandbox.env`（方案 A — 显式 passthrough）
+
+在 `StartSandboxInstance` 时与 OMA 编译的 env **合并**；YAML 中同名键**覆盖** OMA 计算值（用于调参，如 `WORKSPACE_FOLDER_PATHS`）。
+
+| 规则 | 说明 |
+|------|------|
+| 键名 | `UPPER_SNAKE_CASE`，最长 128 字符 |
+| 值 | 非空字符串，最长 8192 字符 |
+| **禁止** | `SECRET_MASTER_KEY`、`MCPORTER_CONFIG_CONTENT`、`OPENCODE_CONFIG_CONTENT`、云凭证、`TCB_API_KEY` / `LLM_API_KEY` / `OPENAI_*` / `ANTHROPIC_*`，以及任意 `HARNESS_*`、`ENABLE_AGENT_*` 前缀 |
+
+解析入口：`normalizeSandboxEnv`（`sandbox-config.ts` → `resolveSandboxConfig`）；注入：`buildHarnessSandboxEnv`（`deploy.ts`）。
+
+与 TRW **workspace API** 运行时 env 白名单（`tcb-remote-workspace/docs/workspace-env.md`）无关 — `sandbox.env` 只管**起箱**一刻的实例 env。
 
 Hermes（Talos only）内部示例见 `scripts/harness/scenarios/agent.hermes.yaml`：
 
@@ -76,7 +93,8 @@ sandbox:
 | `packages/agent-runtime/src/harness/sandbox/sandbox-config.ts` | 类型、默认值、`resolveSandboxConfig`、`assertSandboxAcquireAllowed` |
 | `packages/agent-runtime/src/config.ts` | `AgentConfig.sandbox`、`normalizeAgentConfig`、`loadAgentConfig` |
 | `packages/agent-runtime/src/harness/sandbox/orchestrator.ts` | AGS Create/UpdateSandboxTool 使用 `resources` / `timeout` / `image` |
-| `packages/agent-runtime/src/harness/deploy.ts` | `normalizeAgentRuntime` 合并 sandbox；`applyHarnessRuntimeEnv` 转发 `sandbox.image` |
+| `packages/agent-runtime/src/harness/deploy.ts` | `normalizeAgentRuntime` 合并 sandbox；`applyHarnessRuntimeEnv` 转发 `sandbox.image`；`buildHarnessSandboxEnv` 合并 `sandbox.env` |
+| `packages/agent-runtime/src/harness/sandbox/sandbox-env.ts` | `sandbox.env` 校验、denylist、`mergeHarnessInstanceEnv` |
 
 ## 相关文档
 

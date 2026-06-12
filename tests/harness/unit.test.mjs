@@ -15,6 +15,8 @@ import {
   normalizeAgentConfig,
   SandboxConfigError,
   DEFAULT_SANDBOX_RESOURCES,
+  normalizeSandboxEnv,
+  mergeHarnessInstanceEnv,
 } from "../../packages/agent-runtime/dist/config.js";
 import {
   buildHarnessAcpMcpServers,
@@ -44,6 +46,10 @@ import {
   resolveHarnessSandboxIdlePauseMs,
   resetSandboxPrewarmForTests,
   openAiChatCompletionsUrl,
+  normalizeInboundRequestId,
+  parseCloudbaseTraceHeader,
+  resolveHarnessCorrelationFromHeaders,
+  buildHarnessOutboundCorrelationHeaders,
 } from "../../packages/agent-runtime/dist/harness/index.js";
 import {
   getHarnessSessionStore,
@@ -63,6 +69,7 @@ import {
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { parseHarnessRoleArn } from "../../lib/harness-preflight.mjs";
 
 const tests = [];
 function test(name, fn) {
@@ -168,6 +175,78 @@ test("assertSandboxAcquireAllowed rejects durable until Talos is wired", () => {
       ),
     /not wired/i,
   );
+});
+
+test("resolveSandboxConfig normalizes sandbox.env", () => {
+  assert.deepEqual(
+    resolveSandboxConfig(
+      {
+        sandbox: {
+          env: {
+            MY_TUNING_FLAG: "1",
+            ANOTHER_VAR: "abc",
+          },
+        },
+      },
+      "opencode",
+    ).env,
+    { MY_TUNING_FLAG: "1", ANOTHER_VAR: "abc" },
+  );
+});
+
+test("normalizeSandboxEnv rejects platform-managed keys", () => {
+  assert.throws(
+    () => normalizeSandboxEnv({ SECRET_MASTER_KEY: "x" }),
+    (e) => e.name === "SandboxConfigError",
+  );
+  assert.throws(
+    () => normalizeSandboxEnv({ HARNESS_OPENCODE_ACP_TIMEOUT_MS: "60000" }),
+    /HARNESS_/,
+  );
+  assert.throws(
+    () => normalizeSandboxEnv({ ENABLE_AGENT_OPENCODE: "false" }),
+    /ENABLE_AGENT_/,
+  );
+  assert.throws(
+    () => normalizeSandboxEnv({ bad_key: "1" }),
+    /UPPER_SNAKE_CASE/,
+  );
+});
+
+test("buildHarnessSandboxEnv merges sandbox.env over computed env", () => {
+  const config = normalizeAgentConfig({
+    name: "t",
+    model: "m",
+    system: "s",
+    runtime: "harness",
+    engine: "opencode",
+    sandbox: {
+      env: {
+        WORKSPACE_FOLDER_PATHS: "/custom",
+        MY_FEATURE_FLAG: "on",
+      },
+    },
+  });
+  const env = buildHarnessSandboxEnv({
+    config,
+    engine: "opencode",
+    clientToolCallbackBase: "http://127.0.0.1:3000/callback",
+  });
+  const byName = Object.fromEntries(env.map((e) => [e.Name, e.Value]));
+  assert.equal(byName.WORKSPACE_FOLDER_PATHS, "/custom");
+  assert.equal(byName.MY_FEATURE_FLAG, "on");
+  assert.equal(byName.ENABLE_AGENT_OPENCODE, "true");
+});
+
+test("mergeHarnessInstanceEnv yaml wins on key collision", () => {
+  const merged = mergeHarnessInstanceEnv(
+    [{ Name: "A", Value: "1" }, { Name: "B", Value: "2" }],
+    [{ Name: "B", Value: "override" }],
+  );
+  assert.deepEqual(merged, [
+    { Name: "A", Value: "1" },
+    { Name: "B", Value: "override" },
+  ]);
 });
 
 test("normalizeAgentConfig fills sandbox for harness runtime", () => {
@@ -1189,6 +1268,42 @@ test("platform probe quota failure is classified and documented", async () => {
   assert.match(guide, /cloud-tcbr/);
 });
 
+test("normalizeInboundRequestId rejects unsafe values", () => {
+  assert.equal(normalizeInboundRequestId("abc-123_ok"), "abc-123_ok");
+  assert.equal(normalizeInboundRequestId("a".repeat(300)), undefined);
+  assert.equal(normalizeInboundRequestId("bad id space"), undefined);
+});
+
+test("parseCloudbaseTraceHeader decodes traceId", () => {
+  const traceId = "8f431b7e-bfcc-423e-99d8-cda72471ff49";
+  const spanId = "bbe75687-fffb-6cb8";
+  const raw = Buffer.from(`${traceId},${spanId},on`, "utf-8").toString("base64");
+  const parsed = parseCloudbaseTraceHeader(raw);
+  assert.equal(parsed.traceId, traceId);
+  assert.equal(parsed.raw, raw);
+  assert.deepEqual(parseCloudbaseTraceHeader("not-base64!!!"), {});
+});
+
+test("resolveHarnessCorrelationFromHeaders uses inbound or generates", () => {
+  const inbound = resolveHarnessCorrelationFromHeaders({
+    "x-scf-request-id": "scf-req-1",
+  });
+  assert.equal(inbound.requestId, "scf-req-1");
+  const generated = resolveHarnessCorrelationFromHeaders({});
+  assert.match(generated.requestId, /^[0-9a-f-]{36}$/i);
+});
+
+test("buildHarnessOutboundCorrelationHeaders never forges scf headers", () => {
+  const headers = buildHarnessOutboundCorrelationHeaders({
+    requestId: "oma-1",
+    traceId: "trace-abc",
+    cloudbaseTrace: "b64payload",
+  });
+  assert.equal(headers["X-Request-Id"], "oma-1");
+  assert.equal(headers["x-cloudbase-trace"], "b64payload");
+  assert.equal(headers["x-scf-request-id"], undefined);
+});
+
 test("resolveHarnessSandboxIdlePauseMs defaults to 20 minutes", () => {
   resetSandboxPrewarmForTests();
   const prev = process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS;
@@ -1200,6 +1315,18 @@ test("resolveHarnessSandboxIdlePauseMs defaults to 20 minutes", () => {
   assert.equal(resolveHarnessSandboxIdlePauseMs(), 60000);
   if (prev === undefined) delete process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS;
   else process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS = prev;
+});
+
+test("parseHarnessRoleArn accepts standard CAM ARN", () => {
+  assert.deepEqual(parseHarnessRoleArn("qcs::cam::uin/691612481:roleName/agent-sandbox"), {
+    uin: "691612481",
+    roleName: "agent-sandbox",
+  });
+});
+
+test("parseHarnessRoleArn rejects garbage", () => {
+  assert.equal(parseHarnessRoleArn(""), null);
+  assert.equal(parseHarnessRoleArn("arn:aws:iam::123:role/x"), null);
 });
 
 let failed = 0;

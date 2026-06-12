@@ -18,6 +18,7 @@ import {
   stripOpenAiV1Suffix,
 } from "./llm-providers.js";
 import { buildHarnessOpencodePermission } from "./opencode-permissions.js";
+import { mergeHarnessInstanceEnv, sandboxEnvToHarnessVars } from "./sandbox/sandbox-env.js";
 
 export { buildHarnessOpencodePermission } from "./opencode-permissions.js";
 
@@ -333,8 +334,9 @@ export function buildHarnessSandboxEnv(args: {
   if (relayTimeout) {
     merged.push({ Name: "HARNESS_OPENCODE_ACP_TIMEOUT_MS", Value: relayTimeout });
   }
-  if (args.extraEnv?.length) merged.push(...args.extraEnv);
-  return merged;
+  const withExtra = args.extraEnv?.length ? [...merged, ...args.extraEnv] : merged;
+  const yamlEnv = sandboxEnvToHarnessVars(args.config.sandbox?.env);
+  return mergeHarnessInstanceEnv(withExtra, yamlEnv);
 }
 
 export function customToolsToMcpToolSchemas(
