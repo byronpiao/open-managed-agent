@@ -40,19 +40,18 @@ node scripts/check-harness-ready.mjs
 # 或 npm run check:harness
 ```
 
-| 检查项 | 说明 |
-|--------|------|
-| 是否已登录 | `magent login` / `TCB_SECRET_*` |
-| 环境 ID | `tcb env use` / `CLOUDBASE_ENV_ID` |
-| `TCB_REGION` | 能否从 `tcb env detail` 解析 |
-| AGS 沙箱工具 | 是否已有 `oma-harness-<envId>`（或 pin 的 `HARNESS_TOOL_ID`） |
-| `HARNESS_TOOL_ROLE_ARN` | 工具不存在时是否已配置；格式是否正确 |
-| CAM 角色载体 | 是否信任 `ags.cloud.tencent.com`（有权限时调 CAM API 验证） |
-| COS / 私有镜像 | 提示需挂的策略（不能代替你在 CAM 里点选） |
+自检输出为**表格**：每项标记 ✓ / ✗ / —，级别分 **必选**、**首次创工具**、**可选**。
 
-**检查不了、要真跑才知道的：** `CreateSandboxTool` 是否成功、镜像能否拉取、AGS 配额/地域限制。
+| 级别 | 检查项 | 说明 |
+|------|--------|------|
+| 必选 | CloudBase 登录 | `magent login` |
+| 必选 | 环境 ID | `tcb env use <envId>` |
+| 必选 | `TCB_REGION` | 一般由 `tcb env detail` 自动解析 |
+| 必选 | AGS 沙箱工具 | 已有 `oma-harness-<envId>` 则 ✓ |
+| 首次创工具 | `HARNESS_TOOL_ROLE_ARN` | **仅**无沙箱工具时需要；已有工具显示 `— 不需要` |
+| 可选 | COS / 私有镜像 | 仅在你 `export HARNESS_COS_*` 或私有镜像时出现 |
 
-`magent agent:create --runtime harness` 会做**同一套**前置检查；未通过则**拒绝部署**（不会拖到第一次 `magent run` 才报错）。
+`magent agent:create --runtime harness` 未通过时打印**同一表格**并拒绝部署。
 
 ---
 
@@ -83,18 +82,37 @@ node scripts/check-harness-ready.mjs
 
 1. 打开 **[访问管理 → 角色](https://console.cloud.tencent.com/cam/role)**，点 **新建角色**。
 2. 角色载体选 **腾讯云产品服务** → 确定。
-3. 在「选择产品」搜索框输入 **`沙箱`** 或 **`Agent`**，勾选 **Agent 沙箱服务 (AGS)**（英文名 Agent Sandbox Service）。
-4. **使用案例** 选 **Agent 沙箱服务**（控制台会自动把角色载体写成 `ags.cloud.tencent.com`）。  
-   - 若看不到该产品：说明账号未开通 AGS，先去 [Agent 沙箱控制台](https://ags.cloud.tencent.com) 按引导开通。
+3. 在「选择产品」搜索 **`Agent`**，勾选 **Agent Runtime**（控制台产品名；即原 Agent 沙箱 / AGS）。
+4. **可选择的使用案例** 会出现两个选项 — **只选第一个**：
+
+   | 选项 | 要不要选 |
+   |------|----------|
+   | **Agent Runtime** —「允许 Agent Runtime 访问您的腾讯云其他云产品资源」 | ✅ **选这个**（`HARNESS_TOOL_ROLE_ARN` 要这种） |
+   | **Agent Runtime - 沙箱工具** — 服务相关角色、AGS 访问 CFS/VPC… | ❌ **不要选**（平台自用的 `AGS_QCSLinkedRoleInSandboxTool`，载体 `sandboxtool.ags.cloud.tencent.com`） |
+
+   选对后，角色载体应为 **`ags.cloud.tencent.com`**（在角色详情 → 信任策略里可核对）。  
+   若列表里没有 Agent Runtime：先去 [Agent 沙箱控制台](https://ags.cloud.tencent.com) 开通。
+
 5. **配置策略**（下一步）按场景勾选预设策略：
 
    | 你的场景 | 勾选策略 |
    |----------|----------|
    | 用平台默认公开 CCR 镜像（一般客户） | `QcloudTCRReadOnlyAccess`（建议勾上） |
    | 用**个人/企业 TCR** 私有镜像 | **必须** `QcloudTCRReadOnlyAccess` |
-   | `HARNESS_COS_ENABLED=1` 工作区挂 COS | 再加 `QcloudCOSFullAccess`，或桶级自定义 COS 策略 |
+   | `HARNESS_COS_ENABLED=1`（工作区挂载 + **快照**） | **必须**再加 COS 写权限（见下节） |
 
-   > 没有名为 `QcloudAGSFullAccess` 的通用策略；此角色是「沙箱实例拉镜像/挂盘」，不是替你调 AGS OpenAPI。
+   > 没有名为 `QcloudAGSFullAccess` 的通用策略；此角色是「沙箱实例拉镜像/读写 COS 挂载」，不是替你调 AGS 控制面 OpenAPI。
+
+#### COS 工作区与快照：角色还要什么权限
+
+启用 `HARNESS_COS_ENABLED=1` 时，**同一个** `HARNESS_TOOL_ROLE_ARN` 负责：创工具时挂 COS；会话结束时 TRW `workspace/snapshot` **写入**桶内对象。仅有 `QcloudTCRReadOnlyAccess` **不够**。
+
+| 做法 | 说明 |
+|------|------|
+| **预设（省事）** | 再勾 **`QcloudCOSFullAccess`** |
+| **自定义（生产）** | 桶级 `PutObject` / `GetObject` / `ListBucket` 等，限定你的桶与前缀 |
+
+**不用 COS**（默认快速开始）：只勾 `QcloudTCRReadOnlyAccess`。
 
 6. **角色名称**（审阅页）：建议 `OMAHarnessSandbox` 或 `agent-sandbox`（仅字母数字及 `+=,.@-_`）。
 7. 创建完成后进入该角色 **详情页**，复制 **角色 ARN**，形如：
@@ -135,7 +153,7 @@ tcb sandbox tool create oma-harness-<envId> -t custom --role-arn 'qcs::cam::...'
 | `LLM_API_KEY` + `LLM_MODEL` + URL | 自有 LLM |
 | `HARNESS_TOOL_ROLE_ARN` | 见上表 |
 | `HARNESS_TOOL_ID` | pin 固定 ToolId（写在 `.env.harness`，勿只靠 shell export） |
-| `HARNESS_COS_*` | COS 挂载（`HARNESS_COS_ENABLED=1` 时整组必填） |
+| `HARNESS_COS_*` | COS 挂载 + 快照（`HARNESS_COS_ENABLED=1` 时整组必填；Role 须含 COS 写权限，见上节） |
 | `HARNESS_SANDBOX_IMAGE` | 自定义 TCR 镜像 |
 
 ---

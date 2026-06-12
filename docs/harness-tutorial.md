@@ -242,7 +242,9 @@ export HARNESS_COS_MOUNT_NAME=ags-cos-workspace    # 与 AGS 工具挂载名一�
 export HARNESS_COS_MOUNT_DIR=/mnt/workspace
 ```
 
-需已在 AGS 沙箱工具上配置好同名 **StorageMount**。首次启用建议与运维确认桶路径与 CAM 权限。
+需已在 AGS 沙箱工具上配置好同名 **StorageMount**。
+
+**CAM 角色：** `HARNESS_TOOL_ROLE_ARN` 除 `QcloudTCRReadOnlyAccess` 外，须允许对目标桶 **写入**（`workspace/snapshot` 会 Put 对象）。预设可加 `QcloudCOSFullAccess`，或桶级自定义策略 — 见 [凭证 · COS 与快照](./harness-credentials.md#cos-工作区与快照角色还要什么权限)。
 
 ### 导出与回写配置
 
