@@ -2,6 +2,10 @@
 name: My Sandbox Agent
 runtime: harness
 engine: opencode
+sandbox:
+  env:
+    # Optional TRW tuning at instance start (see docs/sandbox.md § sandbox.env)
+    # MY_FEATURE_FLAG: "on"
 system: |
   You are a helpful coding assistant in a remote sandbox workspace.
   Reply concisely.

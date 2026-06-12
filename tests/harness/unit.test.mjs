@@ -15,6 +15,8 @@ import {
   normalizeAgentConfig,
   SandboxConfigError,
   DEFAULT_SANDBOX_RESOURCES,
+  normalizeSandboxEnv,
+  mergeHarnessInstanceEnv,
 } from "../../packages/agent-runtime/dist/config.js";
 import {
   buildHarnessAcpMcpServers,
@@ -172,6 +174,78 @@ test("assertSandboxAcquireAllowed rejects durable until Talos is wired", () => {
       ),
     /not wired/i,
   );
+});
+
+test("resolveSandboxConfig normalizes sandbox.env", () => {
+  assert.deepEqual(
+    resolveSandboxConfig(
+      {
+        sandbox: {
+          env: {
+            MY_TUNING_FLAG: "1",
+            ANOTHER_VAR: "abc",
+          },
+        },
+      },
+      "opencode",
+    ).env,
+    { MY_TUNING_FLAG: "1", ANOTHER_VAR: "abc" },
+  );
+});
+
+test("normalizeSandboxEnv rejects platform-managed keys", () => {
+  assert.throws(
+    () => normalizeSandboxEnv({ SECRET_MASTER_KEY: "x" }),
+    (e) => e.name === "SandboxConfigError",
+  );
+  assert.throws(
+    () => normalizeSandboxEnv({ HARNESS_OPENCODE_ACP_TIMEOUT_MS: "60000" }),
+    /HARNESS_/,
+  );
+  assert.throws(
+    () => normalizeSandboxEnv({ ENABLE_AGENT_OPENCODE: "false" }),
+    /ENABLE_AGENT_/,
+  );
+  assert.throws(
+    () => normalizeSandboxEnv({ bad_key: "1" }),
+    /UPPER_SNAKE_CASE/,
+  );
+});
+
+test("buildHarnessSandboxEnv merges sandbox.env over computed env", () => {
+  const config = normalizeAgentConfig({
+    name: "t",
+    model: "m",
+    system: "s",
+    runtime: "harness",
+    engine: "opencode",
+    sandbox: {
+      env: {
+        WORKSPACE_FOLDER_PATHS: "/custom",
+        MY_FEATURE_FLAG: "on",
+      },
+    },
+  });
+  const env = buildHarnessSandboxEnv({
+    config,
+    engine: "opencode",
+    clientToolCallbackBase: "http://127.0.0.1:3000/callback",
+  });
+  const byName = Object.fromEntries(env.map((e) => [e.Name, e.Value]));
+  assert.equal(byName.WORKSPACE_FOLDER_PATHS, "/custom");
+  assert.equal(byName.MY_FEATURE_FLAG, "on");
+  assert.equal(byName.ENABLE_AGENT_OPENCODE, "true");
+});
+
+test("mergeHarnessInstanceEnv yaml wins on key collision", () => {
+  const merged = mergeHarnessInstanceEnv(
+    [{ Name: "A", Value: "1" }, { Name: "B", Value: "2" }],
+    [{ Name: "B", Value: "override" }],
+  );
+  assert.deepEqual(merged, [
+    { Name: "A", Value: "1" },
+    { Name: "B", Value: "override" },
+  ]);
 });
 
 test("normalizeAgentConfig fills sandbox for harness runtime", () => {

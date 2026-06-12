@@ -3,6 +3,8 @@
  * Parsed at load time with defaults; orchestrator consumes ResolvedSandboxConfig.
  */
 
+import { normalizeSandboxEnv } from "./sandbox-env.js";
+
 /** Mirrors HarnessEngine — kept local to avoid config ↔ sandbox-config cycle. */
 export type SandboxEngine = "opencode" | "claude" | "codebuddy" | "hermes";
 
@@ -29,6 +31,11 @@ export interface SandboxConfig {
    * durable: `0` or omitted = no TTL on Talos (future).
    */
   timeout?: string | number;
+  /**
+   * Passthrough env vars injected at instance start (TRW / box agents).
+   * Cannot override OMA-managed keys — see docs/sandbox.md.
+   */
+  env?: Record<string, string>;
 }
 
 export interface SandboxResources {
@@ -41,6 +48,7 @@ export interface ResolvedSandboxConfig {
   resources: SandboxResources;
   image?: string;
   timeout?: string;
+  env?: Record<string, string>;
 }
 
 export const DEFAULT_SANDBOX_INFRA: SandboxInfra = "serverless";
@@ -123,12 +131,14 @@ export function resolveSandboxConfig(
   };
   const image = normalizeImage(raw?.image);
   const timeout = normalizeTimeout(raw?.timeout);
+  const env = normalizeSandboxEnv(raw?.env as Record<string, unknown> | undefined);
 
   return {
     infra,
     resources,
     ...(image ? { image } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
+    ...(env ? { env } : {}),
   };
 }
 
@@ -182,6 +192,7 @@ export function applyResolvedSandboxToConfig<T extends SandboxConfigSource>(
       resources: { ...resolved.resources },
       ...(resolved.image ? { image: resolved.image } : {}),
       ...(resolved.timeout !== undefined ? { timeout: resolved.timeout } : {}),
+      ...(resolved.env ? { env: { ...resolved.env } } : {}),
     },
   };
 }
