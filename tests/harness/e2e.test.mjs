@@ -23,6 +23,9 @@ import {
 const harnessTierPin = process.env.HARNESS_LLM_TIER?.trim();
 loadEnv();
 
+/** Existing flag: session/sync in memory (no FlexDB). Cross-process restart tests need FlexDB. */
+const MEMORY_STORE = process.env.OAK_USE_MEMORY_STORE === "1";
+
 const FULL = process.argv.includes("--full");
 const LLM_SUITE = process.argv.includes("--llm");
 const E2E_ENGINES = parseHarnessEnginesArg(process.argv.slice(2));
@@ -205,7 +208,7 @@ async function startRuntime({
     CLOUDBASE_ENV_ID: process.env.CLOUDBASE_ENV_ID ?? "test-local-harness",
     AGENT_CONFIG: JSON.stringify(cfg),
   };
-  if (!useCloudDb) {
+  if (MEMORY_STORE || !useCloudDb) {
     childEnv.OAK_USE_MEMORY_STORE = "1";
   } else {
     delete childEnv.OAK_USE_MEMORY_STORE;
@@ -681,6 +684,8 @@ async function testSyncPersistence() {
     `expected harness_sync_events from opencode /sync/history for ${row.engineSessionId} ` +
       `(magent needs opencode >= 1.16.2)`,
   );
+  row = await getHarnessSessionStore(envId).get(sessionId);
+  assert.ok(!row?.syncExportFailedAt, "syncExportFailedAt set after successful export");
   if (requireTokenRecall) {
     assert.ok(
       syncEventsContainToken(events, token),
@@ -849,6 +854,9 @@ async function testClaudeSessionPersistence() {
     entryCount > 0,
     `expected harness_claude_session_entries for ${row.engineSessionId} (magent needs claude-acp-harness.js)`,
   );
+  row = await getHarnessSessionStore(envId).get(sessionId);
+  assert.ok(!row?.claudeStoreEmptyAt, "claudeStoreEmptyAt set after successful append");
+  assert.ok(!row?.claudeWarmFailedAt, "claudeWarmFailedAt set before re-acquire");
 
   stopRuntime();
   await sleep(800);
@@ -1266,12 +1274,18 @@ async function main() {
 
     if (FULL) {
       if (E2E_OPENCODE) {
-        await testSyncPersistence();
-        console.log(
-          LLM_SUITE
-            ? "✓ opencode sync export → CloudBase → hydrate → session/load → token recall"
-            : "✓ opencode sync export → CloudBase → hydrate → session/load replay (platform)",
-        );
+        if (MEMORY_STORE) {
+          console.log(
+            "⊘ opencode sync cross-restart（OAK_USE_MEMORY_STORE=1，内存 store 不跨 runtime 进程）",
+          );
+        } else {
+          await testSyncPersistence();
+          console.log(
+            LLM_SUITE
+              ? "✓ opencode sync export → CloudBase → hydrate → session/load → token recall"
+              : "✓ opencode sync export → CloudBase → hydrate → session/load replay (platform)",
+          );
+        }
       } else {
         console.log("⊘ opencode sync（--engines claude）");
       }
@@ -1281,8 +1295,14 @@ async function main() {
             "HARNESS --engines claude|all requires scenarios/.env.local-claude",
           );
         }
-        await testClaudeSessionPersistence();
-        console.log("✓ claude SessionStore → CloudBase → runtime restart → token recall");
+        if (MEMORY_STORE) {
+          console.log(
+            "⊘ claude SessionStore cross-restart（OAK_USE_MEMORY_STORE=1）",
+          );
+        } else {
+          await testClaudeSessionPersistence();
+          console.log("✓ claude SessionStore → CloudBase → runtime restart → token recall");
+        }
         if (E2E_OPENCODE) restoreOpencodeHarnessTier();
       } else {
         console.log("⊘ claude SessionStore（--engines claude|all 跑旁路）");
@@ -1305,23 +1325,27 @@ async function main() {
       );
       const dbPressure = parseDbPressureArgs(process.argv.slice(2));
       if (dbPressure.enabled) {
-        const envId = process.env.CLOUDBASE_ENV_ID;
-        const deps = { sleep, startRuntime, stopRuntime, rpc, promptSessionText, waitSandboxReady };
-        if (E2E_OPENCODE) {
-          await runE2eDbPressure({
-            engine: "opencode",
-            rounds: dbPressure.rounds,
-            envId,
-            deps: { ...deps, agentConfig: resolveFullAgentConfig() },
-          });
-        }
-        if (E2E_CLAUDE) {
-          await runE2eDbPressure({
-            engine: "claude",
-            rounds: dbPressure.rounds,
-            envId,
-            deps: { ...deps, agentConfig: resolveClaudeAgentConfig() },
-          });
+        if (MEMORY_STORE) {
+          console.log("⊘ db-pressure（OAK_USE_MEMORY_STORE=1）");
+        } else {
+          const envId = process.env.CLOUDBASE_ENV_ID;
+          const deps = { sleep, startRuntime, stopRuntime, rpc, promptSessionText, waitSandboxReady };
+          if (E2E_OPENCODE) {
+            await runE2eDbPressure({
+              engine: "opencode",
+              rounds: dbPressure.rounds,
+              envId,
+              deps: { ...deps, agentConfig: resolveFullAgentConfig() },
+            });
+          }
+          if (E2E_CLAUDE) {
+            await runE2eDbPressure({
+              engine: "claude",
+              rounds: dbPressure.rounds,
+              envId,
+              deps: { ...deps, agentConfig: resolveClaudeAgentConfig() },
+            });
+          }
         }
       }
     }

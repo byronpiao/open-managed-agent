@@ -26,6 +26,12 @@ export interface HarnessSessionRecord {
   engineSessionId?: string;
   /** Set when opencode sync export last failed (ops / alert). */
   syncExportFailedAt?: number;
+  /** Set when claude session/load warm failed after re-acquire. */
+  claudeWarmFailedAt?: number;
+  /** Set when claude turn ended but harness_claude_session_entries stayed empty. */
+  claudeStoreEmptyAt?: number;
+  /** Set when harness_claude_session_entries count exceeds ops threshold (3000). */
+  claudeEntryCountHighAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -56,6 +62,9 @@ export interface HarnessSessionStore {
   ensureSecretMasterKey(acpSessionId: string): Promise<HarnessSessionRecord>;
   /** Record or clear last opencode sync export failure timestamp. */
   setSyncExportFailedAt(acpSessionId: string, failedAt: number | undefined): Promise<void>;
+  setClaudeWarmFailedAt(acpSessionId: string, failedAt: number | undefined): Promise<void>;
+  setClaudeStoreEmptyAt(acpSessionId: string, failedAt: number | undefined): Promise<void>;
+  setClaudeEntryCountHighAt(acpSessionId: string, flaggedAt: number | undefined): Promise<void>;
   remove(acpSessionId: string): Promise<void>;
 }
 
@@ -171,6 +180,42 @@ class InMemoryHarnessSessionStore implements HarnessSessionStore {
       delete next.syncExportFailedAt;
     } else {
       next.syncExportFailedAt = failedAt;
+    }
+    this.rows.set(acpSessionId, next);
+  }
+
+  async setClaudeWarmFailedAt(acpSessionId: string, failedAt: number | undefined): Promise<void> {
+    const row = this.rows.get(acpSessionId);
+    if (!row) return;
+    const next = { ...row, updatedAt: Date.now() };
+    if (failedAt === undefined) {
+      delete next.claudeWarmFailedAt;
+    } else {
+      next.claudeWarmFailedAt = failedAt;
+    }
+    this.rows.set(acpSessionId, next);
+  }
+
+  async setClaudeStoreEmptyAt(acpSessionId: string, failedAt: number | undefined): Promise<void> {
+    const row = this.rows.get(acpSessionId);
+    if (!row) return;
+    const next = { ...row, updatedAt: Date.now() };
+    if (failedAt === undefined) {
+      delete next.claudeStoreEmptyAt;
+    } else {
+      next.claudeStoreEmptyAt = failedAt;
+    }
+    this.rows.set(acpSessionId, next);
+  }
+
+  async setClaudeEntryCountHighAt(acpSessionId: string, flaggedAt: number | undefined): Promise<void> {
+    const row = this.rows.get(acpSessionId);
+    if (!row) return;
+    const next = { ...row, updatedAt: Date.now() };
+    if (flaggedAt === undefined) {
+      delete next.claudeEntryCountHighAt;
+    } else {
+      next.claudeEntryCountHighAt = flaggedAt;
     }
     this.rows.set(acpSessionId, next);
   }
@@ -383,17 +428,43 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
   }
 
   async setSyncExportFailedAt(acpSessionId: string, failedAt: number | undefined): Promise<void> {
+    await this.setOptionalTimestampField(acpSessionId, "syncExportFailedAt", failedAt);
+    harnessTrace("session_store.sync_export_failed_at", { acpSessionId, failedAt: failedAt ?? null });
+  }
+
+  async setClaudeWarmFailedAt(acpSessionId: string, failedAt: number | undefined): Promise<void> {
+    await this.setOptionalTimestampField(acpSessionId, "claudeWarmFailedAt", failedAt);
+    harnessTrace("session_store.claude_warm_failed_at", { acpSessionId, failedAt: failedAt ?? null });
+  }
+
+  async setClaudeStoreEmptyAt(acpSessionId: string, failedAt: number | undefined): Promise<void> {
+    await this.setOptionalTimestampField(acpSessionId, "claudeStoreEmptyAt", failedAt);
+    harnessTrace("session_store.claude_store_empty_at", { acpSessionId, failedAt: failedAt ?? null });
+  }
+
+  async setClaudeEntryCountHighAt(acpSessionId: string, flaggedAt: number | undefined): Promise<void> {
+    await this.setOptionalTimestampField(acpSessionId, "claudeEntryCountHighAt", flaggedAt);
+    harnessTrace("session_store.claude_entry_count_high_at", {
+      acpSessionId,
+      flaggedAt: flaggedAt ?? null,
+    });
+  }
+
+  private async setOptionalTimestampField(
+    acpSessionId: string,
+    field:
+      | "syncExportFailedAt"
+      | "claudeWarmFailedAt"
+      | "claudeStoreEmptyAt"
+      | "claudeEntryCountHighAt",
+    failedAt: number | undefined,
+  ): Promise<void> {
     const collection = await this.col();
     const database = await this.db();
     const cmd = (database as { command?: { remove: () => unknown } }).command;
     const patch: Record<string, unknown> = { updatedAt: Date.now() };
-    if (failedAt === undefined) {
-      patch.syncExportFailedAt = cmd?.remove?.() ?? null;
-    } else {
-      patch.syncExportFailedAt = failedAt;
-    }
+    patch[field] = failedAt === undefined ? (cmd?.remove?.() ?? null) : failedAt;
     await collection.doc(acpSessionId).update(patch);
-    harnessTrace("session_store.sync_export_failed_at", { acpSessionId, failedAt: failedAt ?? null });
   }
 
   async remove(acpSessionId: string): Promise<void> {
@@ -465,24 +536,80 @@ export function getHarnessSessionStore(projectKey: string): HarnessSessionStore 
   return _store;
 }
 
+function countHarnessSessionAttention(
+  sessions: HarnessSessionRecord[],
+): {
+  syncExportFailed: number;
+  claudeWarmFailed: number;
+  claudeStoreEmpty: number;
+  claudeEntryHigh: number;
+} {
+  return {
+    syncExportFailed: sessions.filter((s) => s.syncExportFailedAt).length,
+    claudeWarmFailed: sessions.filter((s) => s.claudeWarmFailedAt).length,
+    claudeStoreEmpty: sessions.filter((s) => s.claudeStoreEmptyAt).length,
+    claudeEntryHigh: sessions.filter((s) => s.claudeEntryCountHighAt).length,
+  };
+}
+
 /** Harness /healthz — session index driver, not OAK kernel store. */
-export async function getHarnessStoreDiag(projectKey: string): Promise<{
+let _harnessStoreDiagCache: {
+  projectKey: string;
+  at: number;
+  value: Awaited<ReturnType<typeof getHarnessStoreDiagUncached>>;
+} | null = null;
+
+const HARNESS_STORE_DIAG_TTL_MS = Number(process.env.HARNESS_STORE_DIAG_TTL_MS) || 5_000;
+
+async function getHarnessStoreDiagUncached(projectKey: string): Promise<{
   driver: "memory" | "cloudbase";
   collection: string;
   activeSessions: number;
+  attention: {
+    syncExportFailed: number;
+    claudeWarmFailed: number;
+    claudeStoreEmpty: number;
+    claudeEntryHigh: number;
+  };
 }> {
   const useMemory =
     process.env.OAK_USE_MEMORY_STORE === "1" || !resolveCloudBaseCredentials(projectKey);
   const store = getHarnessSessionStore(projectKey);
-  const sessions = await store.list({ limit: 100 });
+  const sessions = await store.list({ limit: 500 });
   return {
     driver: useMemory ? "memory" : "cloudbase",
     collection: HARNESS_SESSIONS_COLLECTION,
     activeSessions: sessions.length,
+    attention: countHarnessSessionAttention(sessions),
   };
+}
+
+export async function getHarnessStoreDiag(projectKey: string): Promise<{
+  driver: "memory" | "cloudbase";
+  collection: string;
+  activeSessions: number;
+  attention: {
+    syncExportFailed: number;
+    claudeWarmFailed: number;
+    claudeStoreEmpty: number;
+    claudeEntryHigh: number;
+  };
+}> {
+  const now = Date.now();
+  if (
+    _harnessStoreDiagCache &&
+    _harnessStoreDiagCache.projectKey === projectKey &&
+    now - _harnessStoreDiagCache.at < HARNESS_STORE_DIAG_TTL_MS
+  ) {
+    return _harnessStoreDiagCache.value;
+  }
+  const value = await getHarnessStoreDiagUncached(projectKey);
+  _harnessStoreDiagCache = { projectKey, at: now, value };
+  return value;
 }
 
 /** Test-only reset */
 export function resetHarnessSessionStoreForTests(): void {
   _store = null;
+  _harnessStoreDiagCache = null;
 }

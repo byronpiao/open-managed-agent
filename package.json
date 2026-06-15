@@ -48,6 +48,7 @@
     "harness:local-all": "npm run harness -- local --engines all",
     "harness:product-acceptance": "npm run harness -- product-acceptance",
     "harness:quickstart": "npm run build:runtime && node scripts/harness/quickstart.mjs",
+    "harness:local-docker": "node scripts/harness/local-docker.mjs",
     "check:harness": "node scripts/check-harness-ready.mjs",
     "harness:cloud": "npm run harness:cloud-opencode",
     "harness:cloud-opencode": "npm run harness -- cloud-opencode",

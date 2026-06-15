@@ -6,14 +6,14 @@
 
 ## 快速开始
 
-凭证与 [使用指南 · 从零到第一次对话](./harness-tutorial.md#用户故事从零到第一次对话) 相同：
+凭证与 [使用指南 · 快速开始](./harness-tutorial.md#快速开始) 相同：
 
 ```bash
 magent login
 tcb env use your-env-id
 ```
 
-不必手填 `TCB_SECRET_*` / `CLOUDBASE_ENV_ID` / `TCB_REGION`。CI 或无 tcb 交互见 [harness-env — Advanced settings](./harness-env.md#advanced-settings)。
+不必手填 `TCB_SECRET_*` / `CLOUDBASE_ENV_ID` / `TCB_REGION`。CI 或无 tcb 交互见 [凭证说明 · CI 与无交互部署](./harness-credentials.md#ci-与无交互部署)。
 
 ```yaml
 name: My Sandbox Agent

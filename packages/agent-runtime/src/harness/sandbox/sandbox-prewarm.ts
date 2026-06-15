@@ -7,6 +7,8 @@ import { resolveRuntime } from "../../config.js";
 import { buildHarnessSandboxEnv } from "../deploy.js";
 import { harnessLog } from "../logging.js";
 import { warmClaudeEngineSession } from "../claude-session-warm.js";
+import { markClaudeWarmOutcome, noteClaudeSessionEntryCount } from "../claude-session-health.js";
+import { countHarnessClaudeSessionFootprint } from "../claude-session-probe.js";
 import { hydrateOpencodeSyncEvents, persistOpencodeSyncForSession } from "../opencode-sync.js";
 import { getHarnessSyncEventStore } from "../sync-event-store.js";
 import {
@@ -123,12 +125,17 @@ export async function bindSandboxForSession(
       });
       syncHydrated = hydrated.replayed;
     } else if (record.engine === "claude" && record.engineSessionId) {
-      await warmClaudeEngineSession({
+      const warm = await warmClaudeEngineSession({
         handle,
         config,
         acpSessionId,
         engineSessionId: record.engineSessionId,
       });
+      await markClaudeWarmOutcome({ acpSessionId, ok: warm.ok });
+      if (warm.ok) {
+        const footprint = await countHarnessClaudeSessionFootprint(record.engineSessionId);
+        await noteClaudeSessionEntryCount({ acpSessionId, entries: footprint.entries });
+      }
     }
     await store.bindInstance(acpSessionId, {
       instanceId: handle.instanceId,

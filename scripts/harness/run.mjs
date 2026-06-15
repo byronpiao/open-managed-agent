@@ -27,7 +27,7 @@ const HELP = `Usage: npm run harness:run [-- options]
   --engines           opencode | claude | all（默认 opencode）
   --cloud             cloud-tcbr-opencode + cloud-scf-opencode 并行
   --cloud-claude      cloud-tcbr-claude + cloud-scf-claude 并行
-  --quickstart        对客 tutorial 冒烟
+  --quickstart        对客 tutorial 冒烟（post-login，见 harness:quickstart）
   --ma-protocol       MA HTTP 云上协议
 
 示例:

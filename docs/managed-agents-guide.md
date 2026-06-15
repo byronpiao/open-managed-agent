@@ -5,7 +5,7 @@
 > **适用场景**：你要按官方 MA 文档或 SDK 习惯集成（`agents` / `environments` / `sessions` / SSE 事件流），而不是走 `magent run` 的 ACP 通道。  
 > **不适用**：默认托管 Agent（`runtime: managed`）— 该路径仍只有 ACP，见 [README](../README.md#快速开始)。
 
-**选型：** [Harness 用户故事](./harness-user-story.md) · 协议细节 [managed-agents-http.md](./managed-agents-http.md) · 沙箱部署 [harness-tutorial.md](./harness-tutorial.md)
+**选型：** [Harness 用户故事](./harness-user-story.md) · 沙箱部署 [harness-tutorial.md](./harness-tutorial.md)
 
 ---
 
@@ -38,7 +38,7 @@
 | **配置语义** | Environment / Agent `metadata` 合并进有效 `agent.yaml` 再起箱 | `environment.config.packages` / `networking` 仅存未接 AGS |
 | **Runtime 范围** | 仅 **`runtime: harness`** | `runtime: managed` 仍只有 ACP |
 
-细节与缺口：[managed-agents-http.md](./managed-agents-http.md#已知缺口)。
+细节与缺口见下文 [与 Anthropic 官方的对齐程度](#与-anthropic-官方的对齐程度)。
 
 ---
 
@@ -64,7 +64,7 @@
 ```bash
 magent login
 tcb env use your-env-id
-# CI / 手填：见 harness-env.md#advanced-settings
+# CI / 无交互：见 harness-credentials.md#ci-与无交互部署
 
 cp docs/examples/agent.sandbox.opencode.min.yaml ./agent.sandbox.yaml
 cd packages/agent-runtime && npm run build && cd ../..
@@ -79,7 +79,7 @@ magent agent:create \
 export CLOUDBASE_AGENT_ID=agent-xxxxxxxx
 ```
 
-凭证：[harness-credentials.md](./harness-credentials.md) · CI：[Advanced settings](./harness-env.md#advanced-settings)。
+凭证：[harness-credentials.md](./harness-credentials.md) · 完整部署步骤：[harness-tutorial.md](./harness-tutorial.md)。
 
 ### 2. 用 SDK 创建会话并发消息
 
@@ -127,14 +127,14 @@ ac.abort();
 await client.deleteSession(session.id);
 ```
 
-**高层封装**（把 MA 事件映射为 `chunk` / `done` 等）：`new ManagedAgents({ envId, agentId, accessKey })` 的 `sessions.prompt()`，内部同样走 Managed Agents HTTP。
+**高层封装**（把 MA 事件映射为 `chunk` / `done` 等）：`new ManagedAgents({ envId, agentId, accessKey, runtime: "harness" })` 的 `sessions.prompt()`，内部同样走 Managed Agents HTTP。
 
 ### 3. 端点与请求头
 
 | 场景 | Base URL |
 |------|----------|
 | 经 CloudBase 网关（推荐） | `https://{envId}.api.tcloudbasegateway.com/v1/aibot/bots/{agentId}` |
-| 本地研发（直连 runtime） | `http://127.0.0.1:9000` |
+| 本地调试 Runtime（高级） | `http://127.0.0.1:9000`（需自行启动 agent-runtime） |
 
 资源路径挂在 base 后的 `/v1/...`：
 
@@ -179,13 +179,13 @@ OMA 实现的是 **协议面（HTTP + 事件形状）对齐**，不是 **把 `ap
 
 **结论**：已有按官方 MA HTTP 写的应用，可把 base URL 和鉴权换成 CloudBase，在 **harness 沙箱 Agent** 上复用大部分会话流程；**不能**把 `ant` 或 Anthropic API Key 直接指向 OMA。
 
-更完整的缺口列表见 [managed-agents-http.md#已知缺口](./managed-agents-http.md#已知缺口)。
+更完整的缺口列表见上表 **未实现 / 差异** 列。
 
 ---
 
-## 架构概览（实现结构）
+## 请求如何到达沙箱
 
-对集成方，只需记住：**你的 HTTP 请求在网关 Runtime 终止，真正执行在远程沙箱。**
+对集成方，只需记住：**HTTP 请求在 CloudBase 网关的 Agent Runtime 处理，真正编码与工具执行在远程沙箱内完成。**
 
 ```text
 你的应用 / SDK (ManagedAgentsClient)
@@ -193,26 +193,16 @@ OMA 实现的是 **协议面（HTTP + 事件形状）对齐**，不是 **把 `ap
     ▼
 CloudBase 网关  …/v1/aibot/bots/{agentId}/v1/*
     ▼
-OMA agent-runtime  (runtime=harness)
-    │  Managed Agents HTTP 层（协议、存储、SSE）
-    │  → 转为 harness 调度（起沙箱、ACP 转发）
+Agent Runtime（runtime=harness）
+    │  Managed Agents HTTP（会话、事件、SSE）
+    │  → 调度远程沙箱
     ▼
-AGS 远程沙箱  (OpenCode / Claude Code)
-    │  箱内仍走 ACP :9000
+AGS 远程沙箱（OpenCode / Claude Code）
     ▼
-工具执行、文件读写、模型调用
+bash、读写文件、模型调用
 ```
 
-**会话数据两层**（仅在与持久化/恢复相关时需要了解）：
-
-| 层 | 作用 |
-|----|------|
-| **协议事件**（FlexDB `managed_agents_*`） | 给 MA 客户端 SSE 重连、审计 |
-| **引擎状态**（`harness_*` 集合） | 沙箱崩溃后恢复 OpenCode/Claude 会话 |
-
-`session.id` 与内部 `acpSessionId` 一一对应。
-
-研发向细节（vendor 协议层、dispatcher、FlexDB 集合名）见 [managed-agents-http.md](./managed-agents-http.md) 与 [harness-architecture.md](./harness-architecture.md)。
+会话 ID 在 MA HTTP 与沙箱执行之间一一对应；你只需使用 `session.id` 订阅事件与发消息即可。
 
 ---
 
@@ -228,7 +218,7 @@ A：不能把 `api.anthropic.com` 的配置原样指向 OMA。请用 **`open-man
 A：沙箱冷启动与预热需要 1–3 分钟，与 `magent run` 相同。可先 `magent run` 暖箱，或接受首条延迟。
 
 **Q：本地如何自测？**  
-A：`OAK_USE_MEMORY_STORE=1 npm run build` 后运行 `tests/managed-agents/e2e-managed-agents-harness.test.mjs`（完整 runtime + SDK）。见 [managed-agents-http.md](./managed-agents-http.md#本地研发)。
+A：先按 [harness-tutorial.md](./harness-tutorial.md) 部署到 CloudBase，再用 SDK 指向网关 Base URL 发请求。与 `magent run` 共用同一套 Agent 部署。
 
 ---
 
@@ -237,7 +227,6 @@ A：`OAK_USE_MEMORY_STORE=1 npm run build` 后运行 `tests/managed-agents/e2e-m
 - [沙箱 Agent 上手](./harness-tutorial.md)
 - [凭证说明](./harness-credentials.md)
 - [OpenCode / Claude Code 引擎](./harness-opencode.md) · [harness-claude-code.md](./harness-claude-code.md)
-- [协议与实现细节](./managed-agents-http.md)
 - [Anthropic 官方 Quickstart](https://platform.claude.com/docs/en/managed-agents/quickstart)
 
 ---
@@ -272,17 +261,15 @@ MA Session               → 一次运行（起 AGS 沙箱 + 对话）
 
 官方 `environment.config.packages` / `networking` 仍会 **存储**；动态装包与网络策略尚未接 AGS（后续版本）。
 
-### 资源对照表
+### 资源对照（便于迁移官方 MA 应用）
 
-| 官方 / 协议概念 | OMA 存储 | 是否驱动行为 |
-|-----------------|----------|--------------|
-| **Environment** | `managed_agents_environments` | **是**（经合并影响 `engine` 等） |
-| **Agent** | `managed_agents_agents` | **是**（经合并影响 `model` / `system`） |
-| **Session** | `managed_agents_sessions` + `harness_sessions` | **是** |
-| **Events** | `managed_agents_session_events` + harness sync | **是** |
-| **CloudBase `envId`** | 平台隔离 | 边界，不是 MA Environment |
-| **CloudBase Agent 部署** | `AGENT_CONFIG` | 合并基线 |
+| 官方 / 协议概念 | 在 CloudBase 上的含义 |
+|-----------------|----------------------|
+| **Environment** | 运行环境配置（如引擎类型、COS 等 metadata） |
+| **Agent** | 认知配置（model、system 等 metadata） |
+| **Session** | 一次对话运行（含沙箱生命周期） |
+| **Events** | SSE 事件流（入站 `user.*`、出站状态与内容） |
+| **CloudBase `envId`** | 租户边界（不是 MA Environment） |
+| **CloudBase Agent 部署** | 承载 MA HTTP 的 Runtime 实例（部署时的 `agent.yaml` 为基线） |
 
-**SDK：** `runtime: "harness"` 走 MA HTTP；`runtime: "managed"`（默认）走 ACP。
-
-研发验收：`npm run ma-protocol`（需已部署的 harness Agent，`.env.harness` ② `CLOUDBASE_AGENT_ID`）。见仓库根 [Harness一条龙.md](../../Harness一条龙.md)。
+**SDK：** 连接 harness 部署时使用 MA HTTP；默认托管 Agent（无 `runtime: harness`）走 ACP，不适用本文。

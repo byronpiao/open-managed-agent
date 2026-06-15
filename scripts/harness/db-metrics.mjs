@@ -28,14 +28,15 @@ export async function measureOpencodeSyncFootprint(envId, engineSessionId) {
 }
 
 export async function measureClaudeSessionFootprint(engineSessionId) {
-  const { countHarnessClaudeSessionEntries } = await import(
+  const { countHarnessClaudeSessionFootprint } = await import(
     "../../packages/agent-runtime/dist/harness/claude-session-probe.js"
   );
-  const rows = await countHarnessClaudeSessionEntries(engineSessionId);
+  const footprint = await countHarnessClaudeSessionFootprint(engineSessionId);
   return {
     collection: "harness_claude_session_entries",
-    rows,
-    bytesEstimate: rows * 512,
+    rows: footprint.entries,
+    bytesEstimate: footprint.entries * 512,
+    messages: footprint.messages,
   };
 }
 

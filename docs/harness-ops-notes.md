@@ -12,6 +12,14 @@
 
 **Claude（turn 内 append）** — ![Claude flow](./diagrams/harness-claude-session-flow.svg)
 
+**运维字段（`harness_sessions`）**
+
+| 引擎 | 字段 | 含义 |
+|------|------|------|
+| OpenCode | `syncExportFailedAt` | 轮末 export 连续失败 |
+| Claude | `claudeWarmFailedAt` | re-acquire warm 失败 |
+| Claude | `claudeStoreEmptyAt` | 轮末仍无 `harness_claude_session_entries` |
+
 详见 [harness-agent-session-storage.md](./harness-agent-session-storage.md)。
 
 ## 云托管开几个副本？

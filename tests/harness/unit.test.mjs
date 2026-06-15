@@ -1131,6 +1131,142 @@ test("persistOpencodeSyncForSession marks syncExportFailedAt after retries", asy
   else process.env.OAK_USE_MEMORY_STORE = prevOak;
 });
 
+test("warmClaudeEngineSession calls sandbox session/load", async () => {
+  const { warmClaudeEngineSession } = await import(
+    "../../packages/agent-runtime/dist/harness/claude-session-warm.js"
+  );
+  const calls = [];
+  const handle = {
+    instanceId: "inst-claude",
+    toolId: "t",
+    baseUrl: "http://127.0.0.1:1",
+    headers: {},
+    async request(path, init) {
+      calls.push({ path, body: init?.body ? JSON.parse(init.body) : null });
+      return new Response(
+        JSON.stringify({ jsonrpc: "2.0", id: "1", result: { sessionId: "eng-1" } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+    async stop() {},
+    async pause() {},
+    async resumeIfPaused() {},
+  };
+  const engineSessionId = "550e8400-e29b-41d4-a716-446655440088";
+  const result = await warmClaudeEngineSession({
+    handle,
+    config: { name: "t", model: "m", system: "s", runtime: "harness", engine: "claude" },
+    acpSessionId: "acp-warm",
+    engineSessionId,
+  });
+  assert.equal(result.ok, true);
+  assert.ok(calls.some((c) => c.path.endsWith("/claudecode/acp")));
+  assert.equal(calls[0]?.body?.method, "session/load");
+  assert.equal(calls[0]?.body?.params?.sessionId, engineSessionId);
+  assert.equal(calls[0]?.body?.params?.replay, false);
+});
+
+test("markClaudeWarmOutcome updates harness_sessions.claudeWarmFailedAt", async () => {
+  const prevEnv = process.env.CLOUDBASE_ENV_ID;
+  const prevOak = process.env.OAK_USE_MEMORY_STORE;
+  process.env.CLOUDBASE_ENV_ID = "test-env";
+  process.env.OAK_USE_MEMORY_STORE = "1";
+  resetHarnessSessionStoreForTests();
+
+  const { markClaudeWarmOutcome } = await import(
+    "../../packages/agent-runtime/dist/harness/claude-session-health.js"
+  );
+  const sessionStore = getHarnessSessionStore("test-env");
+  const acpSessionId = "acp-claude-warm";
+  await sessionStore.create({ acpSessionId, userId: "u", engine: "claude" });
+
+  await markClaudeWarmOutcome({ acpSessionId, ok: false });
+  let row = await sessionStore.get(acpSessionId);
+  assert.ok(row?.claudeWarmFailedAt);
+
+  await markClaudeWarmOutcome({ acpSessionId, ok: true });
+  row = await sessionStore.get(acpSessionId);
+  assert.equal(row?.claudeWarmFailedAt, undefined);
+
+  resetHarnessSessionStoreForTests();
+  if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
+  else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  if (prevOak === undefined) delete process.env.OAK_USE_MEMORY_STORE;
+  else process.env.OAK_USE_MEMORY_STORE = prevOak;
+});
+
+test("probeClaudeSessionStoreAfterPrompt skips non-claude engine", async () => {
+  const { probeClaudeSessionStoreAfterPrompt } = await import(
+    "../../packages/agent-runtime/dist/harness/claude-session-health.js"
+  );
+  const result = await probeClaudeSessionStoreAfterPrompt({
+    acpSessionId: "acp-1",
+    config: { name: "t", model: "m", system: "s", runtime: "harness", engine: "opencode" },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.entries, 0);
+});
+
+test("isClaudeEntryCountHigh uses fixed threshold 3000", async () => {
+  const { isClaudeEntryCountHigh, CLAUDE_SESSION_ENTRY_WARN_THRESHOLD, noteClaudeSessionEntryCount } =
+    await import("../../packages/agent-runtime/dist/harness/claude-session-health.js");
+  assert.equal(CLAUDE_SESSION_ENTRY_WARN_THRESHOLD, 3000);
+  assert.equal(isClaudeEntryCountHigh(3000), false);
+  assert.equal(isClaudeEntryCountHigh(3001), true);
+
+  const prevEnv = process.env.CLOUDBASE_ENV_ID;
+  const prevOak = process.env.OAK_USE_MEMORY_STORE;
+  process.env.CLOUDBASE_ENV_ID = "test-env";
+  process.env.OAK_USE_MEMORY_STORE = "1";
+  resetHarnessSessionStoreForTests();
+
+  const sessionStore = getHarnessSessionStore("test-env");
+  const acpSessionId = "acp-claude-entry-high";
+  await sessionStore.create({ acpSessionId, userId: "u", engine: "claude" });
+
+  await noteClaudeSessionEntryCount({ acpSessionId, entries: 42 });
+  let row = await sessionStore.get(acpSessionId);
+  assert.equal(row?.claudeEntryCountHighAt, undefined);
+
+  await noteClaudeSessionEntryCount({ acpSessionId, entries: 3001 });
+  row = await sessionStore.get(acpSessionId);
+  assert.ok(row?.claudeEntryCountHighAt);
+
+  resetHarnessSessionStoreForTests();
+  if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
+  else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  if (prevOak === undefined) delete process.env.OAK_USE_MEMORY_STORE;
+  else process.env.OAK_USE_MEMORY_STORE = prevOak;
+});
+
+test("getHarnessStoreDiag exposes harness_sessions attention counters", async () => {
+  const prevEnv = process.env.CLOUDBASE_ENV_ID;
+  const prevOak = process.env.OAK_USE_MEMORY_STORE;
+  process.env.CLOUDBASE_ENV_ID = "test-env";
+  process.env.OAK_USE_MEMORY_STORE = "1";
+  resetHarnessSessionStoreForTests();
+
+  const { getHarnessStoreDiag } = await import(
+    "../../packages/agent-runtime/dist/harness/sandbox/session-store.js"
+  );
+  const sessionStore = getHarnessSessionStore("test-env");
+  const acpSessionId = "acp-attention";
+  await sessionStore.create({ acpSessionId, userId: "u", engine: "claude" });
+  await sessionStore.setClaudeStoreEmptyAt(acpSessionId, Date.now());
+  await sessionStore.setClaudeEntryCountHighAt(acpSessionId, Date.now());
+
+  const diag = await getHarnessStoreDiag("test-env");
+  assert.equal(diag.attention.claudeStoreEmpty, 1);
+  assert.equal(diag.attention.claudeEntryHigh, 1);
+  assert.equal(diag.attention.syncExportFailed, 0);
+
+  resetHarnessSessionStoreForTests();
+  if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
+  else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  if (prevOak === undefined) delete process.env.OAK_USE_MEMORY_STORE;
+  else process.env.OAK_USE_MEMORY_STORE = prevOak;
+});
+
 test("resolveHarnessCosConfig returns null when disabled", () => {
   const prev = process.env.HARNESS_COS_ENABLED;
   delete process.env.HARNESS_COS_ENABLED;
@@ -1327,6 +1463,24 @@ test("parseHarnessRoleArn accepts standard CAM ARN", () => {
 test("parseHarnessRoleArn rejects garbage", () => {
   assert.equal(parseHarnessRoleArn(""), null);
   assert.equal(parseHarnessRoleArn("arn:aws:iam::123:role/x"), null);
+});
+
+test("stripQuickstartPins clears cloud and COS pins", async () => {
+  const { stripQuickstartPins, QUICKSTART_ENV_STRIP_KEYS } = await import(
+    "../../scripts/harness/load-env.mjs"
+  );
+  const env = {
+    CLOUDBASE_ENV_ID: "test-env",
+    HARNESS_CLOUD_SCF_OPENCODE_AGENT_ID: "agent-pinned",
+    HARNESS_COS_ENABLED: "1",
+    HARNESS_TOOL_COS_NAME_SUFFIX: "1",
+  };
+  stripQuickstartPins(env);
+  for (const k of QUICKSTART_ENV_STRIP_KEYS) {
+    assert.equal(env[k], undefined, `expected ${k} stripped`);
+  }
+  assert.equal(env.HARNESS_TOOL_COS_NAME_SUFFIX, undefined);
+  assert.equal(env.CLOUDBASE_ENV_ID, "test-env");
 });
 
 let failed = 0;

@@ -24,9 +24,10 @@ export const HARNESS_MATRIX_SCENARIOS = [
 ];
 
 /** 旁路验收：独立 agent.yaml × .env.<scenario>，不进 6 格 LLM 矩阵 */
-export const HARNESS_SIDECAR_SCENARIOS = ["quickstart", "ma-protocol"];
+export const HARNESS_SIDECAR_SCENARIOS = ["quickstart", "ma-protocol", "ma-protocol-claude"];
 
 export const HARNESS_MA_PROTOCOL_SCENARIO = "ma-protocol";
+export const HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO = "ma-protocol-claude";
 
 const LLM_KEYS = [
   "LLM_API_KEY",
@@ -88,6 +89,10 @@ export function scenarioAgentYamlPath(engine) {
 
 export function scenarioMaProtocolAgentYamlPath() {
   return resolve(HARNESS_SCENARIOS_DIR, "agent.ma-protocol.yaml");
+}
+
+export function scenarioMaProtocolClaudeAgentYamlPath() {
+  return resolve(HARNESS_SCENARIOS_DIR, "agent.ma-protocol-claude.yaml");
 }
 
 export function readScenarioEnvMap(scenario) {
@@ -152,7 +157,7 @@ export function scenarioEnvReady(scenario) {
   const id = normalizeHarnessScenario(scenario);
   if (!scenarioEnvFileExists(id)) return false;
   const map = readScenarioEnvMap(id);
-  if (id === HARNESS_MA_PROTOCOL_SCENARIO) {
+  if (id === HARNESS_MA_PROTOCOL_SCENARIO || id === HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO) {
     return Boolean(pinnedMaProtocolAgentId(map));
   }
   if (scenarioNeedsOpenAiByok(id)) return hasOpenAiTripleInMap(map);
@@ -206,6 +211,13 @@ export function resolveHarnessAgentYaml(scenario) {
   }
   if (id === HARNESS_MA_PROTOCOL_SCENARIO) {
     const path = scenarioMaProtocolAgentYamlPath();
+    if (!existsSync(path)) {
+      throw new Error(`Missing ${path} for scenario ${id}`);
+    }
+    return path;
+  }
+  if (id === HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO) {
+    const path = scenarioMaProtocolClaudeAgentYamlPath();
     if (!existsSync(path)) {
       throw new Error(`Missing ${path} for scenario ${id}`);
     }
