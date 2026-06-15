@@ -128,7 +128,7 @@ ${bold("AGENT COMMANDS")}
                                   tcbr = CloudRun container (~3-5min deploy,
                                          needs Docker image, supports custom
                                          system libs)
-        --model <model>         Model (default: hunyuan-t1-latest)
+        --model <model>         Model (default: hy3-preview)
         --system <prompt>       System prompt
     -f, --file <path>           Load config from YAML/JSON file
         --code <path>           Code directory (default: ./packages/agent-runtime)
@@ -203,7 +203,7 @@ ${bold("EXAMPLES")}
   # Update config without redeploying
   magent agent:update -a agent_xxx --system "You are a strict code reviewer"
   magent agent:update -a agent_xxx -f ./agent.yaml
-  magent agent:update -a agent_xxx --model deepseek-v3.2
+  magent agent:update -a agent_xxx --model deepseek-v4-flash
 
   # Export live config to file (then edit and push back)
   magent agent:export -a agent_xxx -o ./agent.yaml

@@ -53,7 +53,7 @@ const ENGINE_HEALTH = {
 export function buildMatrixParityAgentConfig(engine = "opencode") {
   return {
     name: `HarnessMatrixParity-${engine}`,
-    model: engine === "claude" ? "deepseek-v4-flash" : "hunyuan-t1-latest",
+    model: engine === "claude" ? "deepseek-v4-flash" : "hy3-preview",
     system: "Matrix parity harness agent.",
     runtime: "harness",
     engine,
