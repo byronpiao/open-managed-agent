@@ -553,7 +553,15 @@ function countHarnessSessionAttention(
 }
 
 /** Harness /healthz — session index driver, not OAK kernel store. */
-export async function getHarnessStoreDiag(projectKey: string): Promise<{
+let _harnessStoreDiagCache: {
+  projectKey: string;
+  at: number;
+  value: Awaited<ReturnType<typeof getHarnessStoreDiagUncached>>;
+} | null = null;
+
+const HARNESS_STORE_DIAG_TTL_MS = Number(process.env.HARNESS_STORE_DIAG_TTL_MS) || 5_000;
+
+async function getHarnessStoreDiagUncached(projectKey: string): Promise<{
   driver: "memory" | "cloudbase";
   collection: string;
   activeSessions: number;
@@ -576,7 +584,32 @@ export async function getHarnessStoreDiag(projectKey: string): Promise<{
   };
 }
 
+export async function getHarnessStoreDiag(projectKey: string): Promise<{
+  driver: "memory" | "cloudbase";
+  collection: string;
+  activeSessions: number;
+  attention: {
+    syncExportFailed: number;
+    claudeWarmFailed: number;
+    claudeStoreEmpty: number;
+    claudeEntryHigh: number;
+  };
+}> {
+  const now = Date.now();
+  if (
+    _harnessStoreDiagCache &&
+    _harnessStoreDiagCache.projectKey === projectKey &&
+    now - _harnessStoreDiagCache.at < HARNESS_STORE_DIAG_TTL_MS
+  ) {
+    return _harnessStoreDiagCache.value;
+  }
+  const value = await getHarnessStoreDiagUncached(projectKey);
+  _harnessStoreDiagCache = { projectKey, at: now, value };
+  return value;
+}
+
 /** Test-only reset */
 export function resetHarnessSessionStoreForTests(): void {
   _store = null;
+  _harnessStoreDiagCache = null;
 }

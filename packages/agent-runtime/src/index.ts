@@ -64,7 +64,7 @@ async function main() {
 
   const app = express();
   app.use(cors());
-  app.get("/healthz", async (_req, res) => {
+  app.get("/healthz", async (req, res) => {
     const base = {
       ok: true,
       name: config.name,
@@ -87,15 +87,22 @@ async function main() {
         import("./harness/sandbox/orchestrator.js"),
         import("./harness/sandbox/sandbox-prewarm.js"),
       ]);
-      const harnessStore = await getHarnessStoreDiag(envId);
-      res.json({
+      const payload: Record<string, unknown> = {
         ...base,
-        harnessStore,
         sandbox: {
           ...getHarnessSandboxCacheStats(),
           ...getSandboxPrewarmStats(),
         },
-      });
+      };
+      const wantDiag = req.query.diag === "1" || req.query.verbose === "1";
+      if (wantDiag) {
+        try {
+          payload.harnessStore = await getHarnessStoreDiag(envId);
+        } catch (e) {
+          payload.harnessStore = { error: (e as Error).message };
+        }
+      }
+      res.json(payload);
       return;
     }
     res.json({ ...base, store: getStoreDiag() });

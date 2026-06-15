@@ -57,6 +57,40 @@ async function waitAgentReady(agentId, envId) {
   throw new Error(`agent ${agentId} not Ready within ${maxWait}ms`);
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isCosUploadTimeout(err) {
+  const text = [err?.message, err?.stderr, err?.stdout].filter(Boolean).join("\n");
+  return /COS 上传超时|COS.*upload.*timeout/i.test(text);
+}
+
+async function createHarnessAgent(agentName, envId) {
+  const maxAttempts = Number(process.env.HARNESS_QUICKSTART_CREATE_RETRIES) || 3;
+  const retryDelayMs = Number(process.env.HARNESS_QUICKSTART_CREATE_RETRY_MS) || 30_000;
+  const cmd =
+    `node "${magent}" agent:create --name "${agentName}" --runtime harness --engine opencode ` +
+    `--file "${localYaml}" --code "${resolve(repoRoot, "packages/agent-runtime")}" -e "${envId}"`;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return execSync(cmd, { encoding: "utf-8", cwd: repoRoot, maxBuffer: 20 * 1024 * 1024 });
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxAttempts && isCosUploadTimeout(err)) {
+        console.warn(
+          `\nagent:create COS upload timeout (attempt ${attempt}/${maxAttempts}); retry in ${retryDelayMs}ms…\n`,
+        );
+        await sleep(retryDelayMs);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
 async function main() {
   console.log("=== harness quickstart (post-login customer smoke) ===\n");
 
@@ -89,11 +123,7 @@ async function main() {
   let agentId;
 
   try {
-    const createOut = execSync(
-      `node "${magent}" agent:create --name "${agentName}" --runtime harness --engine opencode ` +
-        `--file "${localYaml}" --code "${resolve(repoRoot, "packages/agent-runtime")}" -e "${envId}"`,
-      { encoding: "utf-8", cwd: repoRoot, maxBuffer: 20 * 1024 * 1024 },
-    );
+    const createOut = await createHarnessAgent(agentName, envId);
     console.log(createOut);
     agentId = createOut.match(/Agent created:\s*(agent-[a-z0-9-]+)/i)?.[1];
     if (!agentId) throw new Error("agent:create did not return agent id");
