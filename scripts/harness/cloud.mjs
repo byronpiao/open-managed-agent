@@ -1,8 +1,8 @@
 /**
  * Cloud harness: deploy + gateway ACP smoke.
  *
- *   npm run harness:cloud-tcbr-opencode
- *   npm run harness:cloud-scf-claude
+ *   npm run harness -- cloud-tcbr-opencode
+ *   npm run harness -- cloud-scf-claude
  */
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";

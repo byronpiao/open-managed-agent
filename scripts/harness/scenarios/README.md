@@ -40,12 +40,12 @@ cp .env.cloud-scf-opencode.example .env.cloud-scf-opencode
 
 | 格子 / 组 | npm |
 |-----------|-----|
-| local opencode | `test:full` · `harness:local` |
-| local claude | `harness:local-claude` |
-| 本地双引擎 | `harness:local-all` |
-| 云 opencode 并行 | `harness:cloud-opencode` |
-| 云 claude 并行 | `harness:cloud-claude` |
-| 单格 | `harness:cloud-{tcbr\|scf}-{opencode\|claude}` |
+| local opencode | `npm run test:full` · `npm run harness -- local` |
+| local claude | `npm run harness -- local --engines claude` |
+| 本地双引擎 | `npm run harness -- local --engines all` |
+| 云 opencode 并行 | `npm run harness -- cloud-opencode` |
+| 云 claude 并行 | `npm run harness -- cloud-claude` |
+| 单格 | `npm run harness -- cloud-{tcbr\|scf}-{opencode\|claude}` |
 
 别名：`local` → `local-opencode` · `cloud-tcbr` → `cloud-tcbr-opencode` · `cloud-scf` → `cloud-scf-opencode`
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Harness 一条龙编排 — 纯 CLI，供 agent 驱动（无交互）。
+ * Harness 编排 — 唯一高层 npm 入口（配合 `npm run harness -- <cmd>`）。
  *
- *   npm run harness:run                              # = test:full（opencode 主力）
- *   npm run harness:run -- --cloud                   # test:full + cloud-opencode
- *   npm run harness:run -- --engines claude --cloud-claude
+ *   npm run harness:run                    # test:full（opencode 合入）
+ *   npm run harness:run -- --cloud         # = harness:smoke
+ *   npm run harness:run -- --delivery      # quickstart + test:full + cloud-opencode
  *   npm run harness:run -- --engines all --cloud --cloud-claude --ma-protocol
  */
 import { spawnSync } from "node:child_process";
@@ -23,19 +23,21 @@ const repoRoot = resolve(__dirname, "../..");
 
 const HELP = `Usage: npm run harness:run [-- options]
 
-  无参数              test:full（opencode 主力合入路径）
-  --engines           opencode | claude | all（默认 opencode）
-  --cloud             cloud-tcbr-opencode + cloud-scf-opencode 并行
-  --cloud-claude      cloud-tcbr-claude + cloud-scf-claude 并行
-  --quickstart        对客 tutorial 冒烟（post-login，见 harness:quickstart）
+  (无参数)            test:full — npm test + harness local --engines opencode
+  --delivery          quickstart + test:full + cloud-opencode（原 test:delivery）
+  --engines           opencode | claude | all（默认 opencode；非 opencode 时跑 npm test + harness local）
+  --cloud             harness cloud-opencode（tcbr ∥ scf）
+  --cloud-claude      harness cloud-claude
+  --quickstart        对客 tutorial（可与 --delivery 叠加）
   --ma-protocol       MA HTTP 云上协议
 
-示例:
-  npm run harness:smoke
-  npm run harness:run -- --engines claude --cloud-claude
-  npm run harness:run -- --engines all --cloud --cloud-claude --ma-protocol
+日常四条:
+  npm test
+  npm run test:full
+  npm run harness -- local --engines all
+  npm run harness:run -- --cloud
 
-分步见 Harness一条龙.md · npm run harness:local-claude 等
+分步 cloud 单格: npm run harness -- cloud-tcbr-claude  等（见 Harness一条龙.md）
 `;
 
 function parseRunArgs(argv) {
@@ -52,7 +54,10 @@ function parseRunArgs(argv) {
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--quickstart") quickstart = true;
+    if (a === "--delivery") {
+      quickstart = true;
+      cloudOpencode = true;
+    } else if (a === "--quickstart") quickstart = true;
     else if (a === "--cloud") cloudOpencode = true;
     else if (a === "--cloud-claude") cloudClaude = true;
     else if (a === "--ma-protocol") maProtocol = true;
@@ -75,6 +80,10 @@ function runStep(label, cmd, args = []) {
   if (r.status !== 0) {
     throw new Error(`${label} failed (exit ${r.status ?? 1})`);
   }
+}
+
+function runHarness(subcmd, extraArgs = []) {
+  runStep(`harness ${subcmd}`, "npm", ["run", "harness", "--", subcmd, ...extraArgs]);
 }
 
 async function main() {
@@ -109,20 +118,17 @@ async function main() {
   }
 
   if (plan.engines === "opencode") {
-    runStep("test:full (local opencode)", "npm", ["run", "test:full"]);
+    runStep("test:full (npm test + harness local opencode)", "npm", ["run", "test:full"]);
   } else {
     runStep("unit tests", "npm", ["test"]);
-    runStep(`harness:local-${plan.engines === "all" ? "all" : "claude"}`, "npm", [
-      "run",
-      plan.engines === "all" ? "harness:local-all" : "harness:local-claude",
-    ]);
+    runHarness("local", ["--engines", plan.engines]);
   }
 
   if (plan.cloudOpencode) {
-    runStep("harness:cloud-opencode", "npm", ["run", "harness:cloud-opencode"]);
+    runHarness("cloud-opencode");
   }
   if (plan.cloudClaude) {
-    runStep("harness:cloud-claude", "npm", ["run", "harness:cloud-claude"]);
+    runHarness("cloud-claude");
   }
   if (plan.maProtocol) {
     runStep("ma-protocol", "npm", ["run", "ma-protocol"]);

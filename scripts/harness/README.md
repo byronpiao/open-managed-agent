@@ -1,12 +1,25 @@
 # Harness scripts
 
-验收入口：`npm run harness -- <cmd>`（实现：`index.mjs`）。
+验收入口：`npm run harness -- <cmd>`（实现：`index.mjs`）。编排：`npm run harness:run`。
 
 > **研发向**：本文与 `docs/harness-env.md` 仅供仓库内验收，**不对客**。对客路径见 `docs/harness-tutorial.md`。
 
-## 本地验收分层（L0 / L1 / L2）
+## npm 脚本（package.json）
 
-Harness 验收分三层，避免把「纯本地」和「云上 deploy」混为一谈。
+| 脚本 | 说明 |
+|------|------|
+| `npm test` | L0 单测 + managed-agents harness e2e |
+| `npm run test:full` | L1 opencode：`npm test` + `harness -- local` |
+| `npm run harness -- <cmd>` | 分步：`local` / `cloud-*` / `db-pressure` / `product-acceptance` |
+| `npm run harness:run` | 编排（默认 = `test:full`） |
+| `npm run harness:smoke` | `harness:run -- --cloud` |
+| `npm run test:delivery` | `harness:run -- --delivery` |
+| `npm run harness:quickstart` | 对客 tutorial |
+| `npm run harness:local-docker` | L0 Docker 存活 |
+| `npm run check:harness` | preflight |
+| `npm run ma-protocol` | MA HTTP 云上验收 |
+
+## 本地验收分层（L0 / L1 / L2）
 
 ```text
 L0  零云 API     stub + 单测 + Docker 存活（不起 AGS）
@@ -32,6 +45,7 @@ L2  云上 deploy   agent:create / quickstart / delivery（COS 上传 + FlexDB �
 ```bash
 cp .env.harness.example .env.harness   # 可选；COS / 镜像 pin 见 ⑥ 段
 OAK_USE_MEMORY_STORE=1 npm run harness -- local
+npm run harness -- local --engines all   # opencode + claude matrix
 ```
 
 | 块 | 在哪跑 | 还依赖云？ |
@@ -53,7 +67,8 @@ OAK_USE_MEMORY_STORE=1 npm run harness -- local
 |------|------|
 | `npm run harness:quickstart` | 对客 tutorial 冒烟（preflight → create → uname+pong → 默认 delete） |
 | `npm run test:delivery` | quickstart → test:full → cloud-opencode |
-| `npm run harness:cloud-*` | tcbr / scf 六格矩阵（见 `scenarios/README.md`） |
+| `npm run harness:run -- --cloud` | test:full + cloud-opencode |
+| `npm run harness -- cloud-opencode` | tcbr ∥ scf（见 `scenarios/README.md`） |
 | `npm run ma-protocol` | MA HTTP 云上验收 |
 
 需要 `agent:create`、FlexDB（未设 `OAK_USE_MEMORY_STORE` 时）、COS 代码包上传等；**账号配额不足时勿硬跑**。
@@ -77,9 +92,9 @@ npm run test:delivery
 | **本地无 FlexDB** | `OAK_USE_MEMORY_STORE=1 npm run harness -- local` | 跳过跨进程 sync/Claude 持久化；真箱 AGS 仍要 login |
 | **Docker 存活冒烟** | `node scripts/harness/local-docker.mjs` | 容器内 runtime + `/healthz` + ACP init |
 | **合入 / 日常** | `npm run test:full` | ⑥ 开 → with-cos |
-| **云上双后端** | `npm run harness:cloud` | **strip** no-cos |
-| 云上 tcbr（单跑） | `npm run harness:cloud-tcbr` | **strip** no-cos |
-| 云上 SCF（单跑） | `npm run harness:cloud-scf` | **strip** no-cos |
+| **云上双后端** | `npm run harness -- cloud-opencode` | **strip** no-cos |
+| 云上 tcbr（单跑） | `npm run harness -- cloud-tcbr-opencode` | **strip** no-cos |
+| 云上 SCF（单跑） | `npm run harness -- cloud-scf-opencode` | **strip** no-cos |
 | **MA HTTP 协议** | `npm run ma-protocol` | `agent.ma-protocol.yaml` × `.env.ma-protocol` |
 | **交付一条龙** | `npm run test:delivery` | quickstart → full → cloud |
 
@@ -105,8 +120,8 @@ node scripts/harness/load-env.mjs --check
 | 脚本 | 用途 |
 |------|------|
 | `index.mjs` | 入口：`local` / `cloud`（并行）/ `cloud-tcbr` / `cloud-scf` |
+| `run.mjs` | 编排 `harness:run`（`--cloud` / `--delivery` / `--engines`） |
 | `managed-agents-protocol.mjs` | MA HTTP 云上验收（`ma-protocol`） |
-| `delivery.mjs` | 交付一条龙（quickstart + test:full + harness:cloud） |
 | `quickstart.mjs` | 对客 tutorial 冒烟（preflight → create → uname+pong → delete） |
 | `scenarios/README.md` | agent.yaml × env × tool |
 | `cloud.mjs` | 云上 deploy + gateway ACP smoke |
@@ -122,4 +137,4 @@ node scripts/harness/load-env.mjs --check
 
 | `build-push-magent-public.sh` | 构建并推送 magent 沙箱镜像（完整闭环） |
 
-文档（研发）：`docs/harness-architecture.md` · `docs/harness-env.md`
+文档（研发）：`docs/harness-architecture.md` · `docs/harness-env.md` · 仓库根 `Harness一条龙.md`
