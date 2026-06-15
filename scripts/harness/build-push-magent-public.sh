@@ -9,6 +9,9 @@ fi
 if [[ -z "${DOCKER_HOST:-}" && -S "${HOME}/.colima/default/docker.sock" ]]; then
   export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
 fi
+if docker context inspect colima >/dev/null 2>&1; then
+  docker context use colima >/dev/null 2>&1 || true
+fi
 
 TRW_ROOT="${TRW_ROOT:-$(cd "$(dirname "$0")/../../../tcb-remote-workspace" && pwd)}"
 PUBLIC_REPO="${PUBLIC_REPO:-ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d}"
@@ -36,7 +39,7 @@ if [[ ! -f "$TRW_VENDOR" ]]; then
 fi
 pnpm build:prod
 unset PORT HOST
-pnpm test:unit
+pnpm test:full
 PRESET="$PRESET" ./scripts/build.sh --preset "$PRESET" --platform linux/amd64 --load
 docker tag "tcb-sandbox-ags:app-${PRESET}" "$FULL_IMAGE"
 docker push "$FULL_IMAGE"

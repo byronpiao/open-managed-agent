@@ -63,7 +63,15 @@ async function main() {
   }
 
   const app = express();
-  app.use(cors());
+  // Reflect request Origin + allow credentials so browser ACP clients (e.g. chat-playground
+  // with fetch credentials: "include") pass OPTIONS preflight. Bare cors() answers * without
+  // Allow-Credentials, which browsers reject before POST /acp runs route-level CORS.
+  app.use(
+    cors({
+      origin: true,
+      credentials: true,
+    }),
+  );
   app.get("/healthz", async (req, res) => {
     const base = {
       ok: true,

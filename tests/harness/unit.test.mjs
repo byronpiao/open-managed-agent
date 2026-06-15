@@ -1483,6 +1483,59 @@ test("stripQuickstartPins clears cloud and COS pins", async () => {
   assert.equal(env.CLOUDBASE_ENV_ID, "test-env");
 });
 
+test("ACP OPTIONS preflight allows browser credentials (chat-playground)", async () => {
+  const { spawn } = await import("node:child_process");
+  const { setTimeout: sleep } = await import("node:timers/promises");
+  const { dirname, resolve } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const port = 19092;
+  const origin = "http://localhost:5175";
+  const agentConfig = {
+    name: "CorsPreflight",
+    runtime: "harness",
+    engine: "opencode",
+    system: "cors test",
+  };
+  const child = spawn(process.execPath, ["packages/agent-runtime/dist/index.js"], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      OAK_USE_MEMORY_STORE: "1",
+      AGENT_CONFIG: JSON.stringify(agentConfig),
+    },
+    stdio: "ignore",
+  });
+
+  try {
+    for (let i = 0; i < 40; i++) {
+      try {
+        const health = await fetch(`http://127.0.0.1:${port}/healthz`);
+        if (health.ok) break;
+      } catch {
+        // retry
+      }
+      await sleep(100);
+    }
+
+    const res = await fetch(`http://127.0.0.1:${port}/acp`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: origin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+      },
+    });
+    assert.equal(res.status, 204);
+    assert.equal(res.headers.get("access-control-allow-origin"), origin);
+    assert.equal(res.headers.get("access-control-allow-credentials"), "true");
+  } finally {
+    child.kill("SIGTERM");
+  }
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try {
