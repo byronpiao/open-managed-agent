@@ -7,6 +7,8 @@
 | 场景 | 命令 | COS tool |
 |------|------|----------|
 | 对客冒烟 | `npm run harness:quickstart` | no-cos · **不需** `.env.harness`（login 后跑） |
+| **本地无 FlexDB** | `OAK_USE_MEMORY_STORE=1 npm run harness -- local` | 跳过跨进程 sync/Claude 持久化；真箱 AGS 仍要 login |
+| **Docker 存活冒烟** | `node scripts/harness/local-docker.mjs` | 容器内 runtime + `/healthz` + ACP init |
 | **合入 / 日常** | `npm run test:full` | ⑥ 开 → with-cos |
 | **云上双后端** | `npm run harness:cloud` | **strip** no-cos |
 | 云上 tcbr（单跑） | `npm run harness:cloud-tcbr` | **strip** no-cos |
