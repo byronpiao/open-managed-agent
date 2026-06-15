@@ -29,6 +29,7 @@ import {
   hasOpenAiTripleInMap,
   HARNESS_MATRIX_SCENARIOS,
   HARNESS_MA_PROTOCOL_SCENARIO,
+  HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO,
   HARNESS_SIDECAR_SCENARIOS,
   normalizeHarnessScenario,
   pinnedMaProtocolAgentId,
@@ -36,6 +37,7 @@ import {
   resolveHarnessAgentYaml,
   scenarioAgentYamlPath,
   scenarioMaProtocolAgentYamlPath,
+  scenarioMaProtocolClaudeAgentYamlPath,
   scenarioEngine,
   scenarioEnvFileExists,
   scenarioEnvPath,
@@ -49,11 +51,13 @@ export {
   normalizeHarnessScenario,
   HARNESS_MATRIX_SCENARIOS,
   HARNESS_MA_PROTOCOL_SCENARIO,
+  HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO,
   HARNESS_SIDECAR_SCENARIOS,
   pinnedMaProtocolAgentId,
   scenarioEngine,
   scenarioAgentYamlPath,
   scenarioMaProtocolAgentYamlPath,
+  scenarioMaProtocolClaudeAgentYamlPath,
 };
 
 const ALIASES = [
@@ -189,18 +193,22 @@ export function applyHarnessScenario(scenario, target = process.env) {
     };
   }
 
-  if (scenario === HARNESS_MA_PROTOCOL_SCENARIO) {
+  if (scenario === HARNESS_MA_PROTOCOL_SCENARIO || scenario === HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO) {
     applyScenarioEnv(scenario, target);
     const deployedAgentId = pinnedMaProtocolAgentId(readScenarioEnvMap(scenario));
     if (deployedAgentId) target.CLOUDBASE_AGENT_ID = deployedAgentId;
     target.HARNESS_SCENARIO = scenario;
     applyHarnessTestDefaults(target);
+    const agentYaml =
+      scenario === HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO
+        ? scenarioMaProtocolClaudeAgentYamlPath()
+        : scenarioMaProtocolAgentYamlPath();
     return {
       scenario,
       cosEnabled: false,
       toolName: "",
-      engine: "opencode",
-      agentYaml: scenarioMaProtocolAgentYamlPath(),
+      engine: scenario === HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO ? "claude" : "opencode",
+      agentYaml,
       deployedAgentId,
     };
   }
@@ -256,9 +264,9 @@ export function applyHarnessScenario(scenario, target = process.env) {
 
 export function logHarnessScenario(meta) {
   if (!meta?.scenario) return;
-  if (meta.scenario === HARNESS_MA_PROTOCOL_SCENARIO) {
+  if (meta.scenario === HARNESS_MA_PROTOCOL_SCENARIO || meta.scenario === HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO) {
     console.log(
-      `harness scenario: ma-protocol → deployed ${meta.deployedAgentId || "(unset)"} · yaml ${meta.agentYaml || scenarioMaProtocolAgentYamlPath()}`,
+      `harness scenario: ${meta.scenario} → deployed ${meta.deployedAgentId || "(unset)"} · yaml ${meta.agentYaml || (meta.scenario === HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO ? scenarioMaProtocolClaudeAgentYamlPath() : scenarioMaProtocolAgentYamlPath())}`,
     );
     return;
   }
@@ -313,6 +321,47 @@ export function applyHarnessTestDefaults(target = process.env) {
   if (!target.HARNESS_PLATFORM_PROBE_TIMEOUT_MS?.trim()) {
     target.HARNESS_PLATFORM_PROBE_TIMEOUT_MS = "30000";
   }
+}
+
+/** Keys cleared for tutorial / quickstart smoke (no cloud pin, no COS). */
+export const QUICKSTART_ENV_STRIP_KEYS = [
+  ...HARNESS_COS_ENV_KEYS,
+  "HARNESS_TOOL_ID",
+  "CLOUDBASE_AGENT_ID",
+  "HARNESS_CLOUD_AGENT_ID",
+  "HARNESS_CLOUD_SCF_AGENT_ID",
+  "HARNESS_CLOUD_TCBR_OPENCODE_AGENT_ID",
+  "HARNESS_CLOUD_SCF_OPENCODE_AGENT_ID",
+  "HARNESS_CLOUD_TCBR_CLAUDE_AGENT_ID",
+  "HARNESS_CLOUD_SCF_CLAUDE_AGENT_ID",
+  "HARNESS_MA_PROTOCOL_AGENT_ID",
+];
+
+/** Remove cloud/COS/agent pins so quickstart matches customer fresh deploy. */
+export function stripQuickstartPins(target = process.env) {
+  for (const k of QUICKSTART_ENV_STRIP_KEYS) delete target[k];
+  const map = readHarnessEnvMap();
+  if (!map.has("HARNESS_TOOL_COS_NAME_SUFFIX")) {
+    delete target.HARNESS_TOOL_COS_NAME_SUFFIX;
+  }
+}
+
+/**
+ * Env for `quickstart.mjs` — does not require `.env.harness`.
+ * Prereq: magent login + tcb env use (or TCB_SECRET_* + CLOUDBASE_ENV_ID in env).
+ */
+export function prepareQuickstartEnv() {
+  if (loadHarnessEnvIntoProcess()) {
+    // optional file — ①④ may be empty; login + tcb env use fills gaps
+  }
+  for (const k of BYOK_LLM_KEYS) delete process.env[k];
+  delete process.env.HARNESS_LLM_TIER;
+  for (const [from, to] of ALIASES) {
+    if (process.env[from] && !process.env[to]) process.env[to] = process.env[from];
+  }
+  stripQuickstartPins();
+  clearShellLeakedHarnessPins();
+  hydrateCloudEnvFromCli();
 }
 
 /** Load `.env.harness` only. */
@@ -423,7 +472,9 @@ if (isCli) {
       console.log("  sidecar (agent.yaml × .env.<scenario>):");
       for (const id of HARNESS_SIDECAR_SCENARIOS) {
         if (id === "quickstart") {
-          console.log(`    ${id} → docs/examples/agent.sandbox.opencode.min.yaml : (no .env)`);
+          console.log(
+            `    ${id} → docs/examples/agent.sandbox.opencode.min.yaml : post-login (no .env.harness required)`,
+          );
           continue;
         }
         const fileOk = scenarioEnvFileExists(id);
@@ -431,7 +482,9 @@ if (isCli) {
         const yaml =
           id === HARNESS_MA_PROTOCOL_SCENARIO
             ? "agent.ma-protocol.yaml"
-            : resolveHarnessAgentYaml(id).split("/").pop();
+            : id === HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO
+              ? "agent.ma-protocol-claude.yaml"
+              : resolveHarnessAgentYaml(id).split("/").pop();
         const status = !fileOk
           ? "missing .env"
           : ready

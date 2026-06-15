@@ -7,7 +7,7 @@
  *   node scripts/harness/delivery.mjs --skip-quickstart
  *
  * Steps:
- *   1. quickstart  — agent.sandbox.min.yaml + no-cos + platform (tutorial)
+ *   1. quickstart  — check-harness-ready + tutorial yaml + uname/pong (post-login)
  *   2. test:full    — local stub/e2e/matrix + optional COS from .env.harness ⑥
  *   3. harness:cloud-opencode — tcbr zen + scf OpenAI BYOK
  */

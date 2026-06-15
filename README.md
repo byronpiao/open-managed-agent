@@ -32,7 +32,7 @@ for await (const event of client.sessions.prompt(session.id, "Review this PR")) 
 | 典型场景 | 对话、MCP、轻量工具 | 远程 bash、读写项目文件、完整编码环境 |
 | 默认模型 | CloudBase 混元 / DeepSeek 等 | CloudBase AI **`hy3-preview`**（环境 API Key） |
 | 配置要点 | `agent.yaml` 省略 `runtime` | `runtime: harness` + `engine: opencode` 或 `claude` |
-| 详细文档 | 下文 [快速开始](#快速开始) | [用户故事](./docs/harness-user-story.md) · [使用指南](./docs/harness-tutorial.md) |
+| 详细文档 | 下文 [快速开始](#快速开始) | [用户故事](./docs/harness-user-story.md) → [使用指南](./docs/harness-tutorial.md) |
 
 ---
 
@@ -40,9 +40,12 @@ for await (const event of client.sessions.prompt(session.id, "Review this PR")) 
 
 详见 [docs/harness-credentials.md](./docs/harness-credentials.md)。
 
-| 快速开始 | `magent login` + `tcb env use <envId>` | 代替手填下面四列 |
-| 可选 | `CLOUDBASE_AGENT_ID` | 部署后的 Agent ID |
-| Advanced | `CLOUDBASE_ENV_ID`、`TCB_REGION`、`TCB_SECRET_*` | CI / 手填，见 [harness-env#advanced-settings](./docs/harness-env.md#advanced-settings) |
+| 步骤 | 做法 |
+|------|------|
+| 日常 | `magent login` + `tcb env use <环境 ID>` |
+| 部署前（推荐） | `npm run check:harness` |
+| 部署后 | 记下 `CLOUDBASE_AGENT_ID` |
+| CI / 无交互 | [凭证 · CI 与流水线](./docs/harness-credentials.md#ci-与无交互部署) |
 
 网关鉴权由 CAM **自动换取**，无需单独配置 API Key。
 
@@ -83,7 +86,7 @@ magent login                    # 浏览器授权；等同 tcb login，共用 ~/
 tcb env use <your-env-id>       # 选默认环境；可省略后续命令的 -e
 
 # CI / 无交互：magent login --apiKeyId <id> --apiKey <key>
-# 或手填四列变量，见 docs/harness-env.md#advanced-settings
+# 或手填变量，见 docs/harness-credentials.md#ci-与无交互部署
 ```
 
 ### 3. 查看可用环境（可选）
@@ -157,7 +160,7 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 | 可选 | `model: zen` | 箱内 OpenCode 内置，**不扣** CloudBase AI 额度（仅 opencode） |
 | 可选 | 部署前 `LLM_*` 或 yaml ModelSpec | 自有 NVIDIA、Moonshot 等 OpenAI/Anthropic 兼容厂商 Key（与 CloudBase Token 二选一） |
 
-完整步骤：[使用指南](./docs/harness-tutorial.md) · [OpenCode](./docs/harness-opencode.md) · [Claude Code](./docs/harness-claude-code.md)
+完整步骤：[用户故事](./docs/harness-user-story.md) → [使用指南](./docs/harness-tutorial.md) · [OpenCode](./docs/harness-opencode.md) · [Claude Code](./docs/harness-claude-code.md)
 
 **Managed Agents HTTP**（`/v1/sessions` + SSE）：[用户故事 · 故事 B](./docs/harness-user-story.md#故事-b使用-ma-http-协议接入) · [使用指南](./docs/managed-agents-guide.md)
 
@@ -180,18 +183,18 @@ magent agent:create --name my-sandbox --runtime harness --engine opencode \
 
 ### 首次使用：沙箱工具与 RoleArn
 
-部署前运行 `node scripts/check-harness-ready.mjs`（或 `npm run check:harness`）。`magent agent:create --runtime harness` 会做同一套检查，缺配置时**拒绝部署**。
+部署前运行 `node scripts/check-harness-ready.mjs`（或 `npm run check:harness`）。`magent agent:create --runtime harness` 会做同一套检查。
 
 | 你的情况 | 要做什么 |
 |----------|----------|
-| 自检通过（已有 `oma-harness-<envId>` 工具） | 直接 `agent:create` |
-| 自检提示缺 RoleArn | 按 [凭证 · 控制台逐步操作](./docs/harness-credentials.md#控制台逐步操作照填) 建 CAM 角色后 `export HARNESS_TOOL_ROLE_ARN=...`，再自检 |
+| 检查通过（本环境已有沙箱工具） | 直接 `agent:create` |
+| 检查提示需要 RoleArn | 按 [凭证 · 控制台逐步操作](./docs/harness-credentials.md#控制台逐步操作照填) 配置后重试 |
 
-日常对话、换模型、更新 `agent.yaml` **不需要**再碰 RoleArn。
+日常对话、换模型、更新 `agent.yaml` **不需要**再配置 RoleArn。
 
 ### 自定义数据面镜像（可选）
 
-默认不必改镜像。要预装工具或 starter 工程：从 [镜像包](https://github.com/RealAlexandreAI/tcb-remote-workspace/pkgs/container/tcb-remote-workspace) 拉 `ghcr.io/realalexandreai/tcb-remote-workspace:<tag>` 扩展后，**自行推到与沙箱同地域的腾讯云 TCR**，再 `export HARNESS_SANDBOX_IMAGE=ccr.ccs.tencentyun.com/...`。步骤见 [使用指南 · 快速开始 §6](./docs/harness-tutorial.md#6-自定义数据面镜像可选)。
+默认不必改镜像。要预装工具或 starter 工程：从 [镜像包](https://github.com/RealAlexandreAI/tcb-remote-workspace/pkgs/container/tcb-remote-workspace) 拉 `ghcr.io/realalexandreai/tcb-remote-workspace:<tag>` 扩展后，**自行推到与沙箱同地域的腾讯云 TCR**，再 `export HARNESS_SANDBOX_IMAGE=ccr.ccs.tencentyun.com/...`。步骤见 [使用指南 · 自定义沙箱镜像](./docs/harness-tutorial.md#自定义沙箱镜像可选)。
 
 ### 更多能力
 
@@ -594,7 +597,7 @@ await client.sessions.delete(session.id);
 | **TCBR 云托管**（推荐） | `--type tcbr` | ~3–5 min | 生产；MCP / 流式事件正常 |
 | SCF 云函数 | 默认（省略 `--type`） | ~60–90s | 快速原型；zip 模式流式有已知限制 |
 
-沙箱 Agent 使用 `runtime: harness`，见 [沙箱内 Agent](#沙箱内-agent) 与 [docs/harness-architecture.md](docs/harness-architecture.md)。
+沙箱 Agent 使用 `runtime: harness`，见 [沙箱内 Agent](#沙箱内-agent) 与 [使用指南](./docs/harness-tutorial.md)。
 
 ### 首次部署（`magent agent:create`）
 

@@ -21,9 +21,24 @@ function encodeSessionKey(projectKey: string, sessionId: string, subpath?: strin
 
 /** Count transcript entries for engine session (main transcript only). */
 export async function countHarnessClaudeSessionEntries(engineSessionId: string): Promise<number> {
+  const footprint = await countHarnessClaudeSessionFootprint(engineSessionId);
+  return footprint.entries;
+}
+
+export interface ClaudeSessionFootprint {
+  entries: number;
+  messages: number;
+}
+
+/** Count harness_claude_* rows for ops / db-pressure (entries + messages). */
+export async function countHarnessClaudeSessionFootprint(
+  engineSessionId: string,
+): Promise<ClaudeSessionFootprint> {
   const creds = resolveCamControlPlaneCredentials();
   const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "";
-  if (!creds.secretId || !creds.secretKey || !envId) return 0;
+  if (!creds.secretId || !creds.secretKey || !envId) {
+    return { entries: 0, messages: 0 };
+  }
 
   const projectKey = envId;
   const sessionKey = encodeSessionKey(projectKey, engineSessionId);
@@ -36,8 +51,18 @@ export async function countHarnessClaudeSessionEntries(engineSessionId: string):
     sessionToken: creds.sessionToken,
     region: process.env.TCB_REGION ?? "ap-shanghai",
   });
-  const col = app.database().collection(`${PREFIX}session_entries`);
-  const res = await col.where({ sessionKey }).limit(500).get();
-  const data = (res as { data?: unknown[] }).data;
-  return Array.isArray(data) ? data.length : 0;
+  const db = app.database();
+
+  async function countCollection(suffix: string): Promise<number> {
+    const col = db.collection(`${PREFIX}${suffix}`);
+    const res = await col.where({ sessionKey }).limit(500).get();
+    const data = (res as { data?: unknown[] }).data;
+    return Array.isArray(data) ? data.length : 0;
+  }
+
+  const [entries, messages] = await Promise.all([
+    countCollection("session_entries"),
+    countCollection("session_messages"),
+  ]);
+  return { entries, messages };
 }

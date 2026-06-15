@@ -51,6 +51,7 @@ import {
   persistOpencodeSyncForSession,
   snapshotWorkspaceIfAvailable,
 } from "./opencode-sync.js";
+import { probeClaudeSessionStoreAfterPrompt } from "./claude-session-health.js";
 
 const abortControllers = new Map<string, AbortController>();
 
@@ -439,6 +440,13 @@ async function pipeSandboxSseToClient(
         acpSessionId,
       }).error(err);
     });
+    void probeClaudeSessionStoreAfterPrompt({ acpSessionId, config }).catch((err) => {
+      harnessLog({
+        lane: "claude_session",
+        operation: "probe.prompt_end",
+        acpSessionId,
+      }).error(err);
+    });
   }
 }
 
@@ -752,18 +760,20 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
   const handle = getCachedSandboxHandle(sessionId);
   if (handle) {
     try {
-      if (row.engine === "opencode" && row.engineSessionId && !isE2eStubSandboxEnabled(config)) {
-        await persistOpencodeSyncForSession({
-          acpSessionId: sessionId,
-          config,
-          reason: "session_delete",
-        }).catch((err) => {
-          harnessLog({
-            lane: "opencode_sync",
-            operation: "persist.session_delete",
+      if (row.engineSessionId && !isE2eStubSandboxEnabled(config)) {
+        if (row.engine === "opencode") {
+          await persistOpencodeSyncForSession({
             acpSessionId: sessionId,
-          }).error(err);
-        });
+            config,
+            reason: "session_delete",
+          }).catch((err) => {
+            harnessLog({
+              lane: "opencode_sync",
+              operation: "persist.session_delete",
+              acpSessionId: sessionId,
+            }).error(err);
+          });
+        }
         await snapshotWorkspaceIfAvailable(handle);
       }
     } catch (err) {

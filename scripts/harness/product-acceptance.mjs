@@ -69,6 +69,7 @@ const BASE = `http://127.0.0.1:${E2E_PORT}`;
 const MCP_FIXTURE = "harness_fixture_http";
 const DEV_DIR = "harness-manual";
 const DEV_FILE = `${DEV_DIR}/acceptance.txt`;
+const CLAUDE_DEV_FILE = `${DEV_DIR}/claude-acceptance.txt`;
 const TIMEOUT_MS = Number(process.env.HARNESS_OPENCODE_ACP_TIMEOUT_MS) || 120_000;
 
 const httpAgent = new Agent({
@@ -747,17 +748,107 @@ function applyClaudeHarnessLlmTier() {
   applyHarnessTestDefaults();
 }
 
+async function runClaudeDevChain(sessionId) {
+  try {
+    await promptText(
+      sessionId,
+      `mkdir -p ${DEV_DIR} && echo CLAUDE_ROUND1 > ${CLAUDE_DEV_FILE}. Use bash.`,
+      851,
+    );
+    await sleep(4000);
+    let onDisk = await catViaAgent(sessionId, CLAUDE_DEV_FILE, 852);
+    if (!onDisk.includes("CLAUDE_ROUND1")) {
+      await promptText(
+        sessionId,
+        `Run exactly: mkdir -p ${DEV_DIR} && printf '%s\\n' CLAUDE_ROUND1 > ${CLAUDE_DEV_FILE}`,
+        853,
+      );
+      await sleep(4000);
+      onDisk = await catViaAgent(sessionId, CLAUDE_DEV_FILE, 854);
+    }
+    assert.ok(onDisk.includes("CLAUDE_ROUND1"), `cat: ${onDisk.slice(0, 100)}`);
+
+    await promptText(
+      sessionId,
+      `Append line CLAUDE_ROUND2 to ${CLAUDE_DEV_FILE} (keep line 1). Use bash.`,
+      855,
+    );
+    await sleep(4000);
+    onDisk = await catViaAgent(sessionId, CLAUDE_DEV_FILE, 856);
+    assert.ok(onDisk.includes("CLAUDE_ROUND2"), `after append: ${onDisk.slice(0, 120)}`);
+
+    const { text, body } = await promptText(
+      sessionId,
+      `What are the two markers in ${CLAUDE_DEV_FILE}? Reply CLAUDE_ROUND1 and CLAUDE_ROUND2 only.`,
+      857,
+    );
+    const mem = text + body;
+    assert.ok(mem.includes("CLAUDE_ROUND1") && mem.includes("CLAUDE_ROUND2"), mem.slice(0, 100));
+    record("E-B1-claude-dev-chain", "PASS", onDisk.replace(/\s+/g, " ").slice(0, 80));
+  } catch (e) {
+    record("E-B1-claude-dev-chain", "FAIL", e.message);
+  }
+}
+
+async function runClaudeReAcquire(sessionId) {
+  try {
+    stopRuntime();
+    await sleep(800);
+    await startRuntime({ agentConfig: buildClaudeAgentConfig(), useCloudDb: true });
+
+    const loadRes = await sandboxFetch(`${BASE}/acp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 861,
+        method: "session/load",
+        params: { sessionId, replay: true },
+      }),
+    });
+    const loadText = await loadRes.text();
+    assert.ok(!loadText.includes('"code":-32000'), loadText.slice(0, 300));
+
+    await waitSandboxReady(sessionId);
+    await sleep(8000);
+
+    const { text: pongText, body: pongBody } = await promptText(
+      sessionId,
+      "Reply with exactly: pong",
+      862,
+    );
+    const pongBlob = pongText + pongBody;
+    assert.ok(/pong/i.test(pongBlob), `LLM inactive after load: ${pongBlob.slice(0, 120)}`);
+
+    const { text: memText, body: memBody } = await promptText(
+      sessionId,
+      "From our earlier work (not re-reading files): what were CLAUDE_ROUND1 and CLAUDE_ROUND2? " +
+        "Reply with those two markers only.",
+      863,
+    );
+    const memBlob = memText + memBody;
+    assert.ok(
+      memBlob.includes("CLAUDE_ROUND1") && memBlob.includes("CLAUDE_ROUND2"),
+      `session memory lost after reload: ${memBlob.slice(0, 160)}`,
+    );
+
+    record("E-C1-claude-reacquire", "PASS", "session/load + pong + CLAUDE_ROUND memory");
+  } catch (e) {
+    record("E-C1-claude-reacquire", "FAIL", e.message);
+  }
+}
+
 async function runClaudeChecks() {
-  console.log("\n── E. Claude engine (minimal) ──");
+  console.log("\n── E. Claude engine (SessionStore + re-acquire) ──");
   applyClaudeHarnessLlmTier();
 
   const token = `CLM${Date.now().toString(36)}`;
+  const sessionId = crypto.randomUUID();
   try {
     stopRuntime();
     await sleep(500);
     await startRuntime({ agentConfig: buildClaudeAgentConfig(), useCloudDb: true });
 
-    const sessionId = crypto.randomUUID();
     await rpc("session/new", { sessionId, meta: { userId: "manual-claude" } });
     await waitSandboxReady(sessionId);
     await sleep(6000);
@@ -765,6 +856,9 @@ async function runClaudeChecks() {
     const pong = await promptText(sessionId, "Reply with exactly: pong", 801);
     const pongBlob = pong.text + pong.body;
     assert.ok(/pong/i.test(pongBlob), pongBlob.slice(0, 200));
+    record("E-B0-claude-pong", "PASS");
+
+    await runClaudeDevChain(sessionId);
 
     const first = await promptText(
       sessionId,
@@ -777,7 +871,7 @@ async function runClaudeChecks() {
     const { getHarnessSessionStore } = await import(
       "../../packages/agent-runtime/dist/harness/sandbox/session-store.js"
     );
-    const { countHarnessClaudeSessionEntries } = await import(
+    const { countHarnessClaudeSessionFootprint } = await import(
       "../../packages/agent-runtime/dist/harness/claude-session-probe.js"
     );
 
@@ -788,47 +882,39 @@ async function runClaudeChecks() {
       await sleep(500);
     }
     assert.ok(row?.engineSessionId, "claude engineSessionId missing");
+    assert.ok(!row.claudeStoreEmptyAt, "claudeStoreEmptyAt set after prompt");
 
-    let entryCount = 0;
+    let footprint = { entries: 0, messages: 0 };
     for (let i = 0; i < 24; i++) {
-      entryCount = await countHarnessClaudeSessionEntries(row.engineSessionId);
-      if (entryCount > 0) break;
+      footprint = await countHarnessClaudeSessionFootprint(row.engineSessionId);
+      if (footprint.entries > 0) break;
       await sleep(2000);
     }
-    assert.ok(entryCount > 0, "harness_claude_session_entries empty");
+    assert.ok(footprint.entries > 0, "harness_claude_session_entries empty");
+    record(
+      "E-B2-claude-store",
+      "PASS",
+      `entries=${footprint.entries} messages=${footprint.messages}`,
+    );
 
-    stopRuntime();
-    await sleep(800);
-    await startRuntime({ agentConfig: buildClaudeAgentConfig(), useCloudDb: true });
-
-    const loadRes = await sandboxFetch(`${BASE}/acp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 803,
-        method: "session/load",
-        params: { sessionId, replay: true },
-      }),
-    });
-    const loadText = await loadRes.text();
-    assert.ok(!loadText.includes('"code":-32000'), loadText.slice(0, 300));
+    await runClaudeReAcquire(sessionId);
 
     await waitSandboxReady(sessionId);
     await sleep(6000);
-
     const recall = await promptText(
       sessionId,
       `What is the exact token I asked you to remember? Reply with ONLY that token.`,
-      804,
+      864,
     );
     const recallBlob = recall.text + recall.body;
     assert.ok(recallBlob.includes(token), `token ${token} missing: ${recallBlob.slice(0, 200)}`);
+    record("E-B3-claude-token-recall", "PASS", token);
 
     await rpc("session/delete", { sessionId });
-    record("E1-claude-pong-reacquire", "PASS", `entries=${entryCount}`);
   } catch (e) {
-    record("E1-claude-pong-reacquire", "FAIL", e.message);
+    record("E-claude-session", "FAIL", e.message);
+  } finally {
+    stopRuntime();
   }
 }
 
@@ -922,7 +1008,11 @@ async function main() {
   if (RUN_CLAUDE) {
     await runClaudeChecks();
   } else {
-    record("E1-claude-pong-reacquire", "SKIP", "engines=opencode only");
+    record("E-B0-claude-pong", "SKIP", "engines=opencode only");
+    record("E-B1-claude-dev-chain", "SKIP", "engines=opencode only");
+    record("E-B2-claude-store", "SKIP", "engines=opencode only");
+    record("E-C1-claude-reacquire", "SKIP", "engines=opencode only");
+    record("E-B3-claude-token-recall", "SKIP", "engines=opencode only");
   }
 
   console.log("\nteardown (post-flight)…");

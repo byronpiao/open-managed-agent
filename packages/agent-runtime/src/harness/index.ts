@@ -105,6 +105,16 @@ export {
 } from "./llm-probe.js";
 
 export {
+  markClaudeWarmOutcome,
+  probeClaudeSessionStoreAfterPrompt,
+} from "./claude-session-health.js";
+export { warmClaudeEngineSession } from "./claude-session-warm.js";
+export {
+  countHarnessClaudeSessionEntries,
+  countHarnessClaudeSessionFootprint,
+} from "./claude-session-probe.js";
+
+export {
   OPENCODE_SYNC_DIRECTORY,
   ensureOpencodeSyncStarted,
   exportOpencodeSyncEvents,

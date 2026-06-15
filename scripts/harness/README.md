@@ -6,7 +6,7 @@
 
 | 场景 | 命令 | COS tool |
 |------|------|----------|
-| 对客冒烟 | `npm run harness:quickstart` | no-cos |
+| 对客冒烟 | `npm run harness:quickstart` | no-cos · **不需** `.env.harness`（login 后跑） |
 | **合入 / 日常** | `npm run test:full` | ⑥ 开 → with-cos |
 | **云上双后端** | `npm run harness:cloud` | **strip** no-cos |
 | 云上 tcbr（单跑） | `npm run harness:cloud-tcbr` | **strip** no-cos |
@@ -38,7 +38,7 @@ node scripts/harness/load-env.mjs --check
 | `index.mjs` | 入口：`local` / `cloud`（并行）/ `cloud-tcbr` / `cloud-scf` |
 | `managed-agents-protocol.mjs` | MA HTTP 云上验收（`ma-protocol`） |
 | `delivery.mjs` | 交付一条龙（quickstart + test:full + harness:cloud） |
-| `quickstart.mjs` | tutorial 冒烟 |
+| `quickstart.mjs` | 对客 tutorial 冒烟（preflight → create → uname+pong → delete） |
 | `scenarios/README.md` | agent.yaml × env × tool |
 | `cloud.mjs` | 云上 deploy + gateway ACP smoke |
 | `load-env.mjs` | 只读 `.env.harness`，`--check`（tool 镜像对齐） |

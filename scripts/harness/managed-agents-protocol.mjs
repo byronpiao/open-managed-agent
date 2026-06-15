@@ -3,10 +3,12 @@
  * Managed Agents HTTP protocol — cloud acceptance on deployed harness agent.
  *
  *   npm run ma-protocol
+ *   node scripts/harness/managed-agents-protocol.mjs --scenario ma-protocol-claude
  *   node scripts/harness/managed-agents-protocol.mjs --base-url https://...
  *
- * Scenario: scripts/harness/scenarios/agent.ma-protocol.yaml
- *           + scripts/harness/scenarios/.env.ma-protocol (HARNESS_MA_PROTOCOL_AGENT_ID)
+ * Scenarios:
+ *   ma-protocol        → agent.ma-protocol.yaml + .env.ma-protocol
+ *   ma-protocol-claude → agent.ma-protocol-claude.yaml + .env.ma-protocol-claude
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -20,8 +22,14 @@ import {
   hydrateTcbApiKeyFromCam,
   applyHarnessScenario,
   logHarnessScenario,
+  HARNESS_MA_PROTOCOL_SCENARIO,
+  HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO,
 } from "./load-env.mjs";
 import { resolveHarnessAgentYaml } from "./scenario-matrix.mjs";
+import {
+  waitForEngineSessionId,
+  waitForClaudeSessionEntries,
+} from "./db-metrics.mjs";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -35,14 +43,16 @@ async function getAccessToken(envId) {
 function parseArgs() {
   const args = process.argv.slice(2);
   let baseUrl;
+  let scenario = HARNESS_MA_PROTOCOL_SCENARIO;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--base-url" && args[i + 1]) baseUrl = args[++i];
+    if (args[i] === "--scenario" && args[i + 1]) scenario = args[++i];
   }
-  return { baseUrl };
+  return { baseUrl, scenario };
 }
 
-function loadMaProtocolAgentSpec() {
-  const yamlPath = resolveHarnessAgentYaml("ma-protocol");
+function loadMaProtocolAgentSpec(scenario) {
+  const yamlPath = resolveHarnessAgentYaml(scenario);
   const doc = parseYaml(readFileSync(yamlPath, "utf8"));
   const engine = doc.engine === "claude" || doc.engine === "codebuddy" || doc.engine === "hermes"
     ? doc.engine
@@ -51,10 +61,24 @@ function loadMaProtocolAgentSpec() {
     typeof doc.system === "string" && doc.system.trim()
       ? doc.system.trim()
       : "Reply concisely for acceptance.";
-  return { yamlPath, engine, system };
+  return { yamlPath, engine, system, scenario };
 }
 
-async function runStory(client, label, { engine, system }) {
+async function verifyClaudeStoreAfterMaPrompt(envId, acpSessionId, label) {
+  const engineSessionId = await waitForEngineSessionId(envId, acpSessionId);
+  const entryCount = await waitForClaudeSessionEntries(engineSessionId);
+  assert.ok(entryCount >= 1, `${label}: harness_claude_session_entries`);
+
+  const { getHarnessSessionStore } = await import(
+    join(repoRoot, "packages/agent-runtime/dist/harness/sandbox/session-store.js")
+  );
+  const row = await getHarnessSessionStore(envId).get(acpSessionId);
+  assert.ok(row?.engineSessionId, `${label}: harness_sessions.engineSessionId`);
+  assert.equal(row?.claudeStoreEmptyAt, undefined, `${label}: claudeStoreEmptyAt unset`);
+  console.log(`✓ ${label} claude store: entries=${entryCount}`);
+}
+
+async function runStory(client, label, { engine, system }, envId) {
   console.log(`\n=== managed-agents-protocol: ${label} ===`);
 
   const environment = await client.createEnvironment({
@@ -99,17 +123,29 @@ async function runStory(client, label, { engine, system }) {
   ac.abort();
   assert.ok(sawOutbound, `${label}: SSE outbound events`);
 
+  if (engine === "claude") {
+    await verifyClaudeStoreAfterMaPrompt(envId, session.id, label);
+  }
+
   const deleted = await client.deleteSession(session.id);
   assert.equal(deleted.deleted, true, `${label}: deleteSession`);
   console.log(`✓ ${label} passed`);
 }
 
 async function main() {
+  const { baseUrl: baseOverride, scenario } = parseArgs();
+  if (
+    scenario !== HARNESS_MA_PROTOCOL_SCENARIO &&
+    scenario !== HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO
+  ) {
+    throw new Error(`unsupported ma scenario: ${scenario}`);
+  }
+
   loadEnv();
   assertHarnessCreds();
   await hydrateTcbApiKeyFromCam();
 
-  const scenarioMeta = applyHarnessScenario("ma-protocol");
+  const scenarioMeta = applyHarnessScenario(scenario);
   logHarnessScenario(scenarioMeta);
 
   const envId = process.env.CLOUDBASE_ENV_ID?.trim();
@@ -117,11 +153,11 @@ async function main() {
   if (!envId) throw new Error("CLOUDBASE_ENV_ID required");
   if (!agentId) {
     throw new Error(
-      "HARNESS_MA_PROTOCOL_AGENT_ID required — cp scripts/harness/scenarios/.env.ma-protocol.example scripts/harness/scenarios/.env.ma-protocol",
+      `HARNESS_MA_PROTOCOL_AGENT_ID required — cp scripts/harness/scenarios/.env.${scenario}.example scripts/harness/scenarios/.env.${scenario}`,
     );
   }
 
-  const agentSpec = loadMaProtocolAgentSpec();
+  const agentSpec = loadMaProtocolAgentSpec(scenario);
   console.log(`ma-protocol agent yaml: ${agentSpec.yamlPath} (engine=${agentSpec.engine})`);
 
   const token = await getAccessToken(envId);
@@ -129,7 +165,6 @@ async function main() {
     join(repoRoot, "packages/sdk/dist/managed-agents-client.js")
   );
 
-  const { baseUrl: baseOverride } = parseArgs();
   const gatewayBase =
     baseOverride ?? `https://${envId}.api.tcloudbasegateway.com/v1/aibot/bots/${agentId}`;
 
@@ -137,6 +172,7 @@ async function main() {
     createManagedAgentsClient({ envId, agentId, accessKey: token, baseURL: gatewayBase }),
     "gateway",
     agentSpec,
+    envId,
   );
 
   console.log("\n✓ managed-agents-protocol complete");

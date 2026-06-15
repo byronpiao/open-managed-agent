@@ -70,7 +70,7 @@ model: your-model-id
 
 ## 其它能力
 
-工具、MCP、Skills、COS、镜像见 [使用指南](./harness-tutorial.md)。会话持久化说明见 [会话外置存储](./harness-agent-session-storage.md)（可选阅读）。
+工具、MCP、Skills、COS、镜像见 [使用指南](./harness-tutorial.md)。
 
 ---
 
@@ -78,9 +78,9 @@ model: your-model-id
 
 | 现象 | 处理 |
 |------|------|
-| 鉴权失败 | `magent login` + `tcb env use`；或 Advanced 手填 CAM；检查控制台 AI 模型是否启用 |
+| 鉴权失败 | `magent login` + `tcb env use`；CI 见 [凭证说明](./harness-credentials.md) |
 | 想用 OpenCode / zen | [harness-opencode.md](./harness-opencode.md) |
-| 沙箱无法启动 | [使用指南 · 首次起箱](./harness-tutorial.md#首次起箱沙箱工具与-rolearn) |
+| 沙箱无法启动 | [使用指南 · 部署前检查](./harness-tutorial.md#第-1-步部署前检查推荐) · [凭证说明](./harness-credentials.md) |
 
 ---
 

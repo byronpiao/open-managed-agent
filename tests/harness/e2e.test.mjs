@@ -681,6 +681,8 @@ async function testSyncPersistence() {
     `expected harness_sync_events from opencode /sync/history for ${row.engineSessionId} ` +
       `(magent needs opencode >= 1.16.2)`,
   );
+  row = await getHarnessSessionStore(envId).get(sessionId);
+  assert.ok(!row?.syncExportFailedAt, "syncExportFailedAt set after successful export");
   if (requireTokenRecall) {
     assert.ok(
       syncEventsContainToken(events, token),
@@ -849,6 +851,9 @@ async function testClaudeSessionPersistence() {
     entryCount > 0,
     `expected harness_claude_session_entries for ${row.engineSessionId} (magent needs claude-acp-harness.js)`,
   );
+  row = await getHarnessSessionStore(envId).get(sessionId);
+  assert.ok(!row?.claudeStoreEmptyAt, "claudeStoreEmptyAt set after successful append");
+  assert.ok(!row?.claudeWarmFailedAt, "claudeWarmFailedAt set before re-acquire");
 
   stopRuntime();
   await sleep(800);

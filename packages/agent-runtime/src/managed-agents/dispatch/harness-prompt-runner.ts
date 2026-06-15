@@ -16,6 +16,7 @@ import {
 } from "../../harness/client-tool-bridge.js";
 import { harnessLog } from "../../harness/logging.js";
 import { persistOpencodeSyncForSession } from "../../harness/opencode-sync.js";
+import { probeClaudeSessionStoreAfterPrompt } from "../../harness/claude-session-health.js";
 import {
   ensureEngineSessionOnSandbox,
   ensureSandboxForSession,
@@ -171,6 +172,13 @@ async function pipeSandboxSseToManagedAgentsStore(args: {
       harnessLog({
         lane: "opencode_sync",
         operation: "persist.prompt_end",
+        acpSessionId,
+      }).error(err);
+    });
+    void probeClaudeSessionStoreAfterPrompt({ acpSessionId, config }).catch((err) => {
+      harnessLog({
+        lane: "claude_session",
+        operation: "probe.prompt_end",
         acpSessionId,
       }).error(err);
     });

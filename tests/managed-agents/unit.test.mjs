@@ -144,4 +144,13 @@ const missingBeta = await handler(
 );
 assert.equal(missingBeta.status, 400);
 
+const harnessPromptRunnerSrc = readFileSync(
+  join(root, "packages/agent-runtime/dist/managed-agents/dispatch/harness-prompt-runner.js"),
+  "utf8",
+);
+assert.ok(
+  harnessPromptRunnerSrc.includes("probeClaudeSessionStoreAfterPrompt"),
+  "MA harness prompt path must probe Claude SessionStore after prompt",
+);
+
 console.log("managed agents unit tests passed");
