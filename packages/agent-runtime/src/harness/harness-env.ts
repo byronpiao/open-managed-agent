@@ -7,7 +7,7 @@ import { resolveAnthropicApiKeyFromEnv } from "./llm-providers.js";
 
 /** 唯一允许内置的默认：公开 CCR magent 镜像（可用 HARNESS_SANDBOX_IMAGE 覆盖）。 */
 export const HARNESS_PUBLIC_MAGENT_IMAGE =
-  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260610-1736-d89aa8-magent";
+  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260615-1818-59b1a5-magent";
 
 export function requireEnv(name: string, hint?: string): string {
   const value = process.env[name]?.trim();

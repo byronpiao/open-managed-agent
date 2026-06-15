@@ -6,11 +6,12 @@ if ! command -v docker >/dev/null 2>&1; then
   echo "docker not found in PATH — brew link docker && colima start" >&2
   exit 1
 fi
-if [[ -z "${DOCKER_HOST:-}" && -S "${HOME}/.colima/default/docker.sock" ]]; then
-  export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
-fi
 
 TRW_ROOT="${TRW_ROOT:-$(cd "$(dirname "$0")/../../../tcb-remote-workspace" && pwd)}"
+# shellcheck source=../../../tcb-remote-workspace/scripts/lib/docker-context.sh
+source "${TRW_ROOT}/scripts/lib/docker-context.sh"
+DOCKER_CTX=$(resolve_build_docker_context "magent")
+apply_docker_context "$DOCKER_CTX"
 PUBLIC_REPO="${PUBLIC_REPO:-ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d}"
 PRESET="${PRESET:-magent}"
 TAG="${TAG:-$(date +%y%m%d-%H%M)-$(head -c3 /dev/urandom | xxd -p)-${PRESET}}"
@@ -36,7 +37,7 @@ if [[ ! -f "$TRW_VENDOR" ]]; then
 fi
 pnpm build:prod
 unset PORT HOST
-pnpm test:unit
+pnpm test:full
 PRESET="$PRESET" ./scripts/build.sh --preset "$PRESET" --platform linux/amd64 --load
 docker tag "tcb-sandbox-ags:app-${PRESET}" "$FULL_IMAGE"
 docker push "$FULL_IMAGE"
