@@ -967,18 +967,19 @@ async function main() {
       `model=${resolveOpencodeModel()} port=${E2E_PORT} env=${process.env.CLOUDBASE_ENV_ID}`,
   );
 
-  if (RUN_OPENCODE) {
+  if (RUN_OPENCODE || RUN_CLAUDE) {
     console.log("\n── A. Matrix parity (#8 #9 #10) ──");
     try {
-      await runMatrixParityTests();
-      record("A-matrix-parity", "PASS", "MCP + skills infra");
+      const matrixEngines = RUN_OPENCODE && RUN_CLAUDE ? "all" : RUN_CLAUDE ? "claude" : "opencode";
+      await runMatrixParityTests(matrixEngines);
+      record("A-matrix-parity", "PASS", `MCP + skills (${matrixEngines})`);
     } catch (e) {
       record("A-matrix-parity", "FAIL", e.message);
       await printSummary();
       process.exit(1);
     }
   } else {
-    record("A-matrix-parity", "SKIP", "engines=claude only");
+    record("A-matrix-parity", "SKIP", "no engine selected");
   }
 
   if (RUN_OPENCODE) {

@@ -2,9 +2,9 @@
 /**
  * Harness 验收入口 — agent 驱动，无交互。
  *
- *   npm run harness:smoke               # 合入默认：test:full + cloud-opencode
- *   npm run harness:local-claude
- *   npm run harness:cloud-claude
+ *   npm run harness:smoke               # harness:run --cloud
+ *   npm run harness -- local --engines all
+ *   npm run harness -- cloud-claude
  */
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,7 @@ import {
   parseHarnessEnginesArg,
   assertHarnessEnginesEnv,
   harnessEnginesIncludeOpencode,
+  harnessEnginesIncludeClaude,
   cloudHarnessScenario,
 } from "./load-env.mjs";
 
@@ -303,10 +304,10 @@ async function runLocal(extraArgs = []) {
     claudeTier: claudeTierForE2e,
   });
 
-  if (harnessEnginesIncludeOpencode(engines)) {
+  if (harnessEnginesIncludeOpencode(engines) || harnessEnginesIncludeClaude(engines)) {
     console.log("=== harness local: matrix parity ===");
     await assertHarnessAgsRuntimeEnvSync();
-    runNode("tests/harness/matrix-parity.test.mjs", [], { tier: localTier });
+    runNode("tests/harness/matrix-parity.test.mjs", ["--engines", engines], { tier: localTier });
   }
 
   if (truthyCos()) {

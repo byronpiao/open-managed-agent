@@ -2,8 +2,10 @@
  * Harness 主链路矩阵 #8 #9 #10 — 真 AGS 沙箱验收。
  *
  *   node tests/harness/matrix-parity.test.mjs
+ *   node tests/harness/matrix-parity.test.mjs --engines opencode|claude|all
  *
  * 需要 `.env.harness`（与 harness -- local 相同）。
+ * claude 还需 `scripts/harness/scenarios/.env.local-claude`。
  * 不测 LLM 对话，只验配置进箱、init、MCP/Skills 落盘与可列举。
  */
 
@@ -12,7 +14,15 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
-import { loadEnv, assertHarnessCreds } from "../../scripts/harness/load-env.mjs";
+import {
+  loadEnv,
+  assertHarnessCreds,
+  applyHarnessScenario,
+  parseHarnessEnginesArg,
+  harnessEnginesIncludeOpencode,
+  harnessEnginesIncludeClaude,
+  assertHarnessEnginesEnv,
+} from "../../scripts/harness/load-env.mjs";
 
 loadEnv();
 assertHarnessCreds();
@@ -24,13 +34,29 @@ const skillFixture = resolve(repoRoot, "tests/fixtures/skills/harness-e2e-demo.m
 const MCP_SERVER_NAME = "harness_fixture_http";
 const MCP_SERVER_URL = "http://127.0.0.1:9000/mcp";
 
-export function buildMatrixParityAgentConfig() {
+const ENGINE_SKILL_MIRROR = {
+  opencode: ".config/opencode/skills/harness-e2e-demo/SKILL.md",
+  claude: ".claude/skills/harness-e2e-demo/SKILL.md",
+};
+
+const ENGINE_HEALTH = {
+  opencode: {
+    path: "/api/agents/opencode/health",
+    ready: (h) => Boolean(h?.ok && h.acpReady && h.serveReady),
+  },
+  claude: {
+    path: "/api/agents/claudecode/health",
+    ready: (h) => Boolean(h?.ok && h.acpReady),
+  },
+};
+
+export function buildMatrixParityAgentConfig(engine = "opencode") {
   return {
-    name: "HarnessMatrixParity",
-    model: "hunyuan-t1-latest",
+    name: `HarnessMatrixParity-${engine}`,
+    model: engine === "claude" ? "deepseek-v4-flash" : "hunyuan-t1-latest",
     system: "Matrix parity harness agent.",
     runtime: "harness",
-    engine: "opencode",
+    engine,
     mcp_servers: [
       {
         type: "url",
@@ -88,7 +114,7 @@ async function bash(handle, command) {
   return String(output);
 }
 
-async function acquireParitySandbox() {
+async function acquireParitySandbox(engine) {
   const { getSandboxOrchestrator } = await import(
     "../../packages/agent-runtime/dist/harness/sandbox/orchestrator.js"
   );
@@ -96,21 +122,21 @@ async function acquireParitySandbox() {
     "../../packages/agent-runtime/dist/harness/deploy.js"
   );
 
-  const config = buildMatrixParityAgentConfig();
+  const config = buildMatrixParityAgentConfig(engine);
   const acpSessionId = crypto.randomUUID();
   const envId = process.env.CLOUDBASE_ENV_ID;
   const callbackBase = process.env.CLOUDBASE_SERVER_URL ?? "http://127.0.0.1:9000";
 
-  console.log("acquiring sandbox for matrix parity…");
+  console.log(`acquiring sandbox for matrix parity (engine=${engine})…`);
   const orch = getSandboxOrchestrator();
   return orch.acquire({
     envId,
     agentConfig: config,
-    engine: "opencode",
+    engine,
     acpSessionId,
     instanceEnv: buildHarnessSandboxEnv({
       config,
-      engine: "opencode",
+      engine,
       clientToolCallbackBase: callbackBase,
       acpSessionId,
     }),
@@ -302,6 +328,20 @@ async function testSkillsMaterializedOnDisk(handle) {
   console.log(`  ✓ #10 ${skillPath} content matches fixture`);
 }
 
+/** 矩阵 #10c：skill mirror 到 engine-native 路径 */
+async function testSkillsMirroredToEngine(handle, engine) {
+  const mirrorPath = ENGINE_SKILL_MIRROR[engine];
+  assert.ok(mirrorPath, `no skill mirror path for engine ${engine}`);
+  const exists = await bash(handle, `test -f ${mirrorPath} && echo OK`);
+  assert.ok(exists.includes("OK"), `${mirrorPath} not found after workspace/init`);
+  const content = await bash(handle, `cat ${mirrorPath}`);
+  assert.ok(
+    content.includes("HARNESS_SKILL_CHECK"),
+    `${mirrorPath} missing fixture marker`,
+  );
+  console.log(`  ✓ #10 ${mirrorPath} mirrored for ${engine}`);
+}
+
 /** 矩阵 #1–#2 探针：TRW 内置 bash / write（不经 LLM） */
 async function testTrwBuiltinBashWrite(handle) {
   const echoOut = await bash(handle, "echo MATRIX_TRW_BASH_OK");
@@ -324,78 +364,104 @@ async function testTrwBuiltinBashWrite(handle) {
   console.log("  ✓ TRW /api/tools/write");
 }
 
-/** 箱内 opencode 就绪（后续 sync / 对话类用例的前置） */
-async function testOpencodeEngineReady(handle) {
+/** 箱内 engine 就绪 */
+async function testEngineReady(handle, engine) {
+  const spec = ENGINE_HEALTH[engine];
+  assert.ok(spec, `unknown engine health spec: ${engine}`);
   let health = null;
   let status = 503;
-  const deadline = Date.now() + 90_000;
+  const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    const res = await handle.request("/api/agents/opencode/health");
+    const res = await handle.request(spec.path);
     status = res.status;
     health = await res.json();
-    if (status === 200 && health.ok && health.acpReady && health.serveReady) break;
+    if (status === 200 && spec.ready(health)) break;
     await sleep(2_000);
   }
-  assert.equal(status, 200, `opencode health HTTP ${status}`);
-  assert.ok(
-    health?.ok && health.acpReady && health.serveReady,
-    `opencode not ready: ${JSON.stringify(health).slice(0, 400)}`,
-  );
-  console.log("  ✓ opencode acp+serve health");
+  assert.equal(status, 200, `${engine} health HTTP ${status}`);
+  assert.ok(spec.ready(health), `${engine} not ready: ${JSON.stringify(health).slice(0, 400)}`);
+  console.log(`  ✓ ${engine} engine health (${spec.path})`);
 }
 
-export async function runMatrixParityTests() {
-  const { assertHarnessAgsRuntimeEnv } = await import(
-    "../../packages/agent-runtime/dist/harness/harness-env.js"
-  );
-  assertHarnessAgsRuntimeEnv();
+async function runMatrixParityForEngine(engine) {
+  const scenario = engine === "claude" ? "local-claude" : "local-opencode";
+  applyHarnessScenario(scenario);
 
   let handle;
   try {
-    const { teardownHarnessSandboxes } = await import("../../scripts/harness/ags-teardown.mjs");
-    console.log("teardown (pre-flight)…");
-    await teardownHarnessSandboxes();
+    handle = await acquireParitySandbox(engine);
 
-    handle = await acquireParitySandbox();
-
-    console.log("\n=== matrix #8 external MCP (mcp_servers) ===");
+    console.log(`\n=== matrix [${engine}] #8 external MCP (mcp_servers) ===`);
     await testMcpServersDeployed(handle);
     await testMcpServerToolsListable(handle);
     await testDualMcpEndpoints(handle);
 
-    console.log("\n=== matrix #9 CloudBase MCP (inject + verify) ===");
+    console.log(`\n=== matrix [${engine}] #9 CloudBase MCP (inject + verify) ===`);
     await testCloudbaseCredsOnInstanceEnv(handle);
     await testCloudbaseMcporterWiredAfterInit(handle);
     await testCloudbaseMcpToolsListable(handle);
     await testCloudbaseMcpHarmlessCall(handle);
 
-    console.log("\n=== matrix #10 Skills (inject + materialize) ===");
+    console.log(`\n=== matrix [${engine}] #10 Skills (inject + materialize) ===`);
     await testSkillsInjectedOnInstanceEnv(handle);
     await testSkillsMaterializedOnDisk(handle);
+    await testSkillsMirroredToEngine(handle, engine);
 
-    console.log("\n=== matrix TRW builtin tools (bash / write) ===");
+    console.log(`\n=== matrix [${engine}] TRW builtin tools (bash / write) ===`);
     await testTrwBuiltinBashWrite(handle);
 
-    console.log("\n=== engine readiness ===");
-    await testOpencodeEngineReady(handle);
+    console.log(`\n=== matrix [${engine}] engine readiness ===`);
+    await testEngineReady(handle, engine);
 
-    console.log("\n✓ matrix parity #1–#2 #8 #9 #10 passed");
+    console.log(`\n✓ matrix parity [${engine}] #1–#2 #8 #9 #10 passed`);
   } finally {
     if (handle) {
       try {
         await handle.stop();
       } catch (err) {
-        console.warn("stop sandbox:", err.message);
+        console.warn(`stop sandbox (${engine}):`, err.message);
       }
     }
-    try {
-      const { teardownHarnessSandboxes } = await import("../../scripts/harness/ags-teardown.mjs");
-      console.log("teardown (post-flight)…");
-      await teardownHarnessSandboxes();
-    } catch (err) {
-      console.warn("teardown:", err.message);
-    }
   }
+}
+
+export async function runMatrixParityTests(enginesArg) {
+  const { assertHarnessAgsRuntimeEnv } = await import(
+    "../../packages/agent-runtime/dist/harness/harness-env.js"
+  );
+  assertHarnessAgsRuntimeEnv();
+
+  const engines =
+    enginesArg ??
+    (process.argv.includes("--engines")
+      ? parseHarnessEnginesArg(process.argv.slice(2))
+      : "all");
+  assertHarnessEnginesEnv(engines);
+
+  const engineList = [];
+  if (harnessEnginesIncludeOpencode(engines)) engineList.push("opencode");
+  if (harnessEnginesIncludeClaude(engines)) engineList.push("claude");
+  assert.ok(engineList.length > 0, `no engines selected from --engines ${engines}`);
+
+  const { teardownHarnessSandboxes } = await import("../../scripts/harness/ags-teardown.mjs");
+  console.log("teardown (pre-flight)…");
+  await teardownHarnessSandboxes();
+
+  for (const engine of engineList) {
+    console.log(`\n══════════════════════════════════════`);
+    console.log(` MATRIX PARITY — engine=${engine}`);
+    console.log(`══════════════════════════════════════`);
+    await runMatrixParityForEngine(engine);
+  }
+
+  try {
+    console.log("teardown (post-flight)…");
+    await teardownHarnessSandboxes();
+  } catch (err) {
+    console.warn("teardown:", err.message);
+  }
+
+  console.log(`\n✓ matrix parity complete (${engineList.join(" + ")})`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
