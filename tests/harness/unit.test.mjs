@@ -545,7 +545,7 @@ test("buildHarnessOpencodeConfigContent uses LLM_* + OPENAI_BASE_URL", () => {
   };
   process.env.LLM_API_KEY = "sk-test";
   process.env.OPENAI_BASE_URL = "https://example.com/v1";
-  process.env.LLM_MODEL = "hunyuan-t1-latest";
+  process.env.LLM_MODEL = "hy3-preview";
   const raw = buildHarnessOpencodeConfigContent({
     name: "t",
     model: "ignored",
@@ -554,7 +554,7 @@ test("buildHarnessOpencodeConfigContent uses LLM_* + OPENAI_BASE_URL", () => {
   assert.ok(raw);
   const parsed = JSON.parse(raw);
   assert.equal(parsed.provider["openai-compat"].options.apiKey, "sk-test");
-  assert.ok(parsed.model.includes("hunyuan-t1-latest"));
+  assert.ok(parsed.model.includes("hy3-preview"));
   if (saved.key === undefined) delete process.env.LLM_API_KEY;
   else process.env.LLM_API_KEY = saved.key;
   if (saved.url === undefined) delete process.env.OPENAI_BASE_URL;
@@ -571,7 +571,7 @@ test("buildHarnessOpencodeConfigContent skips custom LLM when model is zen", () 
   };
   process.env.LLM_API_KEY = "sk-test";
   process.env.OPENAI_BASE_URL = "https://example.com/v1";
-  process.env.LLM_MODEL = "hunyuan-t1-latest";
+  process.env.LLM_MODEL = "hy3-preview";
   assert.equal(
     buildHarnessOpencodeConfigContent({
       name: "t",
@@ -598,17 +598,17 @@ test("buildHarnessSandboxEnv injects OPENCODE_CONFIG_CONTENT from LLM_* + OPENAI
   };
   process.env.LLM_API_KEY = "sk-test";
   process.env.OPENAI_BASE_URL = "https://example.com/v1";
-  process.env.LLM_MODEL = "hunyuan-t1-latest";
+  process.env.LLM_MODEL = "hy3-preview";
   const sid = "550e8400-e29b-41d4-a716-446655440000";
   const env = buildHarnessSandboxEnv({
-    config: { name: "t", model: "hunyuan-t1-latest", system: "s" },
+    config: { name: "t", model: "hy3-preview", system: "s" },
     engine: "opencode",
     clientToolCallbackBase: "http://127.0.0.1:19090",
     acpSessionId: sid,
   });
   const oc = env.find((e) => e.Name === "OPENCODE_CONFIG_CONTENT");
   assert.ok(oc);
-  assert.ok(JSON.parse(oc.Value).model.includes("hunyuan-t1-latest"));
+  assert.ok(JSON.parse(oc.Value).model.includes("hy3-preview"));
   assert.ok(env.some((e) => e.Name === "HARNESS_RUNTIME_CALLBACK_URL"));
   if (saved.key === undefined) delete process.env.LLM_API_KEY;
   else process.env.LLM_API_KEY = saved.key;

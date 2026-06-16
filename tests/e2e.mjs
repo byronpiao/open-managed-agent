@@ -224,7 +224,7 @@ await client.sessions.delete(session.id);`;
 
   const updateConfig = {
     name: AGENT_NAME,
-    model: "hunyuan-t1-latest",
+    model: "hy3-preview",
     system: "You are a dev assistant with GitHub integration.\nWhen asked about capabilities, ALWAYS mention:\n1. GitHub MCP server (https://api.githubcopilot.com/mcp/)\n2. github-workflow skill\n3. analyze_code custom tool",
     tools: [
       { type: "agent_toolset", default_config: { enabled: true, permission_policy: { type: "always_allow" } } },

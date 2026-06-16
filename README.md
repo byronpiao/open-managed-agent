@@ -42,7 +42,7 @@ for await (const event of client.sessions.prompt(session.id, "Review this PR")) 
 
 | 步骤 | 做法 |
 |------|------|
-| 日常 | `magent login` + `tcb env use <环境 ID>` |
+| 日常 | `magent login` + `magent env list` +`magent env use <环境 ID>` |
 | 部署前（推荐） | `npm run check:harness` |
 | 部署后 | 记下 `CLOUDBASE_AGENT_ID` |
 | CI / 无交互 | [凭证 · CI 与流水线](./docs/harness-credentials.md#ci-与无交互部署) |
@@ -83,7 +83,7 @@ npm install -g open-managed-agent
 
 ```bash
 magent login                    # 浏览器授权；等同 tcb login，共用 ~/.config/.cloudbase/
-tcb env use <your-env-id>       # 选默认环境；可省略后续命令的 -e
+magent env use <your-env-id>    # 选默认环境；可省略后续命令的 -e
 
 # CI / 无交互：magent login --apiKeyId <id> --apiKey <key>
 # 或手填变量，见 docs/harness-credentials.md#ci-与无交互部署
@@ -109,7 +109,7 @@ magent agent:create \
 
 **沙箱内 Agent** — 见 [沙箱内 Agent](#沙箱内-agent)（`runtime: harness`；[RoleArn](#首次使用沙箱工具与-rolearn) 仅首次创 Tool 时可能需）。
 
-未 `tcb env use` 且未传 `-e` / `CLOUDBASE_ENV_ID` 时，`magent` 会提示先选环境。
+未 `magent env use` 且未传 `-e` / `CLOUDBASE_ENV_ID` 时，`magent` 会提示先选环境。
 
 > 首次部署前需构建代码：`cd packages/agent-runtime && npm run build`
 
@@ -168,7 +168,7 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 
 ```bash
 magent login
-tcb env use <your-env-id>
+magent env use <your-env-id>
 
 cp agent.harness.yaml.example agent.harness.yaml
 cd packages/agent-runtime && npm run build && cd ../..
@@ -211,7 +211,7 @@ Agent 通过 `agent.yaml` 文件配置，结构兼容 [Anthropic Agent Setup](ht
 ```yaml
 # agent.yaml
 name: My Coding Agent
-model: hunyuan-t1-latest
+model: hy3-preview
 system: |
   You are a helpful coding assistant.
   You can read, write, and execute code.
@@ -280,7 +280,7 @@ sessions_collection: acp_sessions   # Session 存储的集合名，启动时自�
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `name` | string | Agent 名称 |
-| `model` | string | 模型名。可选：`hunyuan-t1-latest`、`deepseek-v3.2` 等 |
+| `model` | string | 模型名。可选：`hy3-preview`、`deepseek-v4-flash` 等 |
 | `system` | string | System prompt，定义 Agent 行为 |
 | `description` | string | Agent 描述 |
 | `tools` | array | 工具配置（见下方详细说明） |
@@ -328,7 +328,7 @@ magent run -a <agent-id> -m "现在几点了？"
 magent agent:update --system "You are a strict code reviewer."
 
 # 更新模型
-magent agent:update --model deepseek-v3.2
+magent agent:update --model deepseek-v4-flash
 
 # 从 YAML 文件加载完整配置
 magent agent:update --file ./new-config.yaml
@@ -629,7 +629,7 @@ magent agent:create \
 日常改配置不需要重新部署代码：
 
 ```bash
-magent agent:update --system "New prompt" --model deepseek-v3.2
+magent agent:update --system "New prompt" --model deepseek-v4-flash
 magent agent:update --file ./new-config.yaml
 ```
 
@@ -651,7 +651,7 @@ magent agent:create --name my-agent --env <env-id>
 | `CLOUDBASE_ENV_ID` | **必需**。CloudBase 环境 ID | - |
 | `AGENT_CONFIG_B64` | 完整 JSON 配置（Base64，由 `magent agent:update` 写入） | - |
 | `AGENT_CONFIG` | 完整 JSON 配置（明文，手动设置时可用） | - |
-| `AGENT_MODEL` | 覆盖模型名 | `hunyuan-t1-latest` |
+| `AGENT_MODEL` | 覆盖模型名 | `hy3-preview` |
 | `AGENT_SYSTEM` | 覆盖 system prompt | `You are a helpful assistant.` |
 | `AGENT_NAME` | 覆盖 agent 名称 | `open-managed-agent` |
 | `PORT` | 服务监听端口 | `9000` |
@@ -662,8 +662,8 @@ magent agent:create --name my-agent --env <env-id>
 
 | Provider | 模型 | 推荐 |
 |----------|------|------|
-| `hunyuan-exp` | `hunyuan-t1-latest`, `hunyuan-turbos-latest`, `hunyuan-2.0-instruct-20251111` | ✅ `hunyuan-t1-latest` |
-| `deepseek` | `deepseek-v3.2`, `deepseek-r1-0528` | ✅ `deepseek-v3.2` |
+| `hunyuan-exp` | `hy3-preview`, `hunyuan-turbos-latest`, `hunyuan-2.0-instruct-20251111` | ✅ `hy3-preview` |
+| `deepseek` | `deepseek-v4-flash`, `deepseek-r1-0528` | ✅ `deepseek-v4-flash` |
 
 ---
 

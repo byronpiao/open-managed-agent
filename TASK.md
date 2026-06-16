@@ -109,7 +109,7 @@ cloudbase-managed-agent/
 ## Key Design Decisions
 
 1. **SDK API surface** must be 1:1 compatible with `@anthropic-ai/sdk` beta.agents interface (drop-in replacement feel)
-2. **Models**: default to `hunyuan-t1-latest` (CloudBase built-in); also supports `deepseek-v3.2`
+2. **Models**: default to `hy3-preview` (CloudBase built-in); also supports `deepseek-v4-flash`
 3. **Agent loop**: server-side, implement tool calling loop that handles:
    - bash (via child_process exec in SCF)
    - read/write/list file ops

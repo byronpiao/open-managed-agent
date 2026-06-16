@@ -9,7 +9,7 @@
 # https://platform.claude.com/docs/en/managed-agents/agent-setup
 
 name: OpenManagedAgent Coding Assistant
-model: hunyuan-t1-latest
+model: hy3-preview
 system: You are a helpful coding assistant. You can read, write, and execute code.
 description: A coding agent with file system and shell access.
 
