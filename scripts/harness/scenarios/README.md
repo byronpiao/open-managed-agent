@@ -1,77 +1,96 @@
-# Harness 场景矩阵
+# Harness scenarios
 
-**3 部署面 × 2 engine = 6 格**。每格一对文件；agent 只按 **engine** 分两份（对称、好记）。
+**6 格 = `--infra` × `--engine`**（见 [CONTRIBUTING.md](../../../CONTRIBUTING.md) · [Harness一条龙.md](../../../../Harness一条龙.md)）
 
+```text
+              │ engine opencode          │ engine claude
+──────────────┼──────────────────────────┼─────────────────────────
+infra local   │ .env.local-opencode      │ .env.local-claude
+infra tcbr    │ .env.cloud-tcbr-opencode │ .env.cloud-tcbr-claude
+infra scf     │ .env.cloud-scf-opencode  │ .env.cloud-scf-claude
 ```
-                 │ opencode                    │ claude
-─────────────────┼─────────────────────────────┼──────────────────────────────
-local            │ .env.local-opencode         │ .env.local-claude
-                 │ agent.opencode.yaml         │ agent.claude.yaml
-cloud-tcbr       │ .env.cloud-tcbr-opencode    │ .env.cloud-tcbr-claude
-cloud-scf        │ .env.cloud-scf-opencode     │ .env.cloud-scf-claude
-```
 
-| 格子 | LLM tier | `.env.*` 内容 | preflight |
-|------|----------|----------------|-----------|
-| `local-opencode` | platform（429→zen） | 可为空 | OpenAI Chat |
-| `local-claude` | 先 platform hy3；测试 fallback ③ | ③ 可选（fallback 用） | Anthropic Messages + sandbox-compat |
-| `cloud-tcbr-opencode` | zen | 可为空 |
-| `cloud-scf-opencode` | OpenAI BYOK ③ | `LLM_*` + `OPENAI_BASE_URL` |
-| `cloud-tcbr-claude` | Anthropic ③ | `LLM_*` + `ANTHROPIC_BASE_URL` |
-| `cloud-scf-claude` | Anthropic ③ | 同上 |
+YAML：`agent.opencode.yaml` / `agent.claude.yaml` — 决定沙箱内 ACP 路径。
 
-基座 **`/.env.harness`**：①④⑤⑥（镜像、COS、pin；① CloudBase 默认留空）。不含 ③。
+---
 
-**`sandbox`（内部草案）**：6 格 AGS 路径 = `sandbox.infra: serverless`（`agent.*.yaml` 已显式写；省略时解析默认同值）。`resources` 默认 `cpu: "2"` / `memory: "2Gi"`。详见 [`docs/sandbox.md`](../../docs/sandbox.md) — 不对客、Hermes 不进本矩阵。
+## 准备
 
 ```bash
-magent login && tcb env use <envId>    # ① 段通常不必手填
+cp .env.harness.example .env.harness
 cd scripts/harness/scenarios
-cp .env.local-claude.example .env.local-claude      # 填入 LLM_API_KEY（gitignore，勿提交）
-cp .env.cloud-scf-opencode.example .env.cloud-scf-opencode
-# …其余格子同理；local-opencode / cloud-tcbr-opencode 可空文件
+cp .env.local-opencode.example .env.local-opencode   # 或空文件（platform）
+# BYOK 格：cp 对应 .example 并填 LLM_*
 ```
 
-模板为 `.env.<scenario>.example`（可提交）；真实 ③ 写在 `.env.<scenario>`（被 `.gitignore` 忽略）。
+探活：
 
-`applyHarnessScenario(<格子 id>)` → 载入 `.env.<格子>` → 写入标准 `LLM_API_KEY` / `LLM_MODEL` / URL 键。
+```bash
+node scripts/harness/load-env.mjs --check
+node scripts/harness/load-env.mjs --check --probe-matrix
+```
+
+---
+
+## LLM 矩阵（preflight）
+
+| scenario-id | 期望 mode | 来源 | preflight 行为 |
+|-------------|-----------|------|----------------|
+| `local-opencode` | `platform` 或 `zen` | 无 scenario 或空 `.env` | hy3 OpenAI Chat；429 → `AGENT_MODEL=zen`（**仅测试**） |
+| `local-claude` | `platform` 或 `byok-anthropic` | `.env.local-claude` ③ | hy3 Anthropic；失败 → scenario BYOK（**仅测试**） |
+| `cloud-tcbr-opencode` | `zen` | scenario `AGENT_MODEL=zen` | 跳过 probe |
+| `cloud-scf-opencode` | `byok-openai` | ③ `LLM_*` + `OPENAI_BASE_URL` | OpenAI Chat probe |
+| `cloud-tcbr-claude` | `byok-anthropic` | ③ Anthropic 三键 | sandbox-compat probe |
+| `cloud-scf-claude` | `byok-anthropic` | ③ Anthropic 三键 | sandbox-compat probe |
+
+- 模式标签见 `lib/harness-llm-env.mjs` → `describeHarnessLlmMode()`
+- **无** `HARNESS_LLM_TIER` / `HARNESS_FORCE_ZEN` env
+- OpenAI / Anthropic Key 不同 → **分两轮**改对应 `.env.<格子>` 再跑
+
+---
+
+## COS 三态
+
+| 场景 | COS 挂载 |
+|------|----------|
+| **local 矩阵**（stub + full e2e + matrix-parity） | **不挂**（即使 `.env.harness` 有 `HARNESS_COS_ENABLED=1`） |
+| **local cos-e2e** | `.env.harness` ⑥ 段齐 → `run --infra local` **末尾** `cos-e2e.mjs` |
+| **cloud `run`** | 默认不挂；加 **`--with-cos`** 时 deploy 带 COS（tool 名仍 `oma-harness-{env}`） |
+
+`loadEnv()` 默认**不**把 COS 键写入 `process.env`；cos-e2e / `--with-cos` 才 `applyHarnessCosFromHarnessFile()`。
+
+首次 cos-e2e 若 AGS tool 创建时无 `StorageMounts`，orchestrator 会 **删 tool 并按 COS 配置重建**（update API 不能补 mount）。
+
+---
 
 ## npm 入口
 
-| 格子 / 组 | npm |
-|-----------|-----|
-| local opencode | `npm run test:full` · `npm run harness -- local` |
-| local claude | `npm run harness -- local --engines claude` |
-| 本地双引擎 | `npm run harness -- local --engines all` |
-| 云 opencode 并行 | `npm run harness -- cloud-opencode` |
-| 云 claude 并行 | `npm run harness -- cloud-claude` |
-| 单格 | `npm run harness -- cloud-{tcbr\|scf}-{opencode\|claude}` |
+| 格子 | 命令 |
+|------|------|
+| local opencode | `test:merge` · `run --infra local --engine opencode` |
+| local claude | `run --infra local --engine claude` |
+| local 双引擎 | `run --infra local --engine all` |
+| 云 opencode 并行 | `run --infra tcbr,scf --engine opencode` |
+| 三面顺序 | `run --infra all --engine opencode` |
+| 6 格全开 | `run --infra all --engine all` |
+| 单格 | `run --infra {local\|tcbr\|scf} --engine {opencode\|claude}` |
+| 云 + COS | `run --infra tcbr --engine opencode --with-cos` |
 
-别名：`local` → `local-opencode` · `cloud-tcbr` → `cloud-tcbr-opencode` · `cloud-scf` → `cloud-scf-opencode`
+实现：`scenario-matrix.mjs` · `load-env.mjs` · `llm-preflight.mjs`
 
-实现：`scenario-matrix.mjs` · `load-env.mjs`
+---
 
-## ma-protocol（旁路 · MA HTTP）
+## ma-protocol（旁路）
 
 | 文件 | 说明 |
 |------|------|
-| `agent.ma-protocol.yaml` | 已部署 **harness Runtime** 的 agent 配置模板（`runtime: harness`） |
-| `.env.ma-protocol` | pin `HARNESS_MA_PROTOCOL_AGENT_ID`（`CLOUDBASE_AGENT_ID` 可作别名） |
+| `agent.ma-protocol.yaml` | 已部署 harness Runtime 模板（opencode） |
+| `agent.ma-protocol-claude.yaml` | Claude 版 |
+| `.env.ma-protocol` / `.env.ma-protocol-claude` | pin `HARNESS_MA_PROTOCOL_*_AGENT_ID` |
 
 ```bash
-cd scripts/harness/scenarios
-cp .env.ma-protocol.example .env.ma-protocol
-# 填入 magent agent:create / harness:cloud-* 产出的 agent id
-npm run ma-protocol
+npm run harness -- ma-protocol
+npm run harness -- ma-protocol --engine claude
 ```
 
-与 6 格区别：**不部署 AGS 矩阵**，只打已上线 Runtime 的 `/v1/agents|environments|sessions` HTTP。`load-env.mjs --check` 在 sidecar 段显示就绪状态。
-
-## Hermes（内部 · Talos，未接 manage node）
-
-| 项 | 说明 |
-|----|------|
-| `agent.hermes.yaml` | `engine: hermes` → TRW `POST /api/agents/hermes/acp` |
-| 箱 env | `ENABLE_AGENT_HERMES_ACP` + `ENABLE_AGENT_HERMES_WEB`（与 packer preset 对齐） |
-| LLM 注入 | 主路径 **OpenAI-compatible**（`OPENAI_API_KEY` / `OPENAI_BASE_URL`）；可选叠加 Anthropic（`ANTHROPIC_*`） |
-| 验收 | **阻塞**：Talos 未进 TCB CLI / manage node；无 AGS docker 镜像。联调前勿加 harness npm 格子。 |
+需**先**云上 deploy OMA agent；不进 6 格矩阵。

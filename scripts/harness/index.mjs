@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 /**
- * Harness 验收入口 — agent 驱动，无交互。
+ * Harness 验收入口 — 见 CONTRIBUTING.md
  *
- *   npm run harness:smoke               # harness:run --cloud
- *   npm run harness -- local --engines all
- *   npm run harness -- cloud-claude
+ * 主维度：--infra（OMA 在哪跑）× --engine（沙箱内 engine）
  */
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -12,56 +10,69 @@ import { dirname, resolve } from "node:path";
 import {
   loadEnv,
   hydrateTcbApiKeyFromCam,
-  applyHarnessLlmTier,
   applyHarnessScenario,
-  applyScenarioEnv,
   applyHarnessTestDefaults,
+  applyHarnessCosFromHarnessFile,
+  applyPlatformLlmEnv,
+  describeHarnessLlmMode,
   logHarnessScenario,
-  parseHarnessEnginesArg,
+  parseHarnessEngineArg,
+  parseHarnessAxes,
   assertHarnessEnginesEnv,
+  assertHarnessCreds,
   harnessEnginesIncludeOpencode,
   harnessEnginesIncludeClaude,
   cloudHarnessScenario,
+  parseCloudCosMount,
 } from "./load-env.mjs";
+import { harnessCosEnabledFromMap, readHarnessEnvMap } from "../../lib/harness-env-file.mjs";
+import { HARNESS_PREFLIGHT_DONE_FLAG } from "../../lib/harness-cli-flags.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
 
 const HELP = `Usage: npm run harness -- <command> [options]
 
-Local（--engines 默认 opencode 主力）:
-  local                 stub + 真 AGS + 矩阵（+ 可选 COS）
-  --engines opencode|claude|all
+主验收（6 格 = --infra × --engine）:
+  run --infra local|tcbr|scf|all --engine opencode|claude|all
 
-Cloud（engine 后缀对等；无后缀 = opencode 主力）:
-  cloud                 cloud-tcbr-opencode ∥ cloud-scf-opencode
-  cloud-opencode        同上
-  cloud-claude          cloud-tcbr-claude ∥ cloud-scf-claude
-  cloud-tcbr-opencode   云托管 · opencode zen
-  cloud-scf-opencode    SCF · ③ OpenAI BYOK
-  cloud-tcbr-claude     云托管 · ③ Anthropic BYOK
-  cloud-scf-claude      SCF · ③ Anthropic BYOK
+  --infra   OMA 部署面；all = local → tcbr → scf 顺序各跑一遍
+            tcbr,scf = 两云面并行（不含 local）
+  --engine  沙箱内 engine；all 仅 local，或配合 --infra all（云面拆成 opencode+claude）
 
-  兼容别名: cloud-tcbr → cloud-tcbr-opencode · cloud-scf → cloud-scf-opencode
+  例:
+    run --infra local --engine opencode
+    run --infra local --engine all
+    run --infra tcbr --engine claude
+    run --infra tcbr,scf --engine opencode
+    run --infra all --engine opencode          # 三面顺序
+    run --infra all --engine all               # local 双引擎 + 云 4 格
 
-  --agent-id <id>  或 .env.harness ⑤ HARNESS_CLOUD_{TCBR|SCF}_{OPENCODE|CLAUDE}_AGENT_ID
-  --verify-only / --no-verify
+  可选: --db-pressure [--db-pressure-rounds N]
+        cloud: --with-cos | --no-cos（是否挂 COS 挂载，默认不挂；⑥ 段配 bucket）
+        cloud: --verify-only / --no-verify / --agent-id <id>
 
-db-pressure（只跑 FlexDB 行数/体积采样，不跑完整 e2e）:
-  db-pressure [--engines opencode|claude|all] [--db-pressure-rounds N]
+编排 release --profile merge|cloud|delivery|full
 
-product-acceptance（产品向验收，不合入 smoke）:
-  product-acceptance [--engines opencode|claude|all]
+工具箱（偶尔手动，不进 CI）:
+  quickstart [--keep-agent]
+  docker [--keep]
+  ma-protocol [--engine opencode|claude]
+  product-acceptance [--infra local] [--engine opencode|claude|all]
+  db-pressure [--infra local] [--engine …] [--db-pressure-rounds N]
 
-可选（默认不跑）:
-  --db-pressure              同上 N 默认 10；也可挂在 local full 末尾或 cloud verify 之后
+其它:
+  node scripts/harness/load-env.mjs --check
+  npm run check:harness
+  node scripts/harness/ags-teardown.mjs
+  node scripts/harness/cos-probe.mjs
+  node scripts/harness/acp-bridge.mjs [baseURL]
 
-编排: npm run harness:run -- [--engines …] [--cloud] [--cloud-claude] [--ma-protocol]
-文档: Harness一条龙.md
+详见 CONTRIBUTING.md
 `;
 
-function forwardE2eArgs(engines, extraArgs) {
-  const out = ["--full", "--engines", engines];
+function forwardE2eArgs(engine, extraArgs) {
+  const out = ["--full", "--engine", engine, HARNESS_PREFLIGHT_DONE_FLAG];
   if (extraArgs.includes("--db-pressure")) out.push("--db-pressure");
   const ri = extraArgs.indexOf("--db-pressure-rounds");
   if (ri >= 0 && extraArgs[ri + 1]) {
@@ -70,20 +81,83 @@ function forwardE2eArgs(engines, extraArgs) {
   return out;
 }
 
-/** @returns {{ backend: "tcbr"|"scf"|null; engine: "opencode"|"claude"; parallel: boolean }|null} */
-function parseCloudCommand(cmd) {
-  const map = {
-    cloud: { backend: null, engine: "opencode", parallel: true },
-    "cloud-opencode": { backend: null, engine: "opencode", parallel: true },
-    "cloud-claude": { backend: null, engine: "claude", parallel: true },
-    "cloud-tcbr": { backend: "tcbr", engine: "opencode", parallel: false },
-    "cloud-scf": { backend: "scf", engine: "opencode", parallel: false },
-    "cloud-tcbr-opencode": { backend: "tcbr", engine: "opencode", parallel: false },
-    "cloud-scf-opencode": { backend: "scf", engine: "opencode", parallel: false },
-    "cloud-tcbr-claude": { backend: "tcbr", engine: "claude", parallel: false },
-    "cloud-scf-claude": { backend: "scf", engine: "claude", parallel: false },
-  };
-  return map[cmd] ?? null;
+function runStep(label, fn) {
+  console.log(`\n${"=".repeat(72)}\n=== ${label} ===\n${"=".repeat(72)}\n`);
+  fn();
+}
+
+function runHarnessArgv(argv) {
+  const r = spawnSync(process.execPath, [resolve(__dirname, "index.mjs"), ...argv], {
+    cwd: repoRoot,
+    stdio: "inherit",
+    env: process.env,
+  });
+  if (r.status !== 0) {
+    throw new Error(`harness ${argv.join(" ")} failed (exit ${r.status ?? 1})`);
+  }
+}
+
+function parseReleaseProfile(argv) {
+  const profiles = ["merge", "cloud", "delivery", "full"];
+  let profile = "merge";
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--profile" && argv[i + 1]) {
+      profile = argv[++i].trim().toLowerCase();
+      if (!profiles.includes(profile)) {
+        console.error(`Invalid --profile ${profile}; use: ${profiles.join(" | ")}\n`);
+        console.log(HELP);
+        process.exit(1);
+      }
+    }
+  }
+  return profile;
+}
+
+async function runRelease(extraArgs) {
+  const profile = parseReleaseProfile(extraArgs);
+  loadEnv();
+  assertHarnessCreds();
+  await hydrateTcbApiKeyFromCam();
+
+  console.log(`harness release profile=${profile}\n`);
+
+  if (profile === "delivery" || profile === "full") {
+    runStep("quickstart", () => {
+      runHarnessArgv(["quickstart", "--keep-agent"]);
+    });
+  }
+
+  if (profile === "full") {
+    runStep("npm test", () => {
+      const r = spawnSync("npm", ["test"], { cwd: repoRoot, stdio: "inherit", env: process.env });
+      if (r.status !== 0) throw new Error(`npm test failed (exit ${r.status ?? 1})`);
+    });
+    runStep("run --infra all --engine all", () => {
+      runHarnessArgv(["run", "--infra", "all", "--engine", "all"]);
+    });
+    runStep("ma-protocol", () => {
+      runHarnessArgv(["ma-protocol"]);
+    });
+    console.log("\n✓ harness release --profile full complete");
+    return;
+  }
+
+  runStep("npm test", () => {
+    const r = spawnSync("npm", ["test"], { cwd: repoRoot, stdio: "inherit", env: process.env });
+    if (r.status !== 0) throw new Error(`npm test failed (exit ${r.status ?? 1})`);
+  });
+
+  runStep("run --infra local --engine opencode", () => {
+    runHarnessArgv(["run", "--infra", "local", "--engine", "opencode"]);
+  });
+
+  if (profile === "cloud" || profile === "delivery") {
+    runStep("run --infra tcbr,scf --engine opencode", () => {
+      runHarnessArgv(["run", "--infra", "tcbr,scf", "--engine", "opencode"]);
+    });
+  }
+
+  console.log(`\n✓ harness release --profile ${profile} complete`);
 }
 
 async function assertHarnessAgsRuntimeEnvSync() {
@@ -93,84 +167,87 @@ async function assertHarnessAgsRuntimeEnvSync() {
   assertHarnessAgsRuntimeEnv();
 }
 
-function envForHarnessTier(tier, { claudeTier } = {}) {
-  const env = { ...process.env };
-  if (tier === "anthropic-byok") {
-    applyScenarioEnv("local-claude", env);
-    applyHarnessLlmTier("anthropic-byok", env);
-  } else if (tier === "byok") {
-    applyScenarioEnv("local-opencode", env);
-    applyHarnessLlmTier("byok", env);
-  } else if (tier === "zen") {
-    applyHarnessLlmTier("zen", env);
-  } else {
-    applyHarnessLlmTier("platform", env);
-  }
-  if (claudeTier?.trim()) {
-    env.HARNESS_E2E_CLAUDE_TIER = claudeTier.trim();
-  }
-  applyHarnessTestDefaults(env);
-  return env;
-}
-
-function runNode(scriptRel, extraArgs = [], { tier, claudeTier } = {}) {
+function runNode(scriptRel, extraArgs = []) {
   const script = resolve(repoRoot, scriptRel);
   const r = spawnSync(process.execPath, [script, ...extraArgs], {
     cwd: repoRoot,
     stdio: "inherit",
-    env: tier ? envForHarnessTier(tier, { claudeTier }) : process.env,
+    env: process.env,
   });
   if (r.status !== 0) process.exit(r.status ?? 1);
 }
 
-function truthyCos() {
-  const v = process.env.HARNESS_COS_ENABLED?.trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
+function harnessCosConfiguredInFile() {
+  return harnessCosEnabledFromMap(readHarnessEnvMap());
 }
 
-function spawnHarnessChild(cmd, extraArgs = []) {
+function spawnHarnessChild(argv) {
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      [resolve(__dirname, "index.mjs"), cmd, ...extraArgs],
-      { cwd: repoRoot, stdio: "inherit", env: process.env },
-    );
+    const child = spawn(process.execPath, [resolve(__dirname, "index.mjs"), ...argv], {
+      cwd: repoRoot,
+      stdio: "inherit",
+      env: process.env,
+    });
     child.on("error", reject);
     child.on("exit", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`${cmd} failed (exit ${code ?? 1})`));
+      else reject(new Error(`harness ${argv.join(" ")} failed (exit ${code ?? 1})`));
     });
   });
 }
 
-async function runCloudParallel(engine, extraArgs) {
+async function runHarnessParallel(infraList, engine, extraArgs) {
   loadEnv();
   await hydrateTcbApiKeyFromCam();
-  const tcbr = `cloud-tcbr-${engine}`;
-  const scf = `cloud-scf-${engine}`;
-  console.log(`=== harness cloud-${engine}: ${tcbr} + ${scf} in parallel ===\n`);
-  await Promise.all([spawnHarnessChild(tcbr, extraArgs), spawnHarnessChild(scf, extraArgs)]);
-  console.log(`\n✓ cloud-tcbr-${engine} + cloud-scf-${engine} both passed`);
+  console.log(`=== harness run infra=${infraList.join(",")} engine=${engine} (parallel) ===\n`);
+  await Promise.all(
+    infraList.map((infra) =>
+      spawnHarnessChild(["run", "--infra", infra, "--engine", engine, ...extraArgs]),
+    ),
+  );
+  console.log(`\n✓ infra=${infraList.join(",")} engine=${engine} all passed`);
+}
+
+function logPreflightResult(preflight, { includeReply = false } = {}) {
+  if (preflight.probe?.ok) {
+    const reply =
+      includeReply && preflight.probe.replySnippet != null
+        ? ` reply=${preflight.probe.replySnippet}`
+        : "";
+    console.log(
+      `✓ ${preflight.protocol} llm=${preflight.mode} ${preflight.probe.latencyMs}ms ` +
+        `model=${preflight.probe.model}${reply}`,
+    );
+  } else if (preflight.mode === "zen") {
+    console.log(`✓ llm=zen (${preflight.fallback ?? "platform unavailable"})`);
+  }
+}
+
+function llmModeLabel(mode) {
+  if (mode === "zen") return "zen";
+  if (mode === "byok-openai") return "BYOK OpenAI";
+  if (mode === "byok-anthropic") return "BYOK Anthropic";
+  return "hy3-preview";
 }
 
 async function runProductAcceptance(extraArgs = []) {
-  const engines = parseHarnessEnginesArg(extraArgs);
+  const engine = parseHarnessEngineArg(extraArgs);
   loadEnv();
   try {
-    assertHarnessEnginesEnv(engines);
+    assertHarnessEnginesEnv(engine);
   } catch (err) {
     console.error(err.message);
     process.exit(1);
   }
 
-  const scenario = engines === "claude" ? "local-claude" : "local-opencode";
+  const scenario = engine === "claude" ? "local-claude" : "local-opencode";
   logHarnessScenario(applyHarnessScenario(scenario));
 
   await hydrateTcbApiKeyFromCam();
   await assertHarnessAgsRuntimeEnvSync();
 
   const { runHarnessLlmPreflight } = await import("./llm-preflight.mjs");
-  const localScenario = engines === "claude" ? "local-claude" : "local-opencode";
+  const localScenario = engine === "claude" ? "local-claude" : "local-opencode";
   console.log(`=== harness product-acceptance: LLM preflight (${localScenario}) ===`);
   let preflight;
   try {
@@ -179,75 +256,53 @@ async function runProductAcceptance(extraArgs = []) {
     console.error(err.message ?? err);
     process.exit(1);
   }
-  if (preflight.probe?.ok) {
-    console.log(
-      `✓ ${preflight.protocol} tier=${preflight.tier} ${preflight.probe.latencyMs}ms ` +
-        `model=${preflight.probe.model}`,
-    );
-  } else if (preflight.tier === "zen") {
-    console.log(`✓ tier=zen (${preflight.fallback ?? "platform unavailable"})`);
-  }
-
+  logPreflightResult(preflight);
   applyHarnessTestDefaults();
-  const localTier = preflight.tier;
-  let claudeTierForE2e = engines === "claude" ? preflight.tier : null;
-  if (engines === "all") {
+
+  if (engine === "all") {
     console.log("=== harness product-acceptance: LLM preflight (local-claude) ===");
-    let claudePreflight;
     try {
-      claudePreflight = await runHarnessLlmPreflight("local-claude", { allowTestFallback: true });
+      const claudePreflight = await runHarnessLlmPreflight("local-claude", {
+        allowTestFallback: true,
+      });
+      logPreflightResult(claudePreflight);
     } catch (err) {
       console.error(err.message ?? err);
       process.exit(1);
     }
-    claudeTierForE2e = claudePreflight.tier;
-    if (claudePreflight.probe?.ok) {
-      console.log(
-        `✓ ${claudePreflight.protocol} tier=${claudePreflight.tier} ` +
-          `${claudePreflight.probe.latencyMs}ms model=${claudePreflight.probe.model}`,
-      );
-    }
-  }
-
-  if (engines !== "claude") {
-    process.env.HARNESS_E2E_OPENCODE_TIER = localTier === "zen" ? "zen" : "platform";
-    applyHarnessLlmTier(localTier === "zen" ? "zen" : "platform");
-  }
-  if (claudeTierForE2e) {
-    process.env.HARNESS_E2E_CLAUDE_TIER = claudeTierForE2e;
   }
 
   console.log(
-    `=== harness product-acceptance (engines=${engines}, opencodeTier=${process.env.HARNESS_E2E_OPENCODE_TIER}) ===`,
+    `=== harness product-acceptance (engine=${engine}, llm=${describeHarnessLlmMode()}) ===`,
   );
-  runNode("scripts/harness/product-acceptance.mjs", ["--engines", engines], {
-    tier: engines === "claude" ? (claudeTierForE2e ?? preflight.tier) : localTier,
-    claudeTier: claudeTierForE2e,
-  });
+  runNode("scripts/harness/product-acceptance.mjs", [
+    "--engine",
+    engine,
+    HARNESS_PREFLIGHT_DONE_FLAG,
+  ]);
 }
 
-async function runLocal(extraArgs = []) {
-  const engines = parseHarnessEnginesArg(extraArgs);
+async function runLocal(engine, extraArgs = []) {
   loadEnv();
   try {
-    assertHarnessEnginesEnv(engines);
+    assertHarnessEnginesEnv(engine);
   } catch (err) {
     console.error(err.message);
     process.exit(1);
   }
 
-  const scenario = engines === "claude" ? "local-claude" : "local-opencode";
+  const scenario = engine === "claude" ? "local-claude" : "local-opencode";
   logHarnessScenario(applyHarnessScenario(scenario));
 
-  console.log("=== harness local: e2e stub（网关 + 假沙箱）===");
+  console.log(`=== harness run infra=local engine=${engine}: e2e stub（网关 + 假沙箱）===`);
   runNode("tests/harness/e2e.test.mjs");
 
   await hydrateTcbApiKeyFromCam();
   await assertHarnessAgsRuntimeEnvSync();
 
   const { runHarnessLlmPreflight } = await import("./llm-preflight.mjs");
-  const localScenario = engines === "claude" ? "local-claude" : "local-opencode";
-  console.log(`=== harness local: LLM preflight (${localScenario}) ===`);
+  const localScenario = engine === "claude" ? "local-claude" : "local-opencode";
+  console.log(`=== harness run infra=local: LLM preflight (${localScenario}) ===`);
   let preflight;
   try {
     preflight = await runHarnessLlmPreflight(localScenario, { allowTestFallback: true });
@@ -255,78 +310,104 @@ async function runLocal(extraArgs = []) {
     console.error(err.message ?? err);
     process.exit(1);
   }
-  if (preflight.probe?.ok) {
-    console.log(
-      `✓ ${preflight.protocol} tier=${preflight.tier} ${preflight.probe.latencyMs}ms ` +
-        `model=${preflight.probe.model} reply=${preflight.probe.replySnippet ?? "(empty)"}`,
-    );
-  } else if (preflight.tier === "zen") {
-    console.log(`✓ tier=zen (${preflight.fallback ?? "platform unavailable"})`);
-  }
+  logPreflightResult(preflight, { includeReply: true });
   applyHarnessTestDefaults();
-  const localTier = preflight.tier;
-  if (engines !== "claude") {
-    process.env.HARNESS_E2E_OPENCODE_TIER = localTier === "zen" ? "zen" : "platform";
-  }
 
-  let claudeTierForE2e = engines === "claude" ? preflight.tier : null;
-  if (engines === "all") {
-    console.log("=== harness local: LLM preflight (local-claude) ===");
-    let claudePreflight;
+  let claudeMode = engine === "claude" ? preflight.mode : null;
+  if (engine === "all") {
+    console.log("=== harness run infra=local: LLM preflight (local-claude) ===");
     try {
-      claudePreflight = await runHarnessLlmPreflight("local-claude", { allowTestFallback: true });
+      const claudePreflight = await runHarnessLlmPreflight("local-claude", {
+        allowTestFallback: true,
+      });
+      claudeMode = claudePreflight.mode;
+      logPreflightResult(claudePreflight);
     } catch (err) {
       console.error(err.message ?? err);
       process.exit(1);
     }
-    claudeTierForE2e = claudePreflight.tier;
-    if (claudePreflight.probe?.ok) {
-      console.log(
-        `✓ ${claudePreflight.protocol} tier=${claudePreflight.tier} ` +
-          `${claudePreflight.probe.latencyMs}ms model=${claudePreflight.probe.model}`,
-      );
-    }
   }
 
   const engineLabel =
-    engines === "claude"
-      ? preflight.tier === "anthropic-byok"
-        ? "BYOK Anthropic"
-        : "hy3-preview"
-      : engines === "all"
-        ? `opencode=${localTier === "zen" ? "zen" : "hy3"} + claude=${claudeTierForE2e === "anthropic-byok" ? "BYOK" : claudeTierForE2e}`
-        : localTier === "zen"
-          ? "zen"
-          : "hy3-preview";
-  console.log(`=== harness local: e2e full（engines=${engines}，llm=${engineLabel}）===`);
-  runNode("tests/harness/e2e.test.mjs", forwardE2eArgs(engines, extraArgs), {
-    tier: localTier,
-    claudeTier: claudeTierForE2e,
-  });
+    engine === "claude"
+      ? llmModeLabel(preflight.mode)
+      : engine === "all"
+        ? `opencode=${llmModeLabel(preflight.mode)} + claude=${llmModeLabel(claudeMode)}`
+        : llmModeLabel(preflight.mode);
+  console.log(`=== harness run infra=local: e2e full（engine=${engine}，llm=${engineLabel}）===`);
+  runNode("tests/harness/e2e.test.mjs", forwardE2eArgs(engine, extraArgs));
 
-  if (harnessEnginesIncludeOpencode(engines) || harnessEnginesIncludeClaude(engines)) {
-    console.log("=== harness local: matrix parity ===");
+  if (harnessEnginesIncludeOpencode(engine) || harnessEnginesIncludeClaude(engine)) {
+    console.log("=== harness run infra=local: matrix parity ===");
     await assertHarnessAgsRuntimeEnvSync();
-    runNode("tests/harness/matrix-parity.test.mjs", ["--engines", engines], { tier: localTier });
+    runNode("tests/harness/matrix-parity.test.mjs", ["--engine", engine]);
   }
 
-  if (truthyCos()) {
+  if (harnessCosConfiguredInFile()) {
     const { assertHarnessCosEnv } = await import(
       "../../packages/agent-runtime/dist/harness/harness-env.js"
     );
+    applyHarnessCosFromHarnessFile();
     assertHarnessCosEnv();
-    console.log("=== harness local: cos-e2e ===");
+    console.log("=== harness run infra=local: cos-e2e ===");
     runNode("scripts/harness/cos-e2e.mjs");
   } else {
-    console.log("(skip cos — HARNESS_COS_ENABLED=1 时硬门)");
+    console.log("(skip cos-e2e — .env.harness HARNESS_COS_ENABLED=1 时跑)");
   }
 }
 
 async function runCloudSingle(backend, engine, extraArgs) {
+  const cloudCosMount = parseCloudCosMount(extraArgs);
   loadEnv();
-  logHarnessScenario(applyHarnessScenario(cloudHarnessScenario(backend, engine)));
+  logHarnessScenario(
+    applyHarnessScenario(cloudHarnessScenario(backend, engine), process.env, { cloudCosMount }),
+  );
   const { runCloudHarness } = await import("./cloud.mjs");
   await runCloudHarness(extraArgs, { backend, engine });
+}
+
+async function runHarnessAxes(axes, extraArgs) {
+  const { infraTokens, engine, mode, plan } = axes;
+
+  if (mode === "parallel") {
+    await runHarnessParallel(infraTokens, engine, extraArgs);
+    return;
+  }
+
+  if (plan.length === 1) {
+    const { infra, engine: eng } = plan[0];
+    if (infra === "local") await runLocal(eng, extraArgs);
+    else await runCloudSingle(infra, eng, extraArgs);
+    return;
+  }
+
+  console.log(`=== harness run sequential (${plan.length} steps) ===\n`);
+  for (const { infra, engine: eng } of plan) {
+    console.log(`\n--- infra=${infra} engine=${eng} ---\n`);
+    if (infra === "local") await runLocal(eng, extraArgs);
+    else await runCloudSingle(infra, eng, extraArgs);
+  }
+  console.log(`\n✓ harness run sequential (${plan.length} steps) complete`);
+}
+
+function formatAxesLabel(axes) {
+  const infraLabel =
+    axes.infraTokens.length === 1 && axes.infraTokens[0] === "all"
+      ? "all→local,tcbr,scf"
+      : axes.infraTokens.join(",");
+  if (axes.plan.length > 1 && axes.mode === "sequential") {
+    return `plan=${axes.plan.map((s) => `${s.infra}/${s.engine}`).join(" → ")}`;
+  }
+  return `infra=${infraLabel} engine=${axes.engine}`;
+}
+
+function parseAxesOrExit(extraArgs, opts = {}) {
+  try {
+    return parseHarnessAxes(extraArgs, opts);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
 }
 
 async function main() {
@@ -338,8 +419,42 @@ async function main() {
     process.exit(cmd ? 0 : 1);
   }
 
-  if (cmd === "local") {
-    await runLocal(args.slice(1));
+  if (cmd === "run") {
+    const extraArgs = args.slice(1);
+    if (extraArgs.includes("-h") || extraArgs.includes("--help")) {
+      console.log(HELP);
+      process.exit(0);
+    }
+    const axes = parseAxesOrExit(extraArgs);
+    console.log(`=== harness run ${formatAxesLabel(axes)} ===\n`);
+    await runHarnessAxes(axes, extraArgs);
+    return;
+  }
+
+  if (cmd === "release") {
+    await runRelease(args.slice(1));
+    return;
+  }
+
+  if (cmd === "quickstart") {
+    runNode("scripts/harness/quickstart.mjs", args.slice(1));
+    return;
+  }
+
+  if (cmd === "docker") {
+    runNode("scripts/harness/local-docker.mjs", args.slice(1));
+    return;
+  }
+
+  if (cmd === "ma-protocol") {
+    const extra = args.slice(1);
+    const engine = parseHarnessEngineArg(extra, { defaultEngine: "opencode" });
+    if (engine === "all") {
+      console.error("--engine all is not valid for ma-protocol; use opencode or claude\n");
+      process.exit(1);
+    }
+    const scenario = engine === "claude" ? "ma-protocol-claude" : "ma-protocol";
+    runNode("scripts/harness/managed-agents-protocol.mjs", ["--scenario", scenario, ...extra]);
     return;
   }
 
@@ -350,39 +465,30 @@ async function main() {
 
   if (cmd === "db-pressure") {
     const extraArgs = args.slice(1);
-    const engines = parseHarnessEnginesArg(extraArgs);
+    const engine = parseHarnessEngineArg(extraArgs);
+    parseAxesOrExit(extraArgs, { required: false });
     loadEnv();
     try {
-      assertHarnessEnginesEnv(engines);
+      assertHarnessEnginesEnv(engine);
     } catch (err) {
       console.error(err.message);
       process.exit(1);
     }
-    const scenario = engines === "claude" ? "local-claude" : "local-opencode";
+    const scenario = engine === "claude" ? "local-claude" : "local-opencode";
     logHarnessScenario(applyHarnessScenario(scenario));
     await hydrateTcbApiKeyFromCam();
     await assertHarnessAgsRuntimeEnvSync();
     applyHarnessTestDefaults();
-    if (engines !== "claude") {
-      process.env.HARNESS_E2E_OPENCODE_TIER = "platform";
+    if (engine !== "claude") {
+      applyPlatformLlmEnv();
     }
-    const forward = ["--db-pressure-only", "--db-pressure", "--engines", engines];
+    const forward = ["--db-pressure-only", "--db-pressure", "--engine", engine];
     const ri = extraArgs.indexOf("--db-pressure-rounds");
     if (ri >= 0 && extraArgs[ri + 1]) {
       forward.push("--db-pressure-rounds", extraArgs[ri + 1]);
     }
-    console.log(`=== harness db-pressure only (engines=${engines}, FlexDB) ===`);
-    runNode("tests/harness/e2e.test.mjs", forward, { tier: "platform" });
-    return;
-  }
-
-  const cloud = parseCloudCommand(cmd);
-  if (cloud) {
-    if (cloud.parallel) {
-      await runCloudParallel(cloud.engine, args.slice(1));
-    } else {
-      await runCloudSingle(cloud.backend, cloud.engine, args.slice(1));
-    }
+    console.log(`=== harness db-pressure infra=local engine=${engine} (FlexDB) ===`);
+    runNode("tests/harness/e2e.test.mjs", forward);
     return;
   }
 

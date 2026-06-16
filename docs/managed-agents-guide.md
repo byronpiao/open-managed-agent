@@ -66,14 +66,14 @@ magent login
 tcb env use your-env-id
 # CI / 无交互：见 harness-credentials.md#ci-与无交互部署
 
-cp docs/examples/agent.sandbox.opencode.min.yaml ./agent.sandbox.yaml
+cp agent.harness.yaml.example agent.harness.yaml
 cd packages/agent-runtime && npm run build && cd ../..
 
 magent agent:create \
   --name my-ma-agent \
   --runtime harness \
   --engine opencode \
-  --file ./agent.sandbox.yaml \
+  --file ./agent.harness.yaml \
   --code ./packages/agent-runtime
 
 export CLOUDBASE_AGENT_ID=agent-xxxxxxxx

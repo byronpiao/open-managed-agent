@@ -3,17 +3,23 @@ node_modules/
 dist/
 *.js.map
 .env
-.env.*
+.env.harness
 !.env.example
 !.env.harness.example
 !.env.*.example
+scripts/harness/scenarios/.env.*
+!scripts/harness/scenarios/.env.*.example
+agent.yaml
+agent.harness.yaml
+!agent.yaml.example
+!agent.harness.yaml.example
 .plan/
-# Prevent accidentally committing agent.yaml from agent-runtime
+# Prevent accidentally committing agent.yaml from agent-runtime package dir
 # (it overrides AGENT_CONFIG_B64 and breaks cloud deploys)
 packages/agent-runtime/agent.yaml
 packages/agent-runtime/agent.yml
 packages/agent-runtime/agent.harness.yaml
-# Local copy from docs/examples (see harness-tutorial.md)
+# Legacy local deploy copy — use agent.harness.yaml
 agent.sandbox.yaml
 
 # CocoIndex Code (ccc) — local semantic index

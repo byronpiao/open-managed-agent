@@ -1,6 +1,7 @@
 # 沙箱内 Agent — 架构参考
 
-> 环境变量：[harness-env.md](./harness-env.md) · 上手：[harness-tutorial.md](./harness-tutorial.md) · 会话外置：[harness-agent-session-storage.md](./harness-agent-session-storage.md)
+> 环境变量：[harness-env.md](./harness-env.md) · 上手：[harness-tutorial.md](./harness-tutorial.md) · 会话外置：[harness-agent-session-storage.md](./harness-agent-session-storage.md)  
+> 验收编排：[CONTRIBUTING.md](../CONTRIBUTING.md) · [Harness一条龙.md](../../Harness一条龙.md)
 
 `runtime=harness`：思考循环在 **AGS 沙箱内 engine**（opencode / claude / codebuddy）跑 ACP；OMA Runtime 负责会话索引、sync、client tool 桥、MCP relay。
 
@@ -49,29 +50,28 @@ node scripts/harness/load-env.mjs --check
 
 | 场景 | 命令 |
 |------|------|
-| 合入 / 日常 | `npm run test:full`（= `npm test` + `harness -- local`，**CloudBase AI**） |
-| 云上（tcbr） | `npm run harness -- cloud-tcbr`（**opencode zen**） |
-| 云上（SCF） | `npm run harness -- cloud-scf`（**自定义 LLM**，③ 段） |
-| **完整一条龙** | 上三行全跑 → 平台 + zen + BYOK |
+| 合入 / 日常 | `npm run test:merge` |
+| 云上 opencode | `npm run harness -- run --infra tcbr,scf --engine opencode` |
+| 发版编排 | `npm run harness -- release --profile cloud` |
+
+详见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 
 ```bash
 # 日常
-npm run test:full
-npm run harness -- cloud-tcbr
+npm run test:merge
+npm run harness -- run --infra tcbr,scf --engine opencode
 
-# 完整（发版 / 大改 runtime）
-npm run test:full
-npm run harness -- cloud-tcbr
-npm run harness -- cloud-scf
+# 发版前
+npm run harness -- release --profile delivery
 ```
 
 | 命令 | 部署形态 | 范围 |
 |------|----------|------|
-| `harness -- local` | 本机进程 + 真 AGS | stub / full / matrix / COS |
-| `harness -- cloud-tcbr` | **tcbr** 云托管 | deploy + gateway ACP smoke |
-| `harness -- cloud-scf` | **SCF** 云函数 | 同上 smoke |
+| `harness -- run --infra local` | 本机进程 + 真 AGS |
+| `harness -- run --infra tcbr` | tcbr 云托管 |
+| `harness -- run --infra scf` | SCF 云函数 |
 
-Pin：`.env.harness` 中 `HARNESS_CLOUD_AGENT_ID`（tcbr）、`HARNESS_CLOUD_SCF_AGENT_ID`（scf）。
+Pin：`.env.harness` 中 `HARNESS_CLOUD_TCBR_OPENCODE_AGENT_ID`、`HARNESS_CLOUD_SCF_OPENCODE_AGENT_ID` 等（见 `harness-env.md`）。
 
 ![Harness acceptance scenarios](./diagrams/harness-test-scenarios.svg)
 
@@ -80,9 +80,9 @@ Pin：`.env.harness` 中 `HARNESS_CLOUD_AGENT_ID`（tcbr）、`HARNESS_CLOUD_SCF
 ## 2. 验收脚本
 
 ```bash
-npm run test:full
-npm run harness -- cloud-tcbr [--agent-id …] [--verify-only]
-npm run harness -- cloud-scf [--agent-id …] [--verify-only]
+npm run test:merge
+npm run harness -- run --infra tcbr --engine opencode [--agent-id …] [--verify-only]
+npm run harness -- run --infra scf --engine opencode [--agent-id …] [--verify-only]
 
 node scripts/harness/load-env.mjs --check [--probe-llm]
 node scripts/harness/ags-teardown.mjs
@@ -114,7 +114,11 @@ tool update 后约 **120s** 再 start。
 
 **启用 COS**（`.env.harness` ⑥ 段）：AGS 挂载 COS 工作区，`session/delete` 时 `workspace/snapshot` → **跨沙箱 / re-acquire 保留文件现场**（与对话 replay 互补）。
 
-`.env.harness` 中 `HARNESS_COS_ENABLED=1` 且填齐 `HARNESS_COS_*` → `harness -- local` 执行 cos-e2e / `cos-probe` 探针。
+- **local 矩阵 full e2e 不挂 COS**；`.env.harness` 里 `HARNESS_COS_ENABLED=1` 只触发 **`run --infra local` 末尾 cos-e2e**
+- **cloud**：`run --infra tcbr|scf … --with-cos`（tool 名仍 `oma-harness-{env}`）
+- `loadEnv()` 默认不注入 COS 键；见 [scenarios/README.md](../scripts/harness/scenarios/README.md#cos-三态)
+
+`.env.harness` 配齐 ⑥ 段后 → `cos-probe.mjs` 或 `run --infra local`（含 cos-e2e）。
 
 ---
 
@@ -215,7 +219,7 @@ tcb fn log <agent-id> -e "$CLOUDBASE_ENV_ID" | rg 'traceId|requestId|acpSessionI
 sudo tail -n 200 /var/log/trw/*.ndjson | rg 'trace_id|request_id|harness_acp_session_id'
 
 # 本地
-LOG_LEVEL=debug npm run harness -- local
+LOG_LEVEL=debug npm run harness -- run --infra local --engine opencode
 curl -s localhost:9000/healthz | jq .sandbox   # cachedHandles, prewarmInFlight
 ```
 
@@ -229,8 +233,11 @@ curl -s localhost:9000/healthz | jq .sandbox   # cachedHandles, prewarmInFlight
 | custom LLM 401/429 | 检查 key 与区划 |
 | SCF `cos.ensure_subpath` InvalidAccessKeyId | 角色 `TENCENTCLOUD_*` + SessionToken；函数 env 勿 forward `TCB_SECRET_*` |
 | cloud-scf HTTP 435 | SCF 函数 Deleting；等 90s 或 pin `HARNESS_CLOUD_SCF_AGENT_ID` |
-| tool/常量镜像 tag 不一致 | `load-env.mjs --check` → `sync-tool.mjs` |
+| tool/常量镜像 tag 不一致 | `load-env.mjs --check` → `sync-tool.mjs` → 等 ~120s |
+| `StorageMount` / `MountOption` | local 矩阵不挂 COS；cos-e2e 需 tool 带 mount（无则删 tool 重建） |
 | shell `export HARNESS_TOOL_ID` | 只写 `.env.harness`；`load-env` 清泄漏 |
+| platform preflight 429 | local opencode → zen fallback（仅测试） |
+| product-acceptance FlexDB 配额 | `OAK_USE_MEMORY_STORE=1` 或错峰；见 [harness-ops-notes.md](./harness-ops-notes.md) |
 
 OpenCode 箱内路径：`/home/user/.opencode` · `OPENCODE_CONFIG_CONTENT` · `~/.local/share/opencode/auth.json`
 
@@ -242,6 +249,8 @@ OpenCode 箱内路径：`/home/user/.opencode` · `OPENCODE_CONFIG_CONTENT` · `
 |------|------|
 | [harness-tutorial.md](./harness-tutorial.md) | 对客上手 |
 | [harness-env.md](./harness-env.md) | 环境变量 |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | 验收两轴 · release |
+| [Harness一条龙.md](../../Harness一条龙.md) | Agent 可执行验收 + 排障 |
 | [harness-ops-notes.md](./harness-ops-notes.md) | 运维备忘（丢话、副本、db-pressure） |
 | [harness-agent-session-storage.md](./harness-agent-session-storage.md) | 会话外置 · FlexDB 压测 |
 | [product-guide.md](./product-guide.md) | 托管 Agent |

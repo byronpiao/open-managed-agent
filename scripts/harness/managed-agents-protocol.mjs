@@ -2,7 +2,7 @@
 /**
  * Managed Agents HTTP protocol — cloud acceptance on deployed harness agent.
  *
- *   npm run ma-protocol
+ *   npm run harness -- ma-protocol
  *   node scripts/harness/managed-agents-protocol.mjs --scenario ma-protocol-claude
  *   node scripts/harness/managed-agents-protocol.mjs --base-url https://...
  *

@@ -158,7 +158,7 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 |------|------|------|
 | 默认 | 省略 `model` 或 `hy3-preview` | [CloudBase AI](https://docs.cloudbase.net/ai/model/model-access)，环境 **API Key**；体验额度用完后可在控制台 [购买 Token](https://docs.cloudbase.net/ai/model/openai-sdk-access) |
 | 可选 | `model: zen` | 箱内 OpenCode 内置，**不扣** CloudBase AI 额度（仅 opencode） |
-| 可选 | 部署前 `LLM_*` 或 yaml ModelSpec | 自有 NVIDIA、Moonshot 等 OpenAI/Anthropic 兼容厂商 Key（与 CloudBase Token 二选一） |
+| 可选 | yaml 中 `model` 对象 | 自有 OpenAI / Anthropic 兼容 endpoint + Key |
 
 完整步骤：[用户故事](./docs/harness-user-story.md) → [使用指南](./docs/harness-tutorial.md) · [OpenCode](./docs/harness-opencode.md) · [Claude Code](./docs/harness-claude-code.md)
 
@@ -170,16 +170,16 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 magent login
 magent env use <your-env-id>
 
-cp docs/examples/agent.sandbox.opencode.min.yaml ./agent.sandbox.yaml
+cp agent.harness.yaml.example agent.harness.yaml
 cd packages/agent-runtime && npm run build && cd ../..
 
 magent agent:create --name my-sandbox --runtime harness --engine opencode \
-  --file ./agent.sandbox.yaml --code ./packages/agent-runtime
+  --file ./agent.harness.yaml --code ./packages/agent-runtime
 ```
 
 网关与 CloudBase AI 鉴权由 Runtime **用 CAM 自动换取**，沙箱路径**不必**手填控制台 API Key。见 [凭证说明](./docs/harness-credentials.md)。
 
-`engine: claude` 时改用 [agent.sandbox.claude.min.yaml](./docs/examples/agent.sandbox.claude.min.yaml)，见 [harness-claude-code.md](./docs/harness-claude-code.md)。
+`engine: claude` 时在 `agent.harness.yaml` 设 `engine: claude`，见 [harness-claude-code.md](./docs/harness-claude-code.md)。
 
 ### 首次使用：沙箱工具与 RoleArn
 
@@ -194,7 +194,7 @@ magent agent:create --name my-sandbox --runtime harness --engine opencode \
 
 ### 自定义数据面镜像（可选）
 
-默认不必改镜像。要预装工具或 starter 工程：从 [镜像包](https://github.com/RealAlexandreAI/tcb-remote-workspace/pkgs/container/tcb-remote-workspace) 拉 `ghcr.io/realalexandreai/tcb-remote-workspace:<tag>` 扩展后，**自行推到与沙箱同地域的腾讯云 TCR**，再 `export HARNESS_SANDBOX_IMAGE=ccr.ccs.tencentyun.com/...`。步骤见 [使用指南 · 自定义沙箱镜像](./docs/harness-tutorial.md#自定义沙箱镜像可选)。
+默认不必改镜像。要预装依赖或自有基础环境：构建镜像并推到与沙箱**同地域**的 [腾讯云 TCR](https://console.cloud.tencent.com/tcr)，在 `agent.harness.yaml` 写 `sandbox.image`。步骤见 [使用指南 · 自定义沙箱镜像](./docs/harness-tutorial.md#自定义沙箱镜像可选)。
 
 ### 更多能力
 
@@ -664,6 +664,23 @@ magent agent:create --name my-agent --env <env-id>
 |----------|------|------|
 | `hunyuan-exp` | `hy3-preview`, `hunyuan-turbos-latest`, `hunyuan-2.0-instruct-20251111` | ✅ `hy3-preview` |
 | `deepseek` | `deepseek-v4-flash`, `deepseek-r1-0528` | ✅ `deepseek-v4-flash` |
+
+---
+
+## 研发贡献（Harness）
+
+| 文档 | 用途 |
+|------|------|
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | 验收两轴 · npm 脚本 · release |
+| [Harness一条龙.md](../Harness一条龙.md) | Agent 按步骤跑 + 排障 |
+| [scenarios/README.md](./scripts/harness/scenarios/README.md) | 6 格 LLM / COS |
+
+```bash
+npm test
+npm run test:merge          # 合入门禁（platform preflight）
+npm run dev:harness         # local · opencode · model=zen · 无云 COS
+npm run harness -- run --infra local --engine opencode
+```
 
 ---
 

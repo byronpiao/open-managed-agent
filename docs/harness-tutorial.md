@@ -21,6 +21,8 @@
 | 4 按引擎 | [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md) | 换引擎或换模型 |
 | 5 HTTP 集成 | [Managed Agents 使用指南](./managed-agents-guide.md) | 应用后端走 REST + SSE |
 
+**研发验收**（非对客）：[CONTRIBUTING.md](../CONTRIBUTING.md) · monorepo [Harness一条龙.md](../../Harness一条龙.md)
+
 ---
 
 ## 开始之前
@@ -68,22 +70,10 @@ node scripts/check-harness-ready.mjs   # 再跑，应通过
 ### 第 2 步：准备配置文件
 
 ```bash
-cp docs/examples/agent.sandbox.opencode.min.yaml ./agent.sandbox.yaml
+cp agent.harness.yaml.example agent.harness.yaml
 ```
 
-`agent.sandbox.yaml` 为本地工作副本（已在 `.gitignore`），勿提交到 Git。
-
-最小内容示例：
-
-```yaml
-name: My Sandbox Agent
-runtime: harness
-engine: opencode
-system: |
-  You are a helpful coding assistant in a remote sandbox workspace.
-```
-
-要用 **Claude Code**：改用 [agent.sandbox.claude.min.yaml](./examples/agent.sandbox.claude.min.yaml)，并设 `engine: claude`（详见 [harness-claude-code.md](./harness-claude-code.md)）。
+本地工作副本 `agent.harness.yaml` 已在 `.gitignore`，勿提交密钥。字段说明见 **`agent.harness.yaml.example`**。
 
 ### 第 3 步：构建并部署
 
@@ -95,7 +85,7 @@ magent agent:create \
   --name "my-sandbox" \
   --runtime harness \
   --engine opencode \
-  --file ./agent.sandbox.yaml \
+  --file ./agent.harness.yaml \
   --code ./packages/agent-runtime
 ```
 
@@ -163,7 +153,7 @@ for await (const event of client.sessions.prompt(session.id, "列出当前目录
 |------|------|--------|------|
 | **0** | 第一次对话 | 快速开始 第 1–4 步 | 上文 |
 | **1** | 多轮编码 | `magent repl -a <id>` | 第 4 步续 |
-| **2** | 换模型 | 改 yaml 或 `LLM_*` → `agent:update` | [选择模型](#选择模型) · 引擎专篇 |
+| **2** | 换模型 | 改 `agent.harness.yaml` 的 `model` → `agent:update` | [选择模型](#选择模型) · 引擎专篇 |
 | **3** | 换引擎 | `engine: claude` 或 opencode + `zen` | [OpenCode](./harness-opencode.md) · [Claude](./harness-claude-code.md) |
 | **4** | 工具与审批 | `agent_toolset`、bash `always_ask` | [能力进阶 · 沙箱工具](#沙箱工具bash-等) |
 | **5** | 外部能力 | MCP、`skills` 文件 | [能力进阶 · MCP / Skills](#外部-mcp) |
@@ -177,44 +167,47 @@ for await (const event of client.sessions.prompt(session.id, "列出当前目录
 
 ## 选择模型
 
-部署方式不变，只改 `agent.yaml` 或部署前的环境变量。
+在 `agent.harness.yaml` 配置 `model`。`engine` 决定 `apiBaseUrl` 须为 OpenAI 兼容还是 Anthropic 兼容，二者不可混用。
 
-| 你想… | 做法 | 适用引擎 |
-|--------|------|----------|
-| 用 CloudBase 模型（**推荐起步**） | 省略 `model` 或写 `hy3-preview` | opencode、claude |
-| 不消耗 CloudBase AI 额度 | `model: zen` | **仅 opencode** |
-| 使用自有 LLM 厂商 | 部署前配置 `LLM_*` 或 yaml 里的 ModelSpec | 见引擎专篇 |
+| 你想… | yaml 写法 | 适用 engine |
+|--------|-----------|-------------|
+| CloudBase 平台 AI（**推荐起步**） | 省略 `model` 或 `model: hy3-preview` | opencode、claude |
+| 不扣 CloudBase AI 额度 | `model: zen` | **仅 opencode** |
+| 自有 LLM 厂商（BYOK） | `model:` 对象含 `id` / `apiKey` / `apiBaseUrl` | opencode → OpenAI 兼容 URL；claude → Anthropic 兼容 URL |
 
 修改后：
 
 ```bash
-magent agent:update -f ./agent.sandbox.yaml -a "$CLOUDBASE_AGENT_ID"
+magent agent:update -f ./agent.harness.yaml -a "$CLOUDBASE_AGENT_ID"
 ```
 
-**OpenCode + 第三方 OpenAI 兼容：**
+**OpenCode + 第三方 OpenAI 兼容（yaml 示例）：**
 
-```bash
-export LLM_API_KEY=your-api-key
-export LLM_MODEL=moonshotai/kimi-k2.6
-export OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
-magent agent:create ...   # 已部署则 agent:update 或控制台改环境变量
+```yaml
+engine: opencode
+model:
+  id: <模型 ID>
+  apiKey: <API Key>
+  apiBaseUrl: https://<你的域名>/v1
 ```
 
 **Claude Code + 第三方 Anthropic 兼容：**
 
-```bash
-export LLM_API_KEY=your-api-key
-export LLM_MODEL=your-model-id
-export ANTHROPIC_BASE_URL=https://your-endpoint/anthropic
+```yaml
+engine: claude
+model:
+  id: <模型 ID>
+  apiKey: <API Key>
+  apiBaseUrl: https://<你的域名>/anthropic
 ```
 
-细节：[harness-opencode.md](./harness-opencode.md) · [harness-claude-code.md](./harness-claude-code.md)
+引擎专篇：[OpenCode 模型](./harness-opencode.md#模型) · [Claude Code 模型](./harness-claude-code.md#模型)
 
 ---
 
 ## 能力进阶
 
-在能正常对话后，按需叠加（`magent agent:update -f ./agent.sandbox.yaml`）。建议按上文 [渐进路线](#学完快速开始之后渐进路线) 阶段 4–5 逐项尝试。
+在能正常对话后，按需叠加（`magent agent:update -f ./agent.harness.yaml`）。建议按上文 [渐进路线](#学完快速开始之后渐进路线) 阶段 4–5 逐项尝试。
 
 | 能力 | 配置要点 | 试一把 |
 |------|----------|--------|
@@ -284,7 +277,7 @@ skills:
     source: ./skills/code-review.md
 ```
 
-`agent:update -f ./agent.sandbox.yaml` 后，在 REPL 里让 Agent「按 code-review skill 审查一段代码」验证是否加载。
+`agent:update -f ./agent.harness.yaml` 后，在 REPL 里让 Agent「按 code-review skill 审查一段代码」验证是否加载。
 
 ### 工具审批
 
@@ -302,25 +295,17 @@ skills:
 
 若需预装依赖或自有基础镜像：
 
-1. 参考 [tcb-remote-workspace](https://github.com/RealAlexandreAI/tcb-remote-workspace) 构建扩展镜像。  
+1. 在自定义 Dockerfile 中安装所需依赖，构建镜像。  
 2. 将镜像推送到与沙箱**同地域**的 [腾讯云容器镜像服务 TCR](https://console.cloud.tencent.com/tcr)。  
-3. 部署前指定镜像（二选一）：
-
-```bash
-export HARNESS_SANDBOX_IMAGE=ccr.ccs.tencentyun.com/<命名空间>/<镜像>:<tag>
-magent agent:create --runtime harness ...
-```
-
-或在 `agent.yaml` 中：
+3. 在 `agent.harness.yaml` 指定镜像：
 
 ```yaml
 sandbox:
   image: ccr.ccs.tencentyun.com/<命名空间>/<镜像>:<tag>
+  imageRegistryType: enterprise   # 企业版 TCR；个人版省略（默认 personal）
 ```
 
-企业版 TCR 另设 `export HARNESS_SANDBOX_IMAGE_REGISTRY_TYPE=enterprise`。
-
-更换镜像 tag 后执行 `magent agent:update -f ./agent.sandbox.yaml -a <agentId>`，下次起沙箱时生效。
+更换镜像 tag 后执行 `magent agent:update -f ./agent.harness.yaml -a <agentId>`，下次起沙箱时生效。
 
 **首次**在本环境创建沙箱工具时，角色须能拉取该 TCR 仓库（通常勾选 `QcloudTCRReadOnlyAccess`），见 [凭证说明](./harness-credentials.md)。
 
@@ -332,7 +317,7 @@ sandbox:
 
 **启用 COS：** 将工作目录挂载到对象存储；会话结束时可把现场保存到桶里，下次起沙箱可恢复（适合长周期编码任务）。
 
-在 `magent agent:create` **之前**配置：
+在 `magent agent:create` **之前**配置（对客交付路径）：
 
 ```bash
 export HARNESS_COS_ENABLED=1
@@ -346,14 +331,18 @@ export HARNESS_COS_MOUNT_DIR=/mnt/workspace
 
 同一 `HARNESS_TOOL_ROLE_ARN` 还须允许向该桶**写入**（快照需要上传对象）。预设可加 `QcloudCOSFullAccess`，或配置桶级策略 — 见 [凭证说明 · COS](./harness-credentials.md#cos-工作区与快照角色还要什么权限)。
 
+> 仓库内 **npm 验收** 的 COS 行为（矩阵不挂 / cos-e2e / cloud `--with-cos`）见 [CONTRIBUTING.md](../CONTRIBUTING.md) 与 [scenarios/README.md](../scripts/harness/scenarios/README.md)，与上文对客 `export` 路径互补。
+
+**本地 ACP 调试**（`npm run dev:harness`）：可在 `agent.harness.yaml` 设 `sandbox.auth: none`；见 `agent.harness.yaml.example`。
+
 ---
 
 ## 导出与更新配置
 
 ```bash
-magent agent:export -a "$CLOUDBASE_AGENT_ID" -o ./agent.sandbox.yaml
+magent agent:export -a "$CLOUDBASE_AGENT_ID" -o ./agent.harness.yaml
 # 编辑后
-magent agent:update -f ./agent.sandbox.yaml -a "$CLOUDBASE_AGENT_ID"
+magent agent:update -f ./agent.harness.yaml -a "$CLOUDBASE_AGENT_ID"
 ```
 
 仅改 `agent.yaml` 约数十秒生效；**替换 Runtime 代码**需重新部署代码包（见 [README 部署](../README.md)）。

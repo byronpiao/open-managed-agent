@@ -9,17 +9,18 @@
 
 ## 两个 env 文件（研发）
 
-| 文件 | 用途 |
-|------|------|
-| **`.env.harness`** | `npm run harness` 验收矩阵 |
-| **`.env`** | 托管 Agent / SDK 集成测试 |
+| 文件 | 模板 | 用途 |
+|------|------|------|
+| **`agent.harness.yaml`** | `agent.harness.yaml.example` | magent 用户主配置；部署 → AGENT_CONFIG_B64 |
+| **`.env.harness`** | `.env.harness.example` | OMA 研发 / `npm run harness` / `npm run dev:harness` |
 
 ```bash
+cp agent.harness.yaml.example agent.harness.yaml
 cp .env.harness.example .env.harness
 node scripts/harness/load-env.mjs --check
 ```
 
-验收场景矩阵：[scripts/harness/scenarios/README.md](../scripts/harness/scenarios/README.md) · 编排：[scripts/harness/README.md](../scripts/harness/README.md)
+验收场景矩阵：[scripts/harness/scenarios/README.md](../scripts/harness/scenarios/README.md) · 编排：[CONTRIBUTING.md](../CONTRIBUTING.md) · [Harness一条龙.md](../../Harness一条龙.md)
 
 ---
 
@@ -43,7 +44,7 @@ CI / 无交互部署的手填变量见 [凭证说明 · CI 与流水线](./harne
 <details>
 <summary>研发：镜像 tag 三处对齐</summary>
 
-`HARNESS_PUBLIC_MAGENT_IMAGE`（源码）= `.env.harness` `HARNESS_SANDBOX_IMAGE` = 沙箱工具镜像字段。`build-push-magent-public.sh` + `sync-tool.mjs`；`load-env.mjs --check` 校验。
+`HARNESS_PUBLIC_MAGENT_IMAGE`（源码内置默认）= AGS 沙箱工具镜像字段（`sync-tool.mjs` 对齐）。自定义镜像写在 agent yaml 的 `sandbox.image`。`build-push-magent-public.sh` 更新内置 tag；`load-env.mjs --check` 校验。
 
 </details>
 
@@ -54,11 +55,15 @@ CI / 无交互部署的手填变量见 [凭证说明 · CI 与流水线](./harne
 | 段 | 内容 |
 |----|------|
 | ② | `CLOUDBASE_AGENT_ID` |
-| ③ | 场景 LLM：`scenarios/.env.<scenario>` |
+| ③ | 场景 LLM：`scenarios/.env.<scenario>`（**仅研发验收**，对客请写 yaml `model`） |
 | ④ | 镜像 / `HARNESS_TOOL_ROLE_ARN` |
-| ⑥ | `HARNESS_COS_*`（local 验收） |
+| ⑥ | `HARNESS_COS_*`（研发验收；见下） |
 
-**研发 pin**：`HARNESS_CLOUD_*_AGENT_ID`、`HARNESS_MA_PROTOCOL_AGENT_ID`、`HARNESS_TOOL_COS_NAME_SUFFIX` 等 — 见 `scenarios/README.md`。
+**⑥ COS（研发验收）**：可在 `.env.harness` 里写 `HARNESS_COS_ENABLED=1` 与 bucket 变量，但 `loadEnv()` **默认不把 COS 键注入** `process.env`。仅 **cos-e2e**（`run --infra local` 末尾）或 **cloud `--with-cos`** 会 `applyHarnessCosFromHarnessFile()`。local 矩阵 full e2e **不挂** COS。
+
+**沙箱鉴权（研发）**：本地 harness 在 `agent.harness.yaml` 设 `sandbox.auth: none`；不用 `HARNESS_SANDBOX_AUTH_MODE` env。见 `agent.harness.yaml.example`。
+
+**研发 pin**：`HARNESS_CLOUD_*_AGENT_ID`、`HARNESS_MA_PROTOCOL_AGENT_ID` 等 — 见 `scenarios/README.md`。
 
 对客 COS 说明：[使用指南 · 工作区持久化](./harness-tutorial.md#工作区持久化-cos)。
 
@@ -67,5 +72,5 @@ CI / 无交互部署的手填变量见 [凭证说明 · CI 与流水线](./harne
 ## 相关（研发）
 
 - [harness-architecture.md](./harness-architecture.md)
-- [Harness一条龙.md](../../Harness一条龙.md)
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — 验收选型、release 编排、工具箱
 - [harness-ops-notes.md](./harness-ops-notes.md)

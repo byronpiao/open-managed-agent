@@ -37,26 +37,10 @@ if [[ ! -f "$TRW_VENDOR" ]]; then
 fi
 pnpm build:prod
 unset PORT HOST
-pnpm test:full
+npm run test:merge
 PRESET="$PRESET" ./scripts/build.sh --preset "$PRESET" --platform linux/amd64 --load
 docker tag "tcb-sandbox-ags:app-${PRESET}" "$FULL_IMAGE"
 docker push "$FULL_IMAGE"
-
-HARNESS_ENV="$OMA_ROOT/.env.harness"
-if [[ -f "$HARNESS_ENV" ]]; then
-  if grep -q '^HARNESS_SANDBOX_IMAGE=' "$HARNESS_ENV"; then
-    sed -i '' "s|^HARNESS_SANDBOX_IMAGE=.*|HARNESS_SANDBOX_IMAGE=$FULL_IMAGE|" "$HARNESS_ENV"
-  else
-    printf '\nHARNESS_SANDBOX_IMAGE=%s\n' "$FULL_IMAGE" >> "$HARNESS_ENV"
-  fi
-  echo "Updated HARNESS_SANDBOX_IMAGE in $HARNESS_ENV"
-else
-  cat > "$HARNESS_ENV" <<EOF
-# Generated $(date +%Y-%m-%d) — magent preset public CCR (gitignored)
-HARNESS_SANDBOX_IMAGE=$FULL_IMAGE
-EOF
-  echo "Wrote $HARNESS_ENV"
-fi
 
 if [[ -f "$HARNESS_ENV_TS" ]]; then
   node -e "
@@ -84,6 +68,5 @@ echo ""
 echo "Pushed: $FULL_IMAGE"
 echo "Next (before cloud harness):"
 echo "  sleep 120   # AGS tool image pull"
-echo "  npm run test:full"
-echo "  npm run harness -- cloud-tcbr"
-echo "  npm run harness -- cloud-scf"
+echo "  npm run test:merge"
+echo "  npm run harness -- run --infra tcbr,scf --engine opencode"

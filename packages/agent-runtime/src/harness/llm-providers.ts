@@ -100,7 +100,6 @@ function resolvePlatformModelId(config: AgentConfig): string {
 
 /** CloudBase AI gateway (OpenAI + Anthropic compatible, same base URL). */
 export function resolveCloudBasePlatformLlm(config: AgentConfig): CompatLlmProvider | null {
-  if (process.env.HARNESS_FORCE_ZEN === "1") return null;
   if (isHarnessZenModel(config)) return null;
   if (hasCustomModelSpec(config) || hasExplicitCustomLlmEnv()) return null;
 
@@ -133,7 +132,6 @@ function resolveCustomAnthropicFromEnv(config: AgentConfig): CompatLlmProvider |
 
 /** OpenAI Chat Completions → opencode + codebuddy. */
 export function resolveOpenAiCompatProvider(config: AgentConfig): CompatLlmProvider | null {
-  if (process.env.HARNESS_FORCE_ZEN === "1") return null;
   if (isHarnessZenModel(config)) return null;
 
   const fromSpec = resolveCustomModelSpec(config);
@@ -160,8 +158,6 @@ export function resolveAnthropicApiKeyFromEnv(): string | undefined {
 
 /** Anthropic Messages → claude ACP. */
 export function resolveAnthropicCompatProvider(config: AgentConfig): CompatLlmProvider | null {
-  if (process.env.HARNESS_FORCE_ZEN === "1") return null;
-
   const fromSpec = resolveCustomModelSpec(config);
   if (fromSpec?.apiKey && fromSpec.baseUrl && fromSpec.model) return fromSpec;
 
@@ -178,7 +174,7 @@ export function resolveAnthropicCompatProvider(config: AgentConfig): CompatLlmPr
  * BASE_URL optional: omit for TRW China Copilot (`internal`).
  */
 export function resolveCodebuddyProvider(config: AgentConfig): CompatLlmProvider | null {
-  if (process.env.HARNESS_FORCE_ZEN === "1") return null;
+  if (isHarnessZenModel(config)) return null;
   const apiKey = process.env.LLM_API_KEY?.trim();
   const baseUrl = process.env.OPENAI_BASE_URL?.trim();
   const model = process.env.LLM_MODEL?.trim() ?? modelId(config);

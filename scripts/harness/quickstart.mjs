@@ -28,8 +28,8 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
 const magent = resolve(repoRoot, "magent.mjs");
-const exampleYaml = resolve(repoRoot, "docs/examples/agent.sandbox.opencode.min.yaml");
-const localYaml = resolve(repoRoot, "agent.sandbox.yaml");
+const exampleYaml = resolve(repoRoot, "agent.harness.yaml.example");
+const localYaml = resolve(repoRoot, "agent.harness.yaml");
 
 function sh(cmd, env = process.env) {
   console.log(`\n$ ${cmd}\n`);
@@ -114,7 +114,7 @@ async function main() {
     throw new Error(`Missing ${exampleYaml}`);
   }
   copyFileSync(exampleYaml, localYaml);
-  console.log(`Wrote ${localYaml} (gitignored — from docs/examples)`);
+  console.log(`Wrote ${localYaml} (gitignored — from agent.harness.yaml.example)`);
 
   sh("npm run build --workspace=packages/agent-runtime");
 

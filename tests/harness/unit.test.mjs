@@ -8,8 +8,10 @@ import {
   resolveRuntime,
   engineToDataPlaneSlug,
   harnessToolNameForEnv,
+  resolveHarnessToolName,
   buildHarnessInstanceEnv,
   resolveSandboxConfig,
+  resolveSandboxImageRegistryType,
   assertSandboxAcquireAllowed,
   buildAgsSandboxResources,
   normalizeAgentConfig,
@@ -34,6 +36,7 @@ import {
   normalizeAgentRuntime,
   applyHarnessRuntimeEnv,
   HARNESS_PUBLIC_MAGENT_IMAGE,
+  resolveHarnessSandboxImage,
   deliverClientToolResult,
   invokeClientToolFromSandbox,
   registerActivePrompt,
@@ -121,6 +124,7 @@ test("resolveSandboxConfig applies serverless defaults", () => {
     resolveSandboxConfig({ sandbox: undefined }, "opencode"),
     {
       infra: "serverless",
+      auth: "token",
       resources: { ...DEFAULT_SANDBOX_RESOURCES },
     },
   );
@@ -141,10 +145,38 @@ test("resolveSandboxConfig merges partial resources and memory shorthand", () =>
     ),
     {
       infra: "serverless",
+      auth: "token",
       resources: { cpu: "2", memory: "4Gi" },
       timeout: "45m",
       image: "ccr.example/trw:magent",
     },
+  );
+});
+
+test("resolveSandboxConfig parses imageRegistryType", () => {
+  assert.equal(
+    resolveSandboxConfig({ sandbox: { imageRegistryType: "enterprise" } }).imageRegistryType,
+    "enterprise",
+  );
+  assert.equal(resolveSandboxImageRegistryType({ infra: "serverless", auth: "token", resources: { cpu: "2", memory: "2Gi" } }), "personal");
+});
+
+test("resolveSandboxConfig parses sandbox.auth", async () => {
+  const { resolveSandboxConfig, resolveSandboxAgsAuthMode } = await import(
+    "../../packages/agent-runtime/dist/harness/sandbox/sandbox-config.js"
+  );
+  const tokenCfg = resolveSandboxConfig({ sandbox: {} });
+  assert.equal(tokenCfg.auth, "token");
+  assert.equal(resolveSandboxAgsAuthMode(tokenCfg), "TOKEN");
+  const noneCfg = resolveSandboxConfig({ sandbox: { auth: "none" } });
+  assert.equal(noneCfg.auth, "none");
+  assert.equal(resolveSandboxAgsAuthMode(noneCfg), "NONE");
+});
+
+test("resolveSandboxConfig rejects invalid imageRegistryType", () => {
+  assert.throws(
+    () => resolveSandboxConfig({ sandbox: { imageRegistryType: "foo" } }),
+    SandboxConfigError,
   );
 });
 
@@ -266,25 +298,87 @@ test("normalizeAgentConfig skips sandbox when managed and no yaml block", () => 
   assert.equal(cfg.sandbox, undefined);
 });
 
-test("harnessToolNameForEnv uses oma-harness-{env} without cos suffix by default", () => {
-  const prev = process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
-  delete process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+test("harnessToolNameForEnv is oma-harness-{envSlug}", () => {
   assert.equal(
     harnessToolNameForEnv("test-6g2rfs50c69b7fb8"),
     "oma-harness-test-6g2rfs50c69b7fb8",
   );
-  if (prev) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prev;
+  assert.equal(
+    resolveHarnessToolName("test-6g2rfs50c69b7fb8", true),
+    "oma-harness-test-6g2rfs50c69b7fb8",
+  );
 });
 
 test("cloudHarnessScenario names engine-suffixed cloud paths", async () => {
-  const { cloudHarnessScenario, cloudHarnessAgentPinVar, normalizeHarnessScenario } =
+  const { cloudHarnessScenario, cloudHarnessAgentPinVar, scenarioFromAxes, parseHarnessAxes, parseHarnessInfraTokens, buildHarnessRunPlan } =
     await import("../../scripts/harness/load-env.mjs");
   assert.equal(cloudHarnessScenario("tcbr", "opencode"), "cloud-tcbr-opencode");
   assert.equal(cloudHarnessScenario("scf", "claude"), "cloud-scf-claude");
   assert.equal(cloudHarnessAgentPinVar("tcbr", "claude"), "HARNESS_CLOUD_TCBR_CLAUDE_AGENT_ID");
-  assert.equal(normalizeHarnessScenario("local"), "local-opencode");
-  assert.equal(normalizeHarnessScenario("cloud-tcbr"), "cloud-tcbr-opencode");
-  assert.equal(normalizeHarnessScenario("cloud-scf"), "cloud-scf-opencode");
+  assert.equal(scenarioFromAxes("local", "opencode"), "local-opencode");
+  assert.equal(scenarioFromAxes("tcbr", "claude"), "cloud-tcbr-claude");
+  assert.equal(scenarioFromAxes("scf", "opencode"), "cloud-scf-opencode");
+  assert.throws(() => scenarioFromAxes("tcbr", "all"));
+  const axes = parseHarnessAxes(["--infra", "tcbr,scf", "--engine", "opencode"]);
+  assert.deepEqual(axes.infraTokens, ["tcbr", "scf"]);
+  assert.equal(axes.mode, "parallel");
+  const allAxes = parseHarnessAxes(["--infra", "all", "--engine", "opencode"]);
+  assert.equal(allAxes.mode, "sequential");
+  assert.deepEqual(
+    allAxes.plan.map((s) => `${s.infra}/${s.engine}`),
+    ["local/opencode", "tcbr/opencode", "scf/opencode"],
+  );
+  assert.equal(buildHarnessRunPlan(["all"], "all").length, 5);
+  assert.throws(() => parseHarnessAxes(["--infra", "tcbr,scf", "--engine", "all"]));
+  assert.throws(() => parseHarnessInfraTokens(["--infra", "all,tcbr"]));
+});
+
+test("parseHarnessEngineArg accepts opencode | claude | all", async () => {
+  const { parseHarnessEngineArg, parseHarnessEnginesArg, harnessEnginesIncludeClaude, harnessEnginesIncludeOpencode } =
+    await import("../../scripts/harness/load-env.mjs");
+  assert.equal(parseHarnessEngineArg(["--engine", "opencode"]), "opencode");
+  assert.equal(parseHarnessEngineArg(["--engine", "claude"]), "claude");
+  assert.equal(parseHarnessEngineArg(["--engine", "all"]), "all");
+  assert.equal(parseHarnessEnginesArg(["--engine", "opencode"]), "opencode");
+  assert.ok(harnessEnginesIncludeOpencode("opencode"));
+  assert.ok(!harnessEnginesIncludeOpencode("claude"));
+  assert.ok(harnessEnginesIncludeClaude("all"));
+  assert.throws(() => parseHarnessEngineArg(["--engine", "codebuddy"]));
+});
+
+test("parseCloudCosMount and applyHarnessScenario cos axes", async () => {
+  const {
+    applyHarnessScenario,
+    parseCloudCosMount,
+    HARNESS_COS_ENV_KEYS,
+  } = await import("../../scripts/harness/load-env.mjs");
+  assert.throws(() => parseCloudCosMount(["--with-cos", "--no-cos"]));
+  assert.equal(parseCloudCosMount(["--with-cos"]), true);
+  assert.equal(parseCloudCosMount([]), false);
+
+  const env = { CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8" };
+  const devMeta = applyHarnessScenario("local-opencode", env, { devLocal: true });
+  assert.equal(devMeta.cosEnabled, false);
+  for (const k of HARNESS_COS_ENV_KEYS) assert.equal(env[k], undefined);
+
+  const cloudMeta = applyHarnessScenario("cloud-tcbr-opencode", env, { cloudCosMount: false });
+  assert.equal(cloudMeta.cosEnabled, false);
+  assert.ok(!cloudMeta.toolName.endsWith("-with-cos"));
+  for (const k of HARNESS_COS_ENV_KEYS) assert.equal(env[k], undefined);
+
+  const localEnv = {
+    CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8",
+    HARNESS_COS_ENABLED: "1",
+    HARNESS_COS_BUCKET: "bucket",
+    HARNESS_COS_BUCKET_PATH: "/p",
+    HARNESS_COS_ENDPOINT: "b.cos.example.com",
+    HARNESS_COS_REGION: "ap-shanghai",
+    HARNESS_COS_MOUNT_NAME: "ags-cos-trw",
+    HARNESS_COS_MOUNT_DIR: "/mnt/workspace",
+  };
+  const localMeta = applyHarnessScenario("local-opencode", localEnv);
+  assert.equal(localMeta.cosEnabled, false);
+  for (const k of HARNESS_COS_ENV_KEYS) assert.equal(localEnv[k], undefined);
 });
 
 test("parseDbPressureArgs defaults off", async () => {
@@ -297,44 +391,40 @@ test("parseDbPressureArgs defaults off", async () => {
   });
 });
 
-test("parseHarnessEnginesArg accepts opencode | claude | all", async () => {
-  const { parseHarnessEnginesArg, harnessEnginesIncludeClaude, harnessEnginesIncludeOpencode } =
-    await import("../../scripts/harness/load-env.mjs");
-  assert.equal(parseHarnessEnginesArg(["--engines", "opencode"]), "opencode");
-  assert.equal(parseHarnessEnginesArg(["--engines", "claude"]), "claude");
-  assert.equal(parseHarnessEnginesArg(["--engines", "all"]), "all");
-  assert.ok(harnessEnginesIncludeOpencode("opencode"));
-  assert.ok(!harnessEnginesIncludeOpencode("claude"));
-  assert.ok(harnessEnginesIncludeClaude("all"));
-  assert.throws(() => parseHarnessEnginesArg(["--engines", "codebuddy"]));
-});
-
-test("applyHarnessScenario cloud-scf strips COS and sets BYOK tier", async () => {
+test("applyHarnessScenario cloud-scf applies BYOK from scenario env", async () => {
   const { applyHarnessScenario, HARNESS_COS_ENV_KEYS } = await import(
     "../../scripts/harness/load-env.mjs"
   );
-  const prevSuffix = process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
-  process.env.HARNESS_TOOL_COS_NAME_SUFFIX = "1";
   const env = {
     CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8",
     HARNESS_COS_ENABLED: "1",
     HARNESS_COS_BUCKET: "bucket",
   };
-  const meta = applyHarnessScenario("cloud-scf", env);
-  if (prevSuffix !== undefined) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prevSuffix;
-  else delete process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
+  const meta = applyHarnessScenario("cloud-scf-opencode", env);
   assert.equal(meta.scenario, "cloud-scf-opencode");
   assert.equal(meta.cosEnabled, false);
-  assert.ok(meta.toolName.endsWith("-no-cos"));
+  assert.equal(meta.toolName, "oma-harness-test-6g2rfs50c69b7fb8");
   for (const k of HARNESS_COS_ENV_KEYS) assert.equal(env[k], undefined);
-  assert.equal(env.HARNESS_LLM_TIER, "byok");
+  assert.ok(env.LLM_API_KEY);
+  assert.ok(env.OPENAI_BASE_URL);
+  assert.equal(env.AGENT_MODEL, undefined);
+});
+
+test("applyHarnessScenario cloud-tcbr-opencode sets zen via AGENT_MODEL", async () => {
+  const { applyHarnessScenario } = await import("../../scripts/harness/load-env.mjs");
+  const env = { CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8" };
+  applyHarnessScenario("cloud-tcbr-opencode", env);
+  assert.equal(env.AGENT_MODEL, "zen");
+  assert.equal(env.LLM_API_KEY, undefined);
 });
 
 test("scenario matrix isolates OpenAI vs Anthropic env files", async () => {
-  const { applyHarnessScenario } = await import("../../scripts/harness/load-env.mjs");
+  const { applyHarnessScenario, hasOpenAiByokInEnv } = await import(
+    "../../scripts/harness/load-env.mjs"
+  );
   const openAiEnv = { CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8" };
   const openAiMeta = applyHarnessScenario("cloud-scf-opencode", openAiEnv);
-  assert.equal(openAiEnv.HARNESS_LLM_TIER, "byok");
+  assert.ok(hasOpenAiByokInEnv(openAiEnv));
   assert.equal(openAiMeta.engine, "opencode");
   assert.ok(openAiEnv.LLM_API_KEY);
   assert.ok(openAiEnv.OPENAI_BASE_URL);
@@ -342,7 +432,6 @@ test("scenario matrix isolates OpenAI vs Anthropic env files", async () => {
 
   const claudeEnv = { CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8" };
   const claudeMeta = applyHarnessScenario("local-claude", claudeEnv);
-  assert.equal(claudeEnv.HARNESS_LLM_TIER, "platform");
   assert.equal(claudeMeta.engine, "claude");
   assert.equal(claudeEnv.LLM_API_KEY, undefined);
 
@@ -385,21 +474,6 @@ test("ma-protocol sidecar resolves dedicated agent yaml", async () => {
     pinnedMaProtocolAgentId(new Map([["CLOUDBASE_AGENT_ID", "agent-legacy"]])),
     "agent-legacy",
   );
-});
-
-test("resolveHarnessToolName uses -no-cos|-with-cos when HARNESS_TOOL_COS_NAME_SUFFIX=1", () => {
-  const prev = process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
-  process.env.HARNESS_TOOL_COS_NAME_SUFFIX = "1";
-  assert.equal(
-    harnessToolNameForEnv("test-6g2rfs50c69b7fb8"),
-    "oma-harness-test-6g2rfs50c69b7fb8-no-cos",
-  );
-  assert.equal(
-    harnessCosToolNameForEnv("test-6g2rfs50c69b7fb8"),
-    "oma-harness-test-6g2rfs50c69b7fb8-with-cos",
-  );
-  if (prev) process.env.HARNESS_TOOL_COS_NAME_SUFFIX = prev;
-  else delete process.env.HARNESS_TOOL_COS_NAME_SUFFIX;
 });
 
 test("buildManagedAgentClientMcpUrl embeds acpSessionId query param", () => {
@@ -489,14 +563,12 @@ test("buildHarnessOpencodeConfigContent uses LLM_* + OPENAI_BASE_URL", () => {
   else process.env.LLM_MODEL = saved.model;
 });
 
-test("buildHarnessOpencodeConfigContent skips custom LLM when HARNESS_FORCE_ZEN=1", () => {
+test("buildHarnessOpencodeConfigContent skips custom LLM when model is zen", () => {
   const saved = {
-    zen: process.env.HARNESS_FORCE_ZEN,
     key: process.env.LLM_API_KEY,
     url: process.env.OPENAI_BASE_URL,
     model: process.env.LLM_MODEL,
   };
-  process.env.HARNESS_FORCE_ZEN = "1";
   process.env.LLM_API_KEY = "sk-test";
   process.env.OPENAI_BASE_URL = "https://example.com/v1";
   process.env.LLM_MODEL = "hy3-preview";
@@ -510,8 +582,6 @@ test("buildHarnessOpencodeConfigContent skips custom LLM when HARNESS_FORCE_ZEN=
     }),
     null,
   );
-  if (saved.zen === undefined) delete process.env.HARNESS_FORCE_ZEN;
-  else process.env.HARNESS_FORCE_ZEN = saved.zen;
   if (saved.key === undefined) delete process.env.LLM_API_KEY;
   else process.env.LLM_API_KEY = saved.key;
   if (saved.url === undefined) delete process.env.OPENAI_BASE_URL;
@@ -607,25 +677,16 @@ test("applyHarnessRuntimeEnv writes mcporter for custom tools", () => {
         },
       ],
     },
-    { clientToolCallbackBase: "https://gw.example.com", sandboxImage: HARNESS_PUBLIC_MAGENT_IMAGE },
+    { clientToolCallbackBase: "https://gw.example.com" },
   );
   assert.ok(env.MCPORTER_CONFIG_CONTENT);
-  assert.equal(env.HARNESS_SANDBOX_IMAGE, HARNESS_PUBLIC_MAGENT_IMAGE);
+  assert.equal(env.HARNESS_SANDBOX_IMAGE, undefined);
 });
 
-test("applyHarnessRuntimeEnv prefers config.sandbox.image over deploy default", () => {
-  const env = applyHarnessRuntimeEnv(
-    {},
-    {
-      name: "t",
-      model: "m",
-      system: "s",
-      runtime: "harness",
-      engine: "opencode",
-      sandbox: { infra: "serverless", image: "ccr.example/trw:custom" },
-    },
-  );
-  assert.equal(env.HARNESS_SANDBOX_IMAGE, "ccr.example/trw:custom");
+test("resolveHarnessSandboxImage prefers yaml over builtin default", () => {
+  assert.equal(resolveHarnessSandboxImage("ccr.example/trw:custom"), "ccr.example/trw:custom");
+  assert.equal(resolveHarnessSandboxImage(), HARNESS_PUBLIC_MAGENT_IMAGE);
+  assert.equal(resolveHarnessSandboxImage(null), HARNESS_PUBLIC_MAGENT_IMAGE);
 });
 
 test("buildMcporterConfig adds managed-agent-client for custom tools", () => {
@@ -1401,7 +1462,7 @@ test("platform probe quota failure is classified and documented", async () => {
   const guide = formatPlatformProbeFailureGuide(quota);
   assert.match(guide, /EXCEED_TOKEN_QUOTA_LIMIT|quota/i);
   assert.match(guide, /auto-falls back to opencode zen/i);
-  assert.match(guide, /cloud-tcbr/);
+  assert.match(guide, /run --infra tcbr/);
 });
 
 test("normalizeInboundRequestId rejects unsafe values", () => {
@@ -1473,13 +1534,11 @@ test("stripQuickstartPins clears cloud and COS pins", async () => {
     CLOUDBASE_ENV_ID: "test-env",
     HARNESS_CLOUD_SCF_OPENCODE_AGENT_ID: "agent-pinned",
     HARNESS_COS_ENABLED: "1",
-    HARNESS_TOOL_COS_NAME_SUFFIX: "1",
   };
   stripQuickstartPins(env);
   for (const k of QUICKSTART_ENV_STRIP_KEYS) {
     assert.equal(env[k], undefined, `expected ${k} stripped`);
   }
-  assert.equal(env.HARNESS_TOOL_COS_NAME_SUFFIX, undefined);
   assert.equal(env.CLOUDBASE_ENV_ID, "test-env");
 });
 

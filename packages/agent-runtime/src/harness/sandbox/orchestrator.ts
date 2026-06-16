@@ -14,7 +14,6 @@ import {
 } from "../../config.js";
 import {
   resolveCamControlPlaneCredentials,
-  resolveHarnessSandboxAuthMode,
   resolveHarnessSandboxImage,
   resolveHarnessToolRoleArn,
 } from "../harness-env.js";
@@ -33,8 +32,10 @@ import {
 import {
   assertSandboxAcquireAllowed,
   buildAgsSandboxResources,
+  resolveSandboxAgsAuthMode,
   resolveSandboxConfig,
   resolveSandboxImage,
+  resolveSandboxImageRegistryType,
   resolveSandboxTimeout,
   type ResolvedSandboxConfig,
 } from "./sandbox-config.js";
@@ -141,11 +142,15 @@ function resolveGatewayUrl(envId: string, override?: string): string {
   return `https://${envId}.api.tcloudbasegateway.com/v1/sandbox/-`;
 }
 
-function resolveImageRegistryType(image: string): string {
-  const explicit = process.env.HARNESS_SANDBOX_IMAGE_REGISTRY_TYPE?.trim();
-  if (explicit) return explicit;
-  void image;
-  return "personal";
+function resolveImageRegistryType(sandbox: ResolvedSandboxConfig): string {
+  const legacy = process.env.HARNESS_SANDBOX_IMAGE_REGISTRY_TYPE?.trim();
+  if (
+    !sandbox.imageRegistryType &&
+    (legacy === "enterprise" || legacy === "personal")
+  ) {
+    return legacy;
+  }
+  return resolveSandboxImageRegistryType(sandbox);
 }
 
 async function callAgsApi(
@@ -207,7 +212,16 @@ async function findToolByName(
   toolName: string,
   cred: ResolvedCredentials,
   envId: string,
-): Promise<{ toolId: string; toolName: string } | null> {
+): Promise<{ toolId: string; toolName: string; storageMounts: Array<Record<string, unknown>> } | null> {
+  const toRef = (t: Record<string, unknown>) => {
+    if (typeof t.ToolId !== "string") return null;
+    const mounts = t.StorageMounts;
+    return {
+      toolId: t.ToolId,
+      toolName,
+      storageMounts: Array.isArray(mounts) ? (mounts as Array<Record<string, unknown>>) : [],
+    };
+  };
   try {
     const resp = await callAgsApi(
       "DescribeSandboxToolList",
@@ -217,7 +231,8 @@ async function findToolByName(
     );
     const set = extractToolSet(resp);
     const hit = set.find((t) => t.ToolName === toolName && typeof t.ToolId === "string");
-    if (hit) return { toolId: hit.ToolId as string, toolName };
+    const ref = hit ? toRef(hit as Record<string, unknown>) : null;
+    if (ref) return ref;
   } catch {
     // fall through to paginated scan
   }
@@ -232,11 +247,20 @@ async function findToolByName(
     );
     const set = extractToolSet(resp);
     const hit = set.find((t) => t.ToolName === toolName && typeof t.ToolId === "string");
-    if (hit) return { toolId: hit.ToolId as string, toolName };
+    const ref = hit ? toRef(hit as Record<string, unknown>) : null;
+    if (ref) return ref;
     if (set.length < 100) break;
     offset += 100;
   }
   return null;
+}
+
+async function deleteHarnessTool(
+  toolId: string,
+  cred: ResolvedCredentials,
+  envId: string,
+): Promise<void> {
+  await callAgsApi("DeleteSandboxTool", { ToolId: toolId }, cred, envId);
 }
 
 async function createHarnessTool(
@@ -255,7 +279,7 @@ async function createHarnessTool(
       RoleArn: roleArn,
       CustomConfiguration: {
         Image: cred.image,
-        ImageRegistryType: resolveImageRegistryType(cred.image),
+        ImageRegistryType: resolveImageRegistryType(sandbox),
         Command: ["/init"],
         Resources: buildAgsSandboxResources(sandbox.resources),
         Ports: [
@@ -298,7 +322,6 @@ async function syncHarnessToolConfiguration(
   cred: ResolvedCredentials,
   sandbox: ResolvedSandboxConfig,
   envId: string,
-  storageMounts?: Array<Record<string, unknown>>,
 ): Promise<void> {
   await callAgsApi(
     "UpdateSandboxTool",
@@ -306,11 +329,9 @@ async function syncHarnessToolConfiguration(
       ToolId: toolId,
       CustomConfiguration: {
         Image: cred.image,
-        ImageRegistryType: resolveImageRegistryType(cred.image),
+        ImageRegistryType: resolveImageRegistryType(sandbox),
         Resources: buildAgsSandboxResources(sandbox.resources),
       },
-      DefaultTimeout: cred.defaultTimeout,
-      ...(storageMounts?.length ? { StorageMounts: storageMounts } : {}),
     },
     cred,
     envId,
@@ -328,16 +349,24 @@ async function ensureHarnessTool(
     return { toolId: cred.harnessToolId, justCreated: false };
   }
 
-  const toolName = resolveHarnessToolName(envId, Boolean(cos));
+  const toolName = resolveHarnessToolName(envId);
   const storageMounts = cos ? buildCosStorageMounts(cos) : undefined;
   const existing = await findToolByName(toolName, cred, envId);
   if (existing) {
+    if (cos && storageMounts?.length && !existing.storageMounts.length) {
+      onProgress?.({
+        phase: "tool_recreate",
+        message: `recreating harness tool ${toolName} with COS StorageMounts (~30s)`,
+      });
+      await deleteHarnessTool(existing.toolId, cred, envId);
+      const toolId = await createHarnessTool(envId, toolName, cred, sandbox, storageMounts);
+      return { toolId, justCreated: true };
+    }
     try {
-      await syncHarnessToolConfiguration(existing.toolId, cred, sandbox, envId, storageMounts);
+      await syncHarnessToolConfiguration(existing.toolId, cred, sandbox, envId);
     } catch (err) {
       harnessTrace("orchestrator.tool.sync", {
         toolId: existing.toolId,
-        cosMounts: Boolean(storageMounts?.length),
         error: (err as Error).message,
       });
     }
@@ -363,9 +392,10 @@ async function startInstance(
   envId: string,
   instanceEnv: HarnessEnvVar[],
   cos: HarnessCosConfig | null,
+  sandbox: ResolvedSandboxConfig,
 ): Promise<string> {
   const customConfiguration = pickStartCustomConfiguration(instanceEnv);
-  const authMode = resolveHarnessSandboxAuthMode();
+  const authMode = resolveSandboxAgsAuthMode(sandbox);
   const resp = await callAgsApi(
     "StartSandboxInstance",
     {
@@ -408,6 +438,7 @@ async function startInstanceWithRetry(args: {
   envId: string;
   instanceEnv: HarnessEnvVar[];
   cos: HarnessCosConfig | null;
+  sandbox: ResolvedSandboxConfig;
   onProgress?: (msg: { phase: string; message: string }) => void;
 }): Promise<string> {
   let lastErr: unknown;
@@ -419,6 +450,7 @@ async function startInstanceWithRetry(args: {
         args.envId,
         args.instanceEnv,
         args.cos,
+        args.sandbox,
       );
     } catch (err) {
       lastErr = err;
@@ -437,10 +469,10 @@ async function acquireInstanceToken(
   instanceId: string,
   cred: ResolvedCredentials,
   envId: string,
+  sandbox: ResolvedSandboxConfig,
   options?: { required?: boolean },
 ): Promise<string | undefined> {
-  const authMode = resolveHarnessSandboxAuthMode();
-  if (authMode === "NONE") return undefined;
+  if (resolveSandboxAgsAuthMode(sandbox) === "NONE") return undefined;
 
   try {
     const resp = await callAgsApi(
@@ -479,6 +511,7 @@ function buildHarnessSandboxHandle(args: {
   accessToken?: string;
   cred: ResolvedCredentials;
   envId: string;
+  sandbox: ResolvedSandboxConfig;
   orchestrator: AgsStatefulSandboxOrchestrator;
 }): HarnessSandboxHandle {
   let headers = buildDataPlaneHeaders({
@@ -489,7 +522,7 @@ function buildHarnessSandboxHandle(args: {
   });
 
   const self = args.orchestrator;
-  const { instanceId, cred, envId, apiKey } = args;
+  const { instanceId, cred, envId, apiKey, sandbox } = args;
 
   return {
     instanceId: args.instanceId,
@@ -510,7 +543,7 @@ function buildHarnessSandboxHandle(args: {
       });
     },
     async refreshInstanceAccessToken() {
-      const token = await acquireInstanceToken(instanceId, cred, envId);
+      const token = await acquireInstanceToken(instanceId, cred, envId, sandbox);
       headers = buildDataPlaneHeaders({
         apiKey,
         instanceId,
@@ -532,7 +565,7 @@ function buildHarnessSandboxHandle(args: {
       if (status === "PAUSED" || status === "RESUME_FAILED") {
         await callAgsApi("ResumeSandboxInstance", { InstanceId: instanceId }, cred, envId);
       }
-      if (resolveHarnessSandboxAuthMode() === "TOKEN") {
+      if (resolveSandboxAgsAuthMode(sandbox) === "TOKEN") {
         await (this as HarnessSandboxHandle).refreshInstanceAccessToken();
       }
     },
@@ -719,12 +752,13 @@ export class AgsStatefulSandboxOrchestrator {
         envId: args.envId,
         instanceEnv,
         cos,
+        sandbox,
         onProgress,
       });
       wl.set({ instanceId });
 
       wl.milestone("token.acquire");
-      accessToken = await acquireInstanceToken(instanceId, cred, args.envId);
+      accessToken = await acquireInstanceToken(instanceId, cred, args.envId, sandbox);
       headers = buildDataPlaneHeaders({
         apiKey: cred.apiKey,
         instanceId,
@@ -757,6 +791,7 @@ export class AgsStatefulSandboxOrchestrator {
       accessToken,
       cred,
       envId: args.envId,
+      sandbox,
       orchestrator: this,
     });
   }
@@ -838,7 +873,8 @@ export class AgsStatefulSandboxOrchestrator {
       cred.apiKey = await fetchGatewayAccessToken(envId);
     }
     const baseUrl = resolveGatewayUrl(envId, cred.gatewayBaseUrl);
-    const accessToken = await acquireInstanceToken(instanceId, cred, envId);
+    const sandbox = resolveSandboxConfig({});
+    const accessToken = await acquireInstanceToken(instanceId, cred, envId, sandbox);
     const headers = buildDataPlaneHeaders({
       apiKey: cred.apiKey,
       instanceId,
@@ -854,6 +890,7 @@ export class AgsStatefulSandboxOrchestrator {
       accessToken,
       cred,
       envId,
+      sandbox,
       orchestrator: this,
     });
   }
@@ -912,6 +949,20 @@ export class AgsStatefulSandboxOrchestrator {
     const slug: DataPlaneEngineSlug = engineToDataPlaneSlug(engine);
     return `/api/agents/${slug}/acp`;
   }
+}
+
+/** CLI sync-tool.mjs — align tool image with harness config. */
+export async function syncHarnessAgsTool(options: {
+  envId: string;
+  toolId: string;
+  image: string;
+}): Promise<void> {
+  const cred = resolveCredentials({ image: options.image });
+  const sandbox = resolveSandboxConfig({});
+  cred.image = resolveSandboxImage(sandbox, cred.image);
+  cred.defaultTimeout = resolveSandboxTimeout(sandbox, cred.defaultTimeout);
+
+  await syncHarnessToolConfiguration(options.toolId, cred, sandbox, options.envId);
 }
 
 let _orchestrator: AgsStatefulSandboxOrchestrator | null = null;

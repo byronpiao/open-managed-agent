@@ -11,16 +11,22 @@
 import { execSync } from "child_process";
 import { resolve } from "path";
 import { fileURLToPath } from "url";
-import { readTcbLoginCredential } from "../../lib/credentials.mjs";
+import {
+  applyPlatformLlmEnv,
+  clearHarnessLlmEnv,
+  HARNESS_LLM_ENV_KEYS,
+} from "../../lib/harness-llm-env.mjs";
 import { hydrateCloudEnvFromCli } from "../../lib/env.mjs";
 import {
   clearShellLeakedHarnessPins,
   expectedHarnessToolName,
   harnessCosEnabledFromMap,
+  HARNESS_COS_ENV_KEYS,
   loadHarnessEnvIntoProcess,
   pinnedHarnessToolId,
   readHarnessEnvMap,
 } from "../../lib/harness-env-file.mjs";
+import { setHarnessScenario } from "../../lib/harness-scenario-state.mjs";
 import {
   applyScenarioEnv,
   hasAnthropicScenarioEnv,
@@ -43,7 +49,38 @@ import {
   scenarioEnvPath,
   scenarioEnvExamplePath,
   scenarioEnvReady,
+  scenarioFromAxes,
+  parseHarnessInfraList,
+  parseHarnessInfraTokens,
+  expandHarnessInfraTokens,
+  buildHarnessRunPlan,
+  harnessInfraExecutionMode,
+  parseHarnessEngineArg,
+  parseHarnessAxes,
+  HARNESS_INFRA_VALUES,
+  HARNESS_CONCRETE_INFRAS,
+  HARNESS_ENGINE_VALUES,
 } from "./scenario-matrix.mjs";
+
+export {
+  applyPlatformLlmEnv,
+  applyZenLlmEnv,
+  captureHarnessLlmEnv,
+  clearHarnessLlmEnv,
+  describeHarnessLlmMode,
+  hasAnthropicByokInEnv,
+  hasOpenAiByokInEnv,
+  isZenModelFromEnv,
+  HARNESS_LLM_ENV_KEYS,
+  resolveOpencodeModelFromEnv,
+  restoreHarnessLlmEnv,
+} from "../../lib/harness-llm-env.mjs";
+
+export {
+  clearHarnessScenario,
+  getHarnessScenario,
+  setHarnessScenario,
+} from "../../lib/harness-scenario-state.mjs";
 
 export {
   applyScenarioEnv,
@@ -58,7 +95,18 @@ export {
   scenarioAgentYamlPath,
   scenarioMaProtocolAgentYamlPath,
   scenarioMaProtocolClaudeAgentYamlPath,
-};
+  scenarioFromAxes,
+  parseHarnessInfraList,
+  parseHarnessInfraTokens,
+  expandHarnessInfraTokens,
+  buildHarnessRunPlan,
+  harnessInfraExecutionMode,
+  parseHarnessEngineArg,
+  parseHarnessAxes,
+  HARNESS_INFRA_VALUES,
+  HARNESS_CONCRETE_INFRAS,
+  HARNESS_ENGINE_VALUES,
+} from "./scenario-matrix.mjs";
 
 const ALIASES = [
   ["TCB_ENV_ID", "CLOUDBASE_ENV_ID"],
@@ -81,12 +129,12 @@ function hasHarnessCamCredentials() {
   return false;
 }
 
-const BYOK_LLM_KEYS = [
+/** Cleared on `loadEnv()` so scenario `.env.<id>` applies fresh; AGENT_MODEL may come from parent preflight. */
+const SCENARIO_LLM_KEYS = [
   "LLM_API_KEY",
   "LLM_MODEL",
   "OPENAI_BASE_URL",
   "ANTHROPIC_BASE_URL",
-  "HARNESS_FORCE_ZEN",
 ];
 
 /** @deprecated use hasAnthropicScenarioEnv */
@@ -94,20 +142,9 @@ export function hasAnthropicByokInMap() {
   return hasAnthropicScenarioEnv("local-claude");
 }
 
-/** local full 引擎覆盖：opencode=主力默认 · claude=旁路 · all=两者 */
-export const HARNESS_ENGINE_VALUES = ["opencode", "claude", "all"];
-
+/** local full 引擎覆盖：opencode=主力 · claude=旁路 · all=双引擎（仅 local） */
 export function parseHarnessEnginesArg(argv = process.argv.slice(2)) {
-  let engines = "opencode";
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--engines" && argv[i + 1]) {
-      engines = argv[++i].trim().toLowerCase();
-    }
-  }
-  if (!HARNESS_ENGINE_VALUES.includes(engines)) {
-    throw new Error(`Invalid --engines ${engines}; use opencode | claude | all`);
-  }
-  return engines;
+  return parseHarnessEngineArg(argv);
 }
 
 export function harnessEnginesIncludeOpencode(engines) {
@@ -121,23 +158,56 @@ export function harnessEnginesIncludeClaude(engines) {
 export function assertHarnessEnginesEnv(engines) {
   if (harnessEnginesIncludeClaude(engines) && !hasAnthropicScenarioEnv("local-claude")) {
     throw new Error(
-      `--engines claude|all requires ${scenarioEnvPath("local-claude")} ` +
+      `--engine claude|all requires ${scenarioEnvPath("local-claude")} ` +
         `(cp ${scenarioEnvExamplePath("local-claude")})`,
     );
   }
 }
 
-/** Stripped for cloud / no-cos scenarios — COS only applies to `local` when enabled in `.env.harness`. */
-export const HARNESS_COS_ENV_KEYS = [
-  "HARNESS_COS_ENABLED",
-  "HARNESS_COS_BUCKET",
-  "HARNESS_COS_BUCKET_PATH",
-  "HARNESS_COS_ENDPOINT",
-  "HARNESS_COS_REGION",
-  "HARNESS_COS_MOUNT_NAME",
-  "HARNESS_COS_MOUNT_DIR",
-  "HARNESS_COS_SUBPATH",
-];
+/** Stripped for cloud / no-cos scenarios — COS only via `applyHarnessCosFromHarnessFile` or cloud `--with-cos`. */
+export { HARNESS_COS_ENV_KEYS } from "../../lib/harness-env-file.mjs";
+
+/** 云上专用：AGS tool / deploy 是否挂 COS（默认不挂） */
+export function parseCloudCosMount(argv = process.argv.slice(2)) {
+  const withCos = argv.includes("--with-cos");
+  const noCos = argv.includes("--no-cos");
+  if (withCos && noCos) {
+    throw new Error("Cannot use both --with-cos and --no-cos");
+  }
+  return withCos;
+}
+
+function missingHarnessCosKeysInMap(map) {
+  const required = [
+    "HARNESS_COS_BUCKET",
+    "HARNESS_COS_BUCKET_PATH",
+    "HARNESS_COS_ENDPOINT",
+    "HARNESS_COS_REGION",
+    "HARNESS_COS_MOUNT_NAME",
+    "HARNESS_COS_MOUNT_DIR",
+  ];
+  return required.filter((k) => !map.get(k)?.trim());
+}
+
+function applyHarnessCosFromFile(map, target = process.env) {
+  for (const k of HARNESS_COS_ENV_KEYS) {
+    const v = map.get(k)?.trim();
+    if (v) target[k] = v;
+  }
+  target.HARNESS_COS_ENABLED = "1";
+}
+
+/** Inject COS vars from `.env.harness` (cos-e2e, cloud --with-cos). */
+export function applyHarnessCosFromHarnessFile(target = process.env) {
+  const map = readHarnessEnvMap();
+  if (!harnessCosEnabledFromMap(map)) return false;
+  const missing = missingHarnessCosKeysInMap(map);
+  if (missing.length) {
+    throw new Error(`HARNESS_COS_ENABLED=1 requires .env.harness: ${missing.join(", ")}`);
+  }
+  applyHarnessCosFromFile(map, target);
+  return true;
+}
 
 /**
  * Harness acceptance scenarios — each maps to agent.yaml + env + AGS tool variant.
@@ -174,7 +244,8 @@ export function pinnedCloudHarnessAgentId(backend, engine = "opencode", map = re
   return "";
 }
 
-export function applyHarnessScenario(scenario, target = process.env) {
+export function applyHarnessScenario(scenario, target = process.env, opts = {}) {
+  const { cloudCosMount = false, devLocal = false } = opts;
   const map = readHarnessEnvMap();
   const envId = target.CLOUDBASE_ENV_ID?.trim() || map.get("CLOUDBASE_ENV_ID")?.trim() || "";
   const cosRequired = scenario === "local-cos";
@@ -183,8 +254,8 @@ export function applyHarnessScenario(scenario, target = process.env) {
   for (const k of HARNESS_COS_ENV_KEYS) delete target[k];
 
   if (scenario === "quickstart") {
-    target.HARNESS_SCENARIO = "quickstart";
-    applyHarnessLlmTier("platform", target);
+    setHarnessScenario("quickstart");
+    applyPlatformLlmEnv(target);
     applyHarnessTestDefaults(target);
     return {
       scenario,
@@ -197,7 +268,7 @@ export function applyHarnessScenario(scenario, target = process.env) {
     applyScenarioEnv(scenario, target);
     const deployedAgentId = pinnedMaProtocolAgentId(readScenarioEnvMap(scenario));
     if (deployedAgentId) target.CLOUDBASE_AGENT_ID = deployedAgentId;
-    target.HARNESS_SCENARIO = scenario;
+    setHarnessScenario(scenario);
     applyHarnessTestDefaults(target);
     const agentYaml =
       scenario === HARNESS_MA_PROTOCOL_CLAUDE_SCENARIO
@@ -220,43 +291,42 @@ export function applyHarnessScenario(scenario, target = process.env) {
 
   if (scenario.startsWith("cloud-")) {
     applyScenarioEnv(scenario, target);
-    if (scenario === "cloud-tcbr-opencode") {
-      applyHarnessLlmTier("zen", target);
-    } else if (scenario === "cloud-scf-opencode") {
-      applyHarnessLlmTier("byok", target);
-    } else {
-      applyHarnessLlmTier("anthropic-byok", target);
+    const cosEnabled = cloudCosMount === true;
+    if (cosEnabled) {
+      const missing = missingHarnessCosKeysInMap(map);
+      if (missing.length) {
+        throw new Error(`--with-cos requires .env.harness: ${missing.join(", ")}`);
+      }
+      applyHarnessCosFromFile(map, target);
     }
-    target.HARNESS_SCENARIO = scenario;
+    setHarnessScenario(scenario);
     applyHarnessTestDefaults(target);
     return {
       scenario,
-      cosEnabled: false,
-      toolName: envId ? expectedHarnessToolName(envId, false, map) : "",
+      cosEnabled,
+      toolName: envId ? expectedHarnessToolName(envId, cosEnabled, map) : "",
       engine: scenarioEngine(scenario),
       agentYaml: scenarioAgentYamlPath(scenarioEngine(scenario)),
     };
   }
 
-  const cosFromFile = harnessCosEnabledFromMap(map);
-  if (cosRequired && !cosFromFile) {
+  const cosEnabled =
+    scenario === "local-cos" ? harnessCosEnabledFromMap(map) : false;
+  if (cosRequired && !cosEnabled) {
     throw new Error("scenario local-cos requires HARNESS_COS_ENABLED=1 in .env.harness (⑥ 段)");
   }
-  if (cosFromFile) {
-    for (const k of HARNESS_COS_ENV_KEYS) {
-      const v = map.get(k)?.trim();
-      if (v) target[k] = v;
-    }
+  if (cosEnabled) {
+    applyHarnessCosFromFile(map, target);
   }
 
   applyScenarioEnv(scenario, target);
-  applyHarnessLlmTier("platform", target);
-  target.HARNESS_SCENARIO = scenario;
+  applyPlatformLlmEnv(target);
+  setHarnessScenario(scenario);
   applyHarnessTestDefaults(target);
   return {
     scenario,
-    cosEnabled: cosFromFile,
-    toolName: envId ? expectedHarnessToolName(envId, cosFromFile, map) : "",
+    cosEnabled,
+    toolName: envId ? expectedHarnessToolName(envId, cosEnabled, map) : "",
     engine: scenarioEngine(scenario),
     agentYaml: scenarioAgentYamlPath(scenarioEngine(scenario)),
   };
@@ -274,43 +344,6 @@ export function logHarnessScenario(meta) {
   console.log(
     `harness scenario: ${meta.scenario} → AGS tool ${meta.toolName || "(unset)"} (${cos})`,
   );
-}
-
-/**
- * LLM tier 标记。byok / anthropic-byok 要求先 `applyScenarioEnv` 写入标准 ③ 键。
- */
-export function applyHarnessLlmTier(tier, target = process.env) {
-  if (tier === "platform" || tier === "zen") {
-    for (const k of BYOK_LLM_KEYS) delete target[k];
-  }
-  if (tier === "platform") {
-    target.HARNESS_LLM_TIER = "platform";
-    return;
-  }
-  if (tier === "zen") {
-    target.HARNESS_FORCE_ZEN = "1";
-    target.HARNESS_LLM_TIER = "zen";
-    return;
-  }
-  if (tier === "byok") {
-    if (!hasOpenAiTripleInMap(new Map(Object.entries(target)))) {
-      throw new Error("byok tier: missing LLM_API_KEY + LLM_MODEL + OPENAI_BASE_URL (apply scenario env first)");
-    }
-    delete target.ANTHROPIC_BASE_URL;
-    target.HARNESS_LLM_TIER = "byok";
-    return;
-  }
-  if (tier === "anthropic-byok") {
-    if (!hasAnthropicTripleInMap(new Map(Object.entries(target)))) {
-      throw new Error(
-        "anthropic-byok tier: missing LLM_API_KEY + LLM_MODEL + ANTHROPIC_BASE_URL (apply scenario env first)",
-      );
-    }
-    delete target.OPENAI_BASE_URL;
-    target.HARNESS_LLM_TIER = "anthropic-byok";
-    return;
-  }
-  throw new Error(`unknown HARNESS LLM tier: ${tier}`);
 }
 
 /** 验收阶段默认短超时（生产箱内 relay 仍可用 300000）。 */
@@ -340,10 +373,6 @@ export const QUICKSTART_ENV_STRIP_KEYS = [
 /** Remove cloud/COS/agent pins so quickstart matches customer fresh deploy. */
 export function stripQuickstartPins(target = process.env) {
   for (const k of QUICKSTART_ENV_STRIP_KEYS) delete target[k];
-  const map = readHarnessEnvMap();
-  if (!map.has("HARNESS_TOOL_COS_NAME_SUFFIX")) {
-    delete target.HARNESS_TOOL_COS_NAME_SUFFIX;
-  }
 }
 
 /**
@@ -354,8 +383,7 @@ export function prepareQuickstartEnv() {
   if (loadHarnessEnvIntoProcess()) {
     // optional file — ①④ may be empty; login + tcb env use fills gaps
   }
-  for (const k of BYOK_LLM_KEYS) delete process.env[k];
-  delete process.env.HARNESS_LLM_TIER;
+  applyPlatformLlmEnv();
   for (const [from, to] of ALIASES) {
     if (process.env[from] && !process.env[to]) process.env[to] = process.env[from];
   }
@@ -371,17 +399,12 @@ export function loadEnv() {
       "Missing .env.harness — run: cp .env.harness.example .env.harness",
     );
   }
-  for (const k of BYOK_LLM_KEYS) delete process.env[k];
-  delete process.env.HARNESS_LLM_TIER;
+  for (const k of SCENARIO_LLM_KEYS) delete process.env[k];
   for (const [from, to] of ALIASES) {
     if (process.env[from] && !process.env[to]) process.env[to] = process.env[from];
   }
   clearShellLeakedHarnessPins();
   const envMap = readHarnessEnvMap();
-  // E2e: parallel no-cos / with-cos tools unless explicitly disabled in `.env.harness`.
-  if (!envMap.has("HARNESS_TOOL_COS_NAME_SUFFIX")) {
-    process.env.HARNESS_TOOL_COS_NAME_SUFFIX = "1";
-  }
   const pinnedTool = pinnedHarnessToolId();
   if (pinnedTool) process.env.HARNESS_TOOL_ID = pinnedTool;
   hydrateCloudEnvFromCli();
@@ -440,16 +463,18 @@ if (isCli) {
       console.log("OK: .env.harness loaded");
       console.log(`  CLOUDBASE_ENV_ID=${process.env.CLOUDBASE_ENV_ID}`);
       console.log(`  TCB_REGION=${process.env.TCB_REGION}`);
-      const { HARNESS_PUBLIC_MAGENT_IMAGE, missingHarnessLlmEnv, missingHarnessCosEnv } =
+      const { HARNESS_PUBLIC_MAGENT_IMAGE, missingHarnessLlmEnv } =
         await import("../../packages/agent-runtime/dist/harness/harness-env.js");
-      const image = process.env.HARNESS_SANDBOX_IMAGE?.trim() || HARNESS_PUBLIC_MAGENT_IMAGE;
-      console.log(`  HARNESS_SANDBOX_IMAGE=${image}`);
+      const { resolveSandboxImageFromYaml } = await import("../../lib/resolve-harness-sandbox-image.mjs");
+      const image = resolveSandboxImageFromYaml() || HARNESS_PUBLIC_MAGENT_IMAGE;
+      console.log(`  sandbox.image=${image}`);
+      const envMap = readHarnessEnvMap();
       const llmMissing = missingHarnessLlmEnv();
       console.log(
         `  LLM(process)=${llmMissing.length ? `unset (${llmMissing.join(",")} — scenario inject)` : "ok"}`,
       );
-      const cosMissing = missingHarnessCosEnv();
-      if (process.env.HARNESS_COS_ENABLED === "1") {
+      if (harnessCosEnabledFromMap(envMap)) {
+        const cosMissing = missingHarnessCosKeysInMap(envMap);
         console.log(`  COS=${cosMissing.length ? `missing ${cosMissing.join(",")}` : "ok"}`);
       }
       console.log(
@@ -492,18 +517,19 @@ if (isCli) {
             : "incomplete HARNESS_MA_PROTOCOL_AGENT_ID";
         console.log(`    ${id} → ${yaml} : ${status}`);
       }
-      console.log(`  HARNESS_COS_ENABLED=${process.env.HARNESS_COS_ENABLED ?? "(unset)"}`);
+      console.log(
+        `  HARNESS_COS_ENABLED=${harnessCosEnabledFromMap(envMap) ? "1" : "(unset in process — cos-e2e only)"}`,
+      );
       const publicTag = HARNESS_PUBLIC_MAGENT_IMAGE.split(":").pop();
       const sandboxTag = image.split(":").pop();
       if (publicTag !== sandboxTag) {
         console.warn(
-          `  WARN: HARNESS_PUBLIC_MAGENT_IMAGE tag (${publicTag}) != HARNESS_SANDBOX_IMAGE (${sandboxTag}) — run build-push or align harness-env.ts`,
+          `  WARN: HARNESS_PUBLIC_MAGENT_IMAGE tag (${publicTag}) != resolved sandbox image (${sandboxTag}) — run build-push or set sandbox.image in agent.harness.yaml`,
         );
       }
       try {
         const envId = process.env.CLOUDBASE_ENV_ID?.trim();
         if (envId) {
-          const envMap = readHarnessEnvMap();
           const toolName = expectedHarnessToolName(envId, harnessCosEnabledFromMap(envMap));
           const listRaw = execSync("tcb sandbox tool list --json", {
             encoding: "utf-8",
@@ -518,7 +544,7 @@ if (isCli) {
             const toolTag = tool.CustomConfiguration?.Image?.split(":").pop();
             console.log(`  AGS tool: ${tool.ToolName} (${tool.ToolId}) image tag=${toolTag ?? "?"}`);
             if (toolTag && toolTag !== sandboxTag) {
-              console.warn(`  WARN: tool image tag != HARNESS_SANDBOX_IMAGE — run: node scripts/harness/sync-tool.mjs`);
+              console.warn(`  WARN: tool image tag != sandbox.image — run: node scripts/harness/sync-tool.mjs`);
             }
           } else {
             console.log(`  AGS tool: (none yet for ${toolName})`);
@@ -538,11 +564,11 @@ if (isCli) {
         const result = await runHarnessLlmPreflight(scenario, { allowTestFallback: true });
         if (result.probe) {
           console.log(
-            `  LLM probe (${scenario}): tier=${result.tier} ok ${result.probe.latencyMs}ms ` +
+            `  LLM probe (${scenario}): llm=${result.mode} ok ${result.probe.latencyMs}ms ` +
               `model=${result.probe.model} reply=${result.probe.replySnippet ?? "(empty)"}`,
           );
         } else {
-          console.log(`  LLM probe (${scenario}): tier=${result.tier}`);
+          console.log(`  LLM probe (${scenario}): llm=${result.mode}`);
         }
       }
       process.exit(0);

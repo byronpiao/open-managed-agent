@@ -1,7 +1,7 @@
 /**
  * Harness runtime e2e — agent-in-sandbox chain (local stub + optional real AGS).
  *
- *   npm run harness -- local
+ *   npm run harness -- run --infra local --engine opencode
  *
  * Loads `.env.harness` via scripts/harness/load-env.mjs
  */
@@ -9,18 +9,24 @@
 import {
   loadEnv,
   assertHarnessCreds,
-  applyHarnessLlmTier,
   applyHarnessScenario,
-  applyScenarioEnv,
   applyHarnessTestDefaults,
-  hasAnthropicByokInMap,
+  applyPlatformLlmEnv,
+  applyScenarioEnv,
+  captureHarnessLlmEnv,
+  hasAnthropicByokInEnv,
+  hasOpenAiByokInEnv,
+  isZenModelFromEnv,
   parseHarnessEnginesArg,
   harnessEnginesIncludeOpencode,
+  hasAnthropicByokInMap,
   harnessEnginesIncludeClaude,
+  resolveOpencodeModelFromEnv,
+  restoreHarnessLlmEnv,
 } from "../../scripts/harness/load-env.mjs";
+import { harnessPreflightDoneFromArgv } from "../../lib/harness-cli-flags.mjs";
+import { resolveSandboxImageFromYaml } from "../../lib/resolve-harness-sandbox-image.mjs";
 
-/** Parent `envForHarnessTier` sets this before spawn; `loadEnv()` wipes it unless pinned first. */
-const harnessTierPin = process.env.HARNESS_LLM_TIER?.trim();
 loadEnv();
 
 /** Existing flag: session/sync in memory (no FlexDB). Cross-process restart tests need FlexDB. */
@@ -31,35 +37,22 @@ const LLM_SUITE = process.argv.includes("--llm");
 const E2E_ENGINES = parseHarnessEnginesArg(process.argv.slice(2));
 const E2E_OPENCODE = harnessEnginesIncludeOpencode(E2E_ENGINES);
 const E2E_CLAUDE = harnessEnginesIncludeClaude(E2E_ENGINES);
-const FORCE_ZEN = process.env.HARNESS_FORCE_ZEN === "1";
 
-function applyPinnedHarnessTier(tier) {
-  if (tier === "anthropic-byok") {
-    applyScenarioEnv("local-claude");
-    applyHarnessLlmTier("anthropic-byok");
-    return;
-  }
-  if (tier === "byok") {
-    applyScenarioEnv("local-opencode");
-    applyHarnessLlmTier("byok");
-    return;
-  }
-  applyHarnessLlmTier(tier);
+function hasCustomLlmInEnv() {
+  return hasOpenAiByokInEnv();
 }
 
-const tierFromEnv = harnessTierPin;
-if (tierFromEnv) {
-  applyPinnedHarnessTier(tierFromEnv);
-} else if (LLM_SUITE) {
-  applyHarnessLlmTier("byok");
+if (LLM_SUITE) {
+  applyScenarioEnv("cloud-scf-opencode");
 } else if (FULL && E2E_CLAUDE && !E2E_OPENCODE) {
   applyHarnessScenario("local-claude");
-} else if (FULL && FORCE_ZEN) {
-  applyHarnessLlmTier("zen");
-} else if (FULL) {
-  applyHarnessLlmTier("platform");
+} else if (FULL && !harnessPreflightDoneFromArgv()) {
+  applyHarnessScenario("local-opencode");
 }
 if (FULL || LLM_SUITE) applyHarnessTestDefaults();
+
+/** Snapshot opencode LLM env after parent preflight / scenario apply */
+const opencodeLlmEnvSnapshot = captureHarnessLlmEnv(process.env);
 
 import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
@@ -115,21 +108,13 @@ const STUB_AGENT_CONFIG = {
 
 let activeAgentConfig = { ...BASE_AGENT_CONFIG };
 
-function hasCustomLlmInEnv() {
-  return !!(
-    process.env.LLM_API_KEY?.trim() &&
-    process.env.OPENAI_BASE_URL?.trim() &&
-    process.env.LLM_MODEL?.trim()
-  );
-}
-
-/** FULL e2e tier: platform(hy3) | zen | byok — 见 HARNESS_LLM_TIER / harness -- local|cloud-* */
+/** FULL e2e: platform | zen | BYOK — from AGENT_MODEL / LLM_* env (parent preflight or scenario file) */
 function resolveFullAgentConfig() {
-  const tier = process.env.HARNESS_LLM_TIER?.trim();
-  if (tier === "zen" || FORCE_ZEN) {
+  const zenModel = resolveOpencodeModelFromEnv();
+  if (zenModel === "zen" || isZenModelFromEnv()) {
     return { ...BASE_AGENT_CONFIG, model: "zen", engine: "opencode" };
   }
-  if (tier === "platform" || (!LLM_SUITE && !hasCustomLlmInEnv())) {
+  if (!LLM_SUITE && !hasCustomLlmInEnv()) {
     return { ...BASE_AGENT_CONFIG, engine: "opencode" };
   }
 
@@ -766,31 +751,17 @@ function resolveClaudeAgentConfig() {
 }
 
 function restoreOpencodeHarnessTier() {
-  const tier = process.env.HARNESS_E2E_OPENCODE_TIER?.trim() || "zen";
-  applyHarnessLlmTier(tier);
+  restoreHarnessLlmEnv(opencodeLlmEnvSnapshot);
   applyHarnessTestDefaults();
 }
 
-/** Respect preflight tier (anthropic-byok fallback); do not reset to platform hy3. */
 function applyClaudeHarnessLlmTier() {
-  const tier =
-    process.env.HARNESS_E2E_CLAUDE_TIER?.trim() || process.env.HARNESS_LLM_TIER?.trim();
-  if (tier === "anthropic-byok") {
+  if (hasAnthropicByokInEnv()) {
     applyScenarioEnv("local-claude");
-    applyHarnessLlmTier("anthropic-byok");
-    applyHarnessTestDefaults();
-    return;
-  }
-  if (tier === "platform" || tier === "zen") {
+  } else {
     applyHarnessScenario("local-claude");
-    return;
   }
-  if (tier) {
-    applyPinnedHarnessTier(tier);
-    applyHarnessTestDefaults();
-    return;
-  }
-  applyHarnessScenario("local-claude");
+  applyHarnessTestDefaults();
 }
 
 async function testClaudeSessionPersistence() {
@@ -920,11 +891,11 @@ async function testSandboxPrompt() {
     }),
   });
   const text = await res.text();
-  const image = process.env.HARNESS_SANDBOX_IMAGE ?? "";
+  const image = resolveSandboxImageFromYaml() ?? "";
   if (text.includes("404") && !/-magent\b/i.test(image) && !/app-magent/i.test(image)) {
     throw new Error(
-      `sandbox ACP 404 — image not magent (${image || "unset"}). ` +
-        `Push magent tag, then cp .env.harness.example .env.harness`,
+      `sandbox ACP 404 — image not magent (${image || "builtin default"}). ` +
+        `Push magent tag, npm run build:runtime, node scripts/harness/sync-tool.mjs`,
     );
   }
   if (text.includes('"code":-32000') || text.includes("opencode acp timeout")) {
@@ -1287,12 +1258,12 @@ async function main() {
           );
         }
       } else {
-        console.log("⊘ opencode sync（--engines claude）");
+        console.log("⊘ opencode sync（--engine claude）");
       }
       if (E2E_CLAUDE) {
         if (!hasAnthropicByokInMap()) {
           throw new Error(
-            "HARNESS --engines claude|all requires scenarios/.env.local-claude",
+            "HARNESS --engine claude|all requires scenarios/.env.local-claude",
           );
         }
         if (MEMORY_STORE) {
@@ -1305,7 +1276,7 @@ async function main() {
         }
         if (E2E_OPENCODE) restoreOpencodeHarnessTier();
       } else {
-        console.log("⊘ claude SessionStore（--engines claude|all 跑旁路）");
+        console.log("⊘ claude SessionStore（--engine claude|all 跑旁路）");
       }
       if (E2E_OPENCODE) {
         await testSandboxPrompt();
@@ -1316,7 +1287,7 @@ async function main() {
         console.log("✓ Zed-style stdio prompt → sandbox");
         await testSkillsLlmOptional();
       } else {
-        console.log("⊘ opencode 真箱 prompt/tool/skills（--engines claude）");
+        console.log("⊘ opencode 真箱 prompt/tool/skills（--engine claude）");
       }
       await testEngineMatrix();
 

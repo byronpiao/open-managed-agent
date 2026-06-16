@@ -1,13 +1,15 @@
 /**
  * Harness 矩阵 LLM 预检 — 起 AGS / deploy 前按场景协议探活。
  *
- * opencode 平台额度用尽 → 测试可 fallback zen
+ * opencode 平台额度用尽 → 测试可 fallback zen（写 AGENT_MODEL=zen）
  * claude 平台额度用尽 → 测试可 fallback scenarios ③ Anthropic BYOK（对客无 zen）
  */
 import {
-  applyHarnessLlmTier,
-  applyScenarioEnv,
-} from "./load-env.mjs";
+  applyPlatformLlmEnv,
+  applyZenLlmEnv,
+  describeHarnessLlmMode,
+} from "../../lib/harness-llm-env.mjs";
+import { applyScenarioEnv } from "./load-env.mjs";
 import {
   normalizeHarnessScenario,
   scenarioNeedsAnthropicByok,
@@ -17,7 +19,7 @@ import {
 
 /**
  * @typedef {object} HarnessLlmPreflightResult
- * @property {string} tier platform | zen | byok | anthropic-byok
+ * @property {string} mode platform | zen | byok-openai | byok-anthropic
  * @property {string} scenario
  * @property {import('../../packages/agent-runtime/dist/harness/llm-probe.js').HarnessLlmProbeResult} [probe]
  * @property {string} [fallback] human-readable fallback reason
@@ -47,13 +49,13 @@ export async function runHarnessLlmPreflight(scenario, opts = {}) {
   if (id === "local-opencode" || id === "local" || id === "local-cos") {
     const probe = await probeCloudBasePlatformLlm();
     if (probe.ok) {
-      applyHarnessLlmTier("platform", target);
-      return { tier: "platform", scenario: id, probe, protocol: "openai-chat" };
+      applyPlatformLlmEnv(target);
+      return { mode: "platform", scenario: id, probe, protocol: "openai-chat" };
     }
     if (allowTestFallback && isPlatformQuotaExceeded(probe)) {
-      applyHarnessLlmTier("zen", target);
+      applyZenLlmEnv(target);
       return {
-        tier: "zen",
+        mode: "zen",
         scenario: id,
         probe,
         fallback: "hy3-preview quota → opencode zen",
@@ -66,9 +68,9 @@ export async function runHarnessLlmPreflight(scenario, opts = {}) {
   if (id === "local-claude") {
     const platformProbe = await probeCloudBasePlatformAnthropicLlm();
     if (platformProbe.ok) {
-      applyHarnessLlmTier("platform", target);
+      applyPlatformLlmEnv(target);
       return {
-        tier: "platform",
+        mode: "platform",
         scenario: id,
         probe: platformProbe,
         protocol: "anthropic-messages",
@@ -76,7 +78,6 @@ export async function runHarnessLlmPreflight(scenario, opts = {}) {
     }
     if (allowTestFallback && hasAnthropicScenarioEnv(id)) {
       applyScenarioEnv(id, target);
-      applyHarnessLlmTier("anthropic-byok", target);
       const byokProbe = await probeHarnessAnthropicLlmSandboxCompat();
       if (byokProbe.ok) {
         const reason = isPlatformQuotaExceeded(platformProbe)
@@ -84,7 +85,7 @@ export async function runHarnessLlmPreflight(scenario, opts = {}) {
           : "platform unreachable → Anthropic BYOK (test only)";
         console.warn(`⚠ ${reason}\n`);
         return {
-          tier: "anthropic-byok",
+          mode: "byok-anthropic",
           scenario: id,
           probe: byokProbe,
           fallback: reason,
@@ -100,32 +101,30 @@ export async function runHarnessLlmPreflight(scenario, opts = {}) {
   }
 
   if (id === "cloud-tcbr-opencode") {
-    applyHarnessLlmTier("zen", target);
-    return { tier: "zen", scenario: id, protocol: "openai-chat" };
+    applyScenarioEnv(id, target);
+    return { mode: describeHarnessLlmMode(target), scenario: id, protocol: "openai-chat" };
   }
 
   if (scenarioNeedsOpenAiByok(id)) {
     applyScenarioEnv(id, target);
-    applyHarnessLlmTier("byok", target);
     const probe = await probeHarnessOpenAiLlm();
     if (!probe.ok) {
       throw new Error(
         `OpenAI BYOK probe failed (HTTP ${probe.httpStatus || 0}): ${probe.error ?? "unknown"}`,
       );
     }
-    return { tier: "byok", scenario: id, probe, protocol: "openai-chat" };
+    return { mode: "byok-openai", scenario: id, probe, protocol: "openai-chat" };
   }
 
   if (scenarioNeedsAnthropicByok(id)) {
     applyScenarioEnv(id, target);
-    applyHarnessLlmTier("anthropic-byok", target);
     const probe = await probeHarnessAnthropicLlmSandboxCompat();
     if (!probe.ok) {
       throw new Error(
         `Anthropic BYOK sandbox-compat probe failed (HTTP ${probe.httpStatus || 0}): ${probe.error ?? "unknown"}`,
       );
     }
-    return { tier: "anthropic-byok", scenario: id, probe, protocol: "anthropic-messages" };
+    return { mode: "byok-anthropic", scenario: id, probe, protocol: "anthropic-messages" };
   }
 
   throw new Error(`No LLM preflight rule for scenario: ${id}`);
@@ -152,7 +151,7 @@ export async function probeHarnessMatrixPreflight() {
         });
         const fb = result.fallback ? ` fallback=${result.fallback}` : "";
         const lat = result.probe?.latencyMs != null ? ` ${result.probe.latencyMs}ms` : "";
-        console.log(`  probe ${cell}: ok tier=${result.tier}${lat}${fb}`);
+        console.log(`  probe ${cell}: ok mode=${result.mode}${lat}${fb}`);
       } catch (err) {
         failed++;
         const msg = (err.message ?? String(err)).split("\n")[0];

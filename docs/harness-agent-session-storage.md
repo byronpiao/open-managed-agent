@@ -223,9 +223,9 @@ Export 细节（`opencode-sync.ts`）：
 脚本（真 AGS + 真 FlexDB，每轮新建会话、同一句短 prompt、统计行数）：
 
 ```bash
-npm run harness -- db-pressure --engines opencode --db-pressure-rounds N
-npm run harness -- db-pressure --engines claude   --db-pressure-rounds N   # 需 scenarios/.env.local-claude
-npm run harness -- db-pressure --engines all      --db-pressure-rounds N   # 两条都跑
+npm run harness -- db-pressure --engine opencode --db-pressure-rounds N
+npm run harness -- db-pressure --engine claude   --db-pressure-rounds N   # 需 scenarios/.env.local-claude
+npm run harness -- db-pressure --engine all      --db-pressure-rounds N   # 两条都跑
 ```
 
 详见 [harness-ops-notes.md](./harness-ops-notes.md)。**OpenCode 与 Claude 测的不是同一张表、也不是同一条写库路径**（见 §10.3）。
@@ -313,6 +313,6 @@ npm run harness -- db-pressure --engines all      --db-pressure-rounds N   # 两
 
 - `--db-pressure-rounds 10` 加大样本。  
 - 更长 prompt / 多 tool 场景对比 §10.1 / §10.2 基线。  
-- `--engines all` 一次跑齐两条链路。
+- `--engine all` 一次跑齐两条链路。
 
 **总括：** 已实测 OpenCode（按轮 export）与 Claude（按 turn append）；短 prompt 下 **行数个位数、体积几 KB/轮**，与「别每个 token 写库」的设计一致。评估上限请用长会话、多 tool 复测，不要用一句 `ok` 外推。

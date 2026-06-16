@@ -2,6 +2,8 @@
 
 ![Harness test scenarios (internal)](./diagrams/harness-test-scenarios.svg)
 
+验收命令与矩阵：[CONTRIBUTING.md](../CONTRIBUTING.md) · [Harness一条龙.md](../../Harness一条龙.md) · [scenarios/README.md](../scripts/harness/scenarios/README.md)
+
 ## OpenCode 对话会不会丢？
 
 - **每轮聊完**才会把 opencode 事件抄进 FlexDB（`harness_sync_events`）。
@@ -30,31 +32,33 @@
 
 ## FlexDB 压测怎么跑
 
-只关心数据库行数/体积时，不必跑完整 `harness -- local`：
+只关心数据库行数/体积时，不必跑完整 `run --infra local`：
 
 ```bash
 npm run build:runtime
-npm run harness -- db-pressure --engines opencode --db-pressure-rounds 10
-npm run harness -- db-pressure --engines claude   --db-pressure-rounds 10   # 要 .env.local-claude
-npm run harness -- db-pressure --engines all      --db-pressure-rounds 10
+npm run harness -- db-pressure --engine opencode --db-pressure-rounds 10
+npm run harness -- db-pressure --engine claude   --db-pressure-rounds 10   # 要 .env.local-claude
+npm run harness -- db-pressure --engine all      --db-pressure-rounds 10
 
 # 云上（跳过 deploy）
-npm run harness -- cloud-tcbr-opencode --verify-only --db-pressure --db-pressure-rounds 10
-npm run harness -- cloud-tcbr-claude   --verify-only --db-pressure --db-pressure-rounds 10
+npm run harness -- run --infra tcbr --engine opencode --verify-only --db-pressure --db-pressure-rounds 10
+npm run harness -- run --infra tcbr --engine claude   --verify-only --db-pressure --db-pressure-rounds 10
 ```
 
 OpenCode 看 `harness_sync_events`；Claude 看 `harness_claude_session_entries`（不是同一张表）。详见 [harness-agent-session-storage.md §10](./harness-agent-session-storage.md#10-flexdb-压测实测db-pressure)。
 
-## product-acceptance（产品向，不合入 smoke）
+## product-acceptance（产品向，不进默认 CI）
 
-比 `harness:smoke` 多验：同会话多轮开发、Skill 模型遵守、agent 经 bash 调 mcporter（CloudBase / 外部 MCP）、真箱 HITL、`session/load` 重连、可选 Claude 引擎。约 5–15 分钟，LLM 脆，**独立命令**：
+比 `test:merge` / `run --infra local` 多验：同会话多轮开发、Skill 模型遵守、agent 经 bash 调 mcporter（CloudBase / 外部 MCP）、真箱 HITL、`session/load` 重连、可选 Claude 引擎。约 5–15 分钟，LLM 脆，**独立命令**：
 
 ```bash
 npm run harness -- product-acceptance
-npm run harness -- product-acceptance --engines all   # 含 Claude
+npm run harness -- product-acceptance --engine all   # 含 Claude
 ```
 
-入口与 `harness -- local` 相同：`.env.harness`、preflight tier、端口 19090。
+入口：`.env.harness`、LLM preflight（mode 非 tier）、端口 19090。
+
+**FlexDB 紧**：部分用例故意走 FlexDB（跨进程重启）；`session/new` 可能 `LimitExceeded.OutOfReadRequestQuota`。可 `OAK_USE_MEMORY_STORE=1` 跑其它验收，或错峰重试 product-acceptance。
 
 ## 日志关联（OMA ↔ TRW）
 
@@ -65,3 +69,9 @@ npm run harness -- product-acceptance --engines all   # 含 Claude
 | `acpSessionId` / `harness_acp_session_id` | scope + 已有 env | 已有 env | harness 会话 |
 
 链路可从 OMA 或直连 TRW 开始；无入站 id 时各自生成 `requestId`。产品验收结束会打一行 `product_acceptance_summary` JSON（含 `sessionId`）。
+
+本地调试：
+
+```bash
+LOG_LEVEL=debug npm run harness -- run --infra local --engine opencode
+```

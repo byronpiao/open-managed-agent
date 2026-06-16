@@ -1,11 +1,9 @@
 # OpenManagedAgent Configuration — example / template
 #
-# Copy this file to agent.yaml to activate it:
-#   cp agent.yaml.example agent.yaml
+# Copy this file to agent.yaml to activate it (local managed dev):
+#   cp ../../agent.yaml.example agent.yaml
 #
-# When agent.yaml is present alongside the deployed code (or mounted at
-# /var/user/agent.yaml in a container), it takes the highest priority over
-# any AGENT_CONFIG env var injected by `magent agent:update`.
+# Repo-root template: agent.yaml.example · harness: agent.harness.yaml.example
 #
 # Schema mirrors Anthropic Managed Agents API:
 # https://platform.claude.com/docs/en/managed-agents/agent-setup
