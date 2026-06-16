@@ -11,6 +11,7 @@ scripts/harness/scenarios/.env.*
 !scripts/harness/scenarios/.env.*.example
 agent.yaml
 agent.harness.yaml
+agent.harness.claude.yaml
 !agent.yaml.example
 !agent.harness.yaml.example
 .plan/

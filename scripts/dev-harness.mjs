@@ -85,9 +85,16 @@ async function main() {
     process.exit(1);
   }
 
-  const harnessYaml = resolve(repoRoot, "agent.harness.yaml");
+  const harnessYaml = resolve(
+    repoRoot,
+    engine === "claude" ? "agent.harness.claude.yaml" : "agent.harness.yaml",
+  );
   if (!existsSync(harnessYaml)) {
-    console.error("缺少 agent.harness.yaml\n  cp agent.harness.yaml.example agent.harness.yaml");
+    const hint =
+      engine === "claude"
+        ? "agent.harness.claude.yaml（可复制 agent.harness.yaml 并改 engine: claude）"
+        : "agent.harness.yaml\n  cp agent.harness.yaml.example agent.harness.yaml";
+    console.error(`缺少 ${hint}`);
     process.exit(1);
   }
 
