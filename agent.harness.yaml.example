@@ -1,0 +1,154 @@
+# ==============================================================================
+# 沙箱 Agent 配置模板（runtime: harness）
+# ==============================================================================
+#
+# 用法
+#   cp agent.harness.yaml.example agent.harness.yaml
+#   magent login && tcb env use <你的环境 ID>
+#   magent agent:create --runtime harness --engine opencode \
+#     -f ./agent.harness.yaml --code ./packages/agent-runtime
+#
+# 工作副本 agent.harness.yaml 已在 .gitignore，勿提交密钥。
+# 使用指南：docs/harness-tutorial.md
+#
+# ------------------------------------------------------------------------------
+# 字段一览
+# ------------------------------------------------------------------------------
+#
+# | 字段                      | 必填 | 说明 |
+# |---------------------------|------|------|
+# | name                      | 是   | Agent 名称 |
+# | runtime                   | 是   | 固定写 harness |
+# | engine                    | 是   | opencode | claude |
+# | system                    | 是   | 系统提示词（多行 \|） |
+# | model                     | 否   | 省略 → CloudBase AI 默认 hy3-preview；见「模型配置」 |
+# | description               | 否   | 简短描述 |
+# | sandbox                   | 否   | 沙箱规格与镜像；省略用平台默认 |
+# | sandbox.infra             | 否   | serverless（默认） |
+# | sandbox.resources         | 否   | cpu / memory；默认 2 核、2Gi |
+# | sandbox.image             | 否   | 自定义 TCR 镜像；省略用平台默认镜像 |
+# | sandbox.imageRegistryType | 否   | personal（默认）| enterprise（企业版 TCR） |
+# | sandbox.auth              | 否   | token（默认，AGS 鉴权）；本地 harness 可写 none |
+# | sandbox.timeout           | 否   | 实例超时，如 30m |
+# | sandbox.env               | 否   | 起箱时注入的额外环境变量（有白名单，勿写模型密钥） |
+# | tools                     | 否   | 内置工具 / 自定义工具 / MCP 工具集 |
+# | mcp_servers               | 否   | MCP 服务地址 |
+# | skills                    | 否   | Skills 文件 |
+# | metadata                  | 否   | 自定义键值 |
+# | sessions_collection       | 否   | 会话存储集合名；默认 acp_sessions |
+#
+# ------------------------------------------------------------------------------
+# 模型配置（三选一；须与 engine 匹配）
+# ------------------------------------------------------------------------------
+#
+# 【A — 推荐】CloudBase 平台 AI
+#   省略 model，或：model: hy3-preview
+#   适用：opencode、claude
+#
+# 【B — 仅 opencode】箱内 zen（不扣 CloudBase AI 额度）
+#   model: zen
+#
+# 【C — 自有模型 BYOK】在 yaml 写 model 对象：
+#
+#   engine: opencode — apiBaseUrl 须为 OpenAI 兼容接口：
+#   model:
+#     id: <模型 ID>
+#     apiKey: <API Key>
+#     apiBaseUrl: https://<你的域名>/v1
+#
+#   engine: claude — apiBaseUrl 须为 Anthropic Messages 兼容接口：
+#   model:
+#     id: <模型 ID>
+#     apiKey: <API Key>
+#     apiBaseUrl: https://<你的域名>/anthropic
+#
+# 详见：docs/harness-opencode.md · docs/harness-claude-code.md
+#
+# ==============================================================================
+
+# --- 必填 ---
+
+name: My Sandbox Agent
+
+runtime: harness
+
+engine: opencode
+
+system: |
+  You are a helpful coding assistant in a remote sandbox workspace.
+  Reply concisely.
+
+# --- 模型（可选 — 玩法 A 可整段省略）---
+
+# model: hy3-preview
+# model: zen
+# model:
+#   id: <模型 ID>
+#   apiKey: <API Key>
+#   apiBaseUrl: https://<你的域名>/v1
+
+# --- 可选：描述 ---
+
+# description: 远程沙箱里的编码助手
+
+# --- 可选：沙箱 ---
+
+sandbox:
+  infra: serverless
+  auth: none
+  # 本地 harness / dev:harness 建议 none；云上正式交付省略（默认 token）
+  # resources:
+  #   cpu: "2"
+  #   memory: "2Gi"
+  # image: ccr.ccs.tencentyun.com/<命名空间>/<镜像>:<tag>
+  # imageRegistryType: enterprise
+  # timeout: 30m
+  # env:
+  #   MY_FEATURE_FLAG: "on"
+
+# --- 可选：工具 ---
+
+# tools:
+#   - type: agent_toolset
+#     default_config:
+#       enabled: true
+#       permission_policy:
+#         type: always_allow
+#     configs:
+#       - name: bash
+#         enabled: true
+#
+#   - type: custom
+#     name: my_tool
+#     description: 工具说明
+#     input_schema:
+#       type: object
+#       properties:
+#         query: { type: string }
+#       required: [query]
+#
+#   - type: mcp_toolset
+#     mcp_server_name: my-mcp
+#     default_config:
+#       permission_policy:
+#         type: always_allow
+
+# --- 可选：MCP 服务 ---
+
+# mcp_servers:
+#   - type: url
+#     name: my-mcp
+#     url: https://<你的 MCP 服务地址>/mcp
+
+# --- 可选：Skills ---
+
+# skills:
+#   - name: code-review
+#     description: 代码审查要点
+#     source: ./skills/code-review.md
+
+metadata:
+  runtime: open-managed-agent
+  harness: "1"
+
+# sessions_collection: acp_sessions

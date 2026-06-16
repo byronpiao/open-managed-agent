@@ -396,7 +396,6 @@ const HARNESS_DEPLOY_ENV_KEYS = [
   "HARNESS_COS_REGION",
   "HARNESS_COS_MOUNT_NAME",
   "HARNESS_COS_MOUNT_DIR",
-  "HARNESS_SANDBOX_IMAGE_REGISTRY_TYPE",
 ] as const;
 
 function forwardHarnessDeployEnv(envMap: Record<string, string>): void {
@@ -411,16 +410,12 @@ export function applyHarnessRuntimeEnv(
   envMap: Record<string, string>,
   config: AgentConfig,
   opts: {
-    sandboxImage?: string;
     harnessToolId?: string;
     clientToolCallbackBase?: string;
   } = {},
 ): Record<string, string> {
   if (config.runtime !== "harness") return envMap;
-  // Harness agent loop runs in AGS; drop managed-only local-dev flag that would block sandbox paths.
   delete envMap.OAK_DISABLE_SANDBOX;
-  envMap.HARNESS_SANDBOX_IMAGE =
-    opts.sandboxImage ?? config.sandbox?.image?.trim() ?? resolveHarnessSandboxImage();
   if (opts.harnessToolId) envMap.HARNESS_TOOL_ID = opts.harnessToolId;
   const mcporter = buildMcporterConfig({
     config,

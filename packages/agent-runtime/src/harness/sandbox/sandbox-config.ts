@@ -15,17 +15,32 @@ export interface SandboxConfigSource {
 
 export type SandboxInfra = "serverless" | "durable";
 
+/** AGS CustomConfiguration.ImageRegistryType — TCR namespace class. */
+export type SandboxImageRegistryType = "personal" | "enterprise";
+
 export interface SandboxResourcesInput {
   cpu?: string | number;
   memory?: string | number;
 }
 
+export type SandboxAuthMode = "token" | "none";
+
 export interface SandboxConfig {
   /** `serverless` = AGS (default); `durable` = Talos long-lived VM (not wired yet). */
   infra?: SandboxInfra;
+  /**
+   * AGS instance auth. Default `token` (sit_* via X-Access-Token).
+   * `none` — debug / local harness only; omit on production deploy.
+   */
+  auth?: SandboxAuthMode;
   resources?: SandboxResourcesInput;
-  /** Overrides HARNESS_SANDBOX_IMAGE / deploy template when set. */
+  /** Overrides built-in default when yaml omits sandbox.image. */
   image?: string;
+  /**
+   * AGS ImageRegistryType when using custom `image` on enterprise TCR.
+   * Default `personal` (personal-edition TCR). Omit for public CCR magent image.
+   */
+  imageRegistryType?: SandboxImageRegistryType;
   /**
    * serverless: AGS DefaultTimeout (e.g. `30m`).
    * durable: `0` or omitted = no TTL on Talos (future).
@@ -45,11 +60,15 @@ export interface SandboxResources {
 
 export interface ResolvedSandboxConfig {
   infra: SandboxInfra;
+  auth: SandboxAuthMode;
   resources: SandboxResources;
   image?: string;
+  imageRegistryType?: SandboxImageRegistryType;
   timeout?: string;
   env?: Record<string, string>;
 }
+
+export const DEFAULT_SANDBOX_IMAGE_REGISTRY_TYPE: SandboxImageRegistryType = "personal";
 
 export const DEFAULT_SANDBOX_INFRA: SandboxInfra = "serverless";
 
@@ -94,6 +113,17 @@ function normalizeMemory(value: unknown, fallback: string): string {
   );
 }
 
+function normalizeAuth(value: unknown): SandboxAuthMode {
+  if (value === undefined || value === null || value === "") return "token";
+  if (value === "token" || value === "none") return value;
+  throw new SandboxConfigError(`sandbox.auth must be "token" or "none", got ${JSON.stringify(value)}`);
+}
+
+/** AGS API AuthMode from resolved sandbox config. */
+export function resolveSandboxAgsAuthMode(sandbox: ResolvedSandboxConfig): "TOKEN" | "NONE" {
+  return sandbox.auth === "none" ? "NONE" : "TOKEN";
+}
+
 function normalizeInfra(value: unknown): SandboxInfra {
   if (value === undefined || value === null || value === "") return DEFAULT_SANDBOX_INFRA;
   if (value === "serverless" || value === "durable") return value;
@@ -116,6 +146,14 @@ function normalizeImage(value: unknown): string | undefined {
   return trimmed || undefined;
 }
 
+function normalizeImageRegistryType(value: unknown): SandboxImageRegistryType | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (value === "personal" || value === "enterprise") return value;
+  throw new SandboxConfigError(
+    `sandbox.imageRegistryType must be "personal" or "enterprise", got ${JSON.stringify(value)}`,
+  );
+}
+
 /** Merge YAML `sandbox` with defaults; does not throw on engine/infra mismatch (use assertSandboxAcquireAllowed). */
 export function resolveSandboxConfig(
   source: SandboxConfigSource,
@@ -125,18 +163,22 @@ export function resolveSandboxConfig(
   void (engine ?? source.engine ?? "opencode");
 
   const infra = normalizeInfra(raw?.infra);
+  const auth = normalizeAuth(raw?.auth);
   const resources: SandboxResources = {
     cpu: normalizeCpu(raw?.resources?.cpu, DEFAULT_SANDBOX_RESOURCES.cpu),
     memory: normalizeMemory(raw?.resources?.memory, DEFAULT_SANDBOX_RESOURCES.memory),
   };
   const image = normalizeImage(raw?.image);
+  const imageRegistryType = normalizeImageRegistryType(raw?.imageRegistryType);
   const timeout = normalizeTimeout(raw?.timeout);
   const env = normalizeSandboxEnv(raw?.env as Record<string, unknown> | undefined);
 
   return {
     infra,
+    auth,
     resources,
     ...(image ? { image } : {}),
+    ...(imageRegistryType ? { imageRegistryType } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
     ...(env ? { env } : {}),
   };
@@ -145,6 +187,13 @@ export function resolveSandboxConfig(
 /** AGS CustomConfiguration.Resources shape. */
 export function buildAgsSandboxResources(resources: SandboxResources): { CPU: string; Memory: string } {
   return { CPU: resources.cpu, Memory: resources.memory };
+}
+
+export function resolveSandboxImageRegistryType(
+  sandbox: ResolvedSandboxConfig,
+  fallback: SandboxImageRegistryType = DEFAULT_SANDBOX_IMAGE_REGISTRY_TYPE,
+): SandboxImageRegistryType {
+  return sandbox.imageRegistryType ?? fallback;
 }
 
 export function resolveSandboxImage(sandbox: ResolvedSandboxConfig, fallbackImage: string): string {
@@ -189,8 +238,10 @@ export function applyResolvedSandboxToConfig<T extends SandboxConfigSource>(
     ...config,
     sandbox: {
       infra: resolved.infra,
+      auth: resolved.auth,
       resources: { ...resolved.resources },
       ...(resolved.image ? { image: resolved.image } : {}),
+      ...(resolved.imageRegistryType ? { imageRegistryType: resolved.imageRegistryType } : {}),
       ...(resolved.timeout !== undefined ? { timeout: resolved.timeout } : {}),
       ...(resolved.env ? { env: { ...resolved.env } } : {}),
     },

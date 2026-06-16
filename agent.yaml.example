@@ -1,0 +1,24 @@
+# 托管 Agent 配置模板（runtime: managed，默认）
+#
+#   cp agent.yaml.example agent.yaml
+#   cp .env.example .env                 # 仅 OMA 研发 / SDK 集成时需要
+#
+# 日常使用 magent：编辑 agent.yaml，部署时 magent 会将其写入云上 AGENT_CONFIG_B64。
+# 详见 README · packages/agent-runtime/agent.yaml.example（字段说明更全）
+
+name: OpenManagedAgent Coding Assistant
+model: hunyuan-t1-latest
+system: You are a helpful coding assistant. You can read, write, and execute code.
+description: A coding agent with file system and shell access.
+
+runtime: managed
+
+tools:
+  - type: agent_toolset
+    default_config:
+      enabled: true
+      permission_policy:
+        type: always_allow
+
+mcp_servers: []
+skills: []

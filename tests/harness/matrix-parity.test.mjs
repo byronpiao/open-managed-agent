@@ -2,7 +2,7 @@
  * Harness 主链路矩阵 #8 #9 #10 — 真 AGS 沙箱验收。
  *
  *   node tests/harness/matrix-parity.test.mjs
- *   node tests/harness/matrix-parity.test.mjs --engines opencode|claude|all
+ *   node tests/harness/matrix-parity.test.mjs --engine opencode|claude|all
  *
  * 需要 `.env.harness`（与 harness -- local 相同）。
  * claude 还需 `scripts/harness/scenarios/.env.local-claude`。
@@ -433,7 +433,7 @@ export async function runMatrixParityTests(enginesArg) {
 
   const engines =
     enginesArg ??
-    (process.argv.includes("--engines")
+    (process.argv.includes("--engine") || process.argv.includes("--engines")
       ? parseHarnessEnginesArg(process.argv.slice(2))
       : "all");
   assertHarnessEnginesEnv(engines);
@@ -441,7 +441,7 @@ export async function runMatrixParityTests(enginesArg) {
   const engineList = [];
   if (harnessEnginesIncludeOpencode(engines)) engineList.push("opencode");
   if (harnessEnginesIncludeClaude(engines)) engineList.push("claude");
-  assert.ok(engineList.length > 0, `no engines selected from --engines ${engines}`);
+  assert.ok(engineList.length > 0, `no engines selected from --engine ${engines}`);
 
   const { teardownHarnessSandboxes } = await import("../../scripts/harness/ags-teardown.mjs");
   console.log("teardown (pre-flight)…");

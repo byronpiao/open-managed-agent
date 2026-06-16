@@ -1,8 +1,8 @@
 /**
  * Cloud harness: deploy + gateway ACP smoke.
  *
- *   npm run harness -- cloud-tcbr-opencode
- *   npm run harness -- cloud-scf-claude
+ *   npm run harness -- run --infra tcbr --engine opencode
+ *   npm run harness -- run --infra scf --engine claude
  */
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -15,6 +15,7 @@ import {
   cloudHarnessAgentPinVar,
   cloudHarnessScenario,
   logHarnessScenario,
+  parseCloudCosMount,
   parseHarnessEnginesArg,
   pinnedCloudHarnessAgentId,
   resolveHarnessAgentYaml,
@@ -32,10 +33,13 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function harnessDeployEnv(backend = "tcbr", engine = "opencode") {
+function harnessDeployEnv(backend = "tcbr", engine = "opencode", argv = []) {
   const env = { ...process.env };
   if (!pinnedHarnessToolId()) delete env.HARNESS_TOOL_ID;
-  const meta = applyHarnessScenario(cloudHarnessScenario(backend, engine), env);
+  const cloudCosMount = parseCloudCosMount(argv);
+  const meta = applyHarnessScenario(cloudHarnessScenario(backend, engine), env, {
+    cloudCosMount,
+  });
   logHarnessScenario(meta);
   return env;
 }
@@ -62,7 +66,7 @@ async function agentUpdateWithRetry(agentId, yamlPath, envId, opts = {}) {
       console.log(`\n=== magent agent:update ${agentId} engine=${engine} (attempt ${attempt}/${maxAttempts}) ===\n`);
       execSync(cmd, {
         cwd: repoRoot,
-        env: opts.env ?? harnessDeployEnv(opts.backend ?? "tcbr", engine),
+        env: opts.env ?? harnessDeployEnv(opts.backend ?? "tcbr", engine, opts.argv ?? []),
         encoding: "utf-8",
         stdio: ["inherit", "pipe", "pipe"],
         maxBuffer: 20 * 1024 * 1024,
@@ -185,6 +189,7 @@ async function deployCloudHarness(argv, backend = "tcbr", engine = "opencode") {
       afterRedeploy: backend === "tcbr",
       backend,
       engine,
+      argv,
     });
   } else if (backend === "tcbr") {
     console.log(`=== magent agent:create (tcbr harness ${engine}, ~3–5 min) ===`);
@@ -193,7 +198,7 @@ async function deployCloudHarness(argv, backend = "tcbr", engine = "opencode") {
       {
         encoding: "utf-8",
         cwd: repoRoot,
-        env: harnessDeployEnv(backend, engine),
+        env: harnessDeployEnv(backend, engine, argv),
         maxBuffer: 20 * 1024 * 1024,
       },
     );
@@ -215,7 +220,7 @@ async function deployCloudHarness(argv, backend = "tcbr", engine = "opencode") {
       {
         encoding: "utf-8",
         cwd: repoRoot,
-        env: harnessDeployEnv(backend, engine),
+        env: harnessDeployEnv(backend, engine, argv),
         maxBuffer: 20 * 1024 * 1024,
       },
     );
@@ -249,7 +254,7 @@ async function deployCloudHarness(argv, backend = "tcbr", engine = "opencode") {
     sh(`curl -sf "${base}/healthz" | head -c 800`);
     console.log("\n");
     await agentUpdateWithRetry(agentId, yamlPath, envId, {
-      env: { ...harnessDeployEnv(backend, engine), CLOUDBASE_SERVER_URL: base },
+      env: { ...harnessDeployEnv(backend, engine, argv), CLOUDBASE_SERVER_URL: base },
       backend,
       engine,
     });
@@ -502,10 +507,10 @@ async function maybeProbeLlm(backend = "tcbr", engine = "opencode") {
   const result = await runHarnessLlmPreflight(scenario, { allowTestFallback: false });
   if (result.probe?.ok) {
     console.log(
-      `✓ ${result.protocol} tier=${result.tier} ${result.probe.latencyMs}ms ` +
+      `✓ ${result.protocol} llm=${result.mode} ${result.probe.latencyMs}ms ` +
         `model=${result.probe.model} reply=${result.probe.replySnippet ?? "(empty)"}`,
     );
-  } else if (result.tier === "zen") {
+  } else if (result.mode === "zen") {
     console.log("✓ tier=zen (no host probe)");
   }
 }

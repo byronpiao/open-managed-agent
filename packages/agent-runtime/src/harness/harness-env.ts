@@ -5,7 +5,7 @@
 
 import { resolveAnthropicApiKeyFromEnv } from "./llm-providers.js";
 
-/** 唯一允许内置的默认：公开 CCR magent 镜像（可用 HARNESS_SANDBOX_IMAGE 覆盖）。 */
+/** Built-in default when agent yaml omits sandbox.image (bumped by build-push-magent-public.sh). */
 export const HARNESS_PUBLIC_MAGENT_IMAGE =
   "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260615-1818-59b1a5-magent";
 
@@ -18,14 +18,14 @@ export function requireEnv(name: string, hint?: string): string {
   return value;
 }
 
-export function resolveHarnessSandboxImage(): string {
-  return process.env.HARNESS_SANDBOX_IMAGE?.trim() || HARNESS_PUBLIC_MAGENT_IMAGE;
+export function resolveHarnessSandboxImage(agentImage?: string | null): string {
+  const fromYaml = agentImage?.trim();
+  if (fromYaml) return fromYaml;
+  return HARNESS_PUBLIC_MAGENT_IMAGE;
 }
 
-/** AGS instance auth — production uses TOKEN (sit_* via X-Access-Token); NONE is debug-only. */
+/** @deprecated use sandbox.auth in agent.yaml — default token; `none` for local harness only. */
 export function resolveHarnessSandboxAuthMode(): "TOKEN" | "NONE" {
-  const raw = process.env.HARNESS_SANDBOX_AUTH_MODE?.trim().toUpperCase();
-  if (raw === "NONE") return "NONE";
   return "TOKEN";
 }
 
@@ -123,7 +123,7 @@ export function hasHarnessHermesLlmEnv(): boolean {
   return hasHarnessCustomLlmEnv() || hasHarnessAnthropicLlmEnv();
 }
 
-/** Custom LLM suite: CloudBase + LLM_* (probe / hitl / Mimo pong). Not required for test:full. */
+/** Custom LLM suite: CloudBase + LLM_* (probe / hitl / Mimo pong). Not required for test:merge. */
 export function assertHarnessLlmSuiteEnv(): void {
   assertHarnessCloudCreds();
   assertHarnessLlmEnv();

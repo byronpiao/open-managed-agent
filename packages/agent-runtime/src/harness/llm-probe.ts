@@ -97,16 +97,16 @@ export function formatPlatformProbeFailureGuide(result: HarnessLlmProbeResult): 
     lines.push(
       "What this means:",
       "  CloudBase AI free / experience quota for hy3-preview is exhausted.",
-      "  test:full intentionally probes hy3 BEFORE starting real AGS boxes (fail-fast).",
+      "  test:merge intentionally probes hy3 BEFORE starting real AGS boxes (fail-fast).",
       "",
       "This is NOT a sandbox or CAM bug — gateway auth succeeded; the model billing gate refused.",
       "",
       "Options (pick one):",
       "  1. Console: enable hy3-preview + purchase Token pack / raise quota",
       "     https://docs.cloudbase.net/ai/model/openai-sdk-access",
-      "  2. Skip platform path: npm run harness -- cloud-tcbr   (opencode zen, no hy3)",
+      "  2. Skip platform path: npm run harness -- run --infra tcbr --engine opencode   (opencode zen, no hy3)",
       "  3. Product demo with zen: agent.yaml model: zen + magent run (see harness-tutorial)",
-      "  4. npm run test:full auto-falls back to opencode zen on 429 (logs a warning; hy3 not validated)",
+      "  4. npm run test:merge auto-falls back to opencode zen on 429 (logs a warning; hy3 not validated)",
       "",
     );
   } else if (kind === "missing_credentials") {

@@ -155,31 +155,14 @@ export function harnessEnvSlug(envId: string, maxLen = 40): string {
   return envId.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, maxLen) || "default";
 }
 
-function truthyHarnessEnvFlag(name: string): boolean {
-  const v = process.env[name]?.trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
-}
-
-/**
- * E2e only: `-no-cos` / `-with-cos` suffixes for parallel tools in one env (`.env.harness`).
- * Production deploy must leave `HARNESS_TOOL_COS_NAME_SUFFIX` unset.
- */
-export function harnessToolCosNameSuffixEnabled(): boolean {
-  return truthyHarnessEnvFlag("HARNESS_TOOL_COS_NAME_SUFFIX");
-}
-
-/** Resolve auto-created AGS tool name for env (COS affects mounts, not name, unless e2e suffix mode). */
-export function resolveHarnessToolName(envId: string, cosEnabled: boolean): string {
-  const suffixMode = harnessToolCosNameSuffixEnabled();
-  const maxLen = suffixMode && cosEnabled ? 38 : 40;
-  const slug = harnessEnvSlug(envId, maxLen);
-  const base = `oma-harness-${slug}`;
-  if (!suffixMode) return base;
-  return cosEnabled ? `${base}-with-cos` : `${base}-no-cos`;
+/** Resolve auto-created AGS tool name for env (`oma-harness-{slug}`; COS is mount config only). */
+export function resolveHarnessToolName(envId: string, _cosEnabled = false): string {
+  const slug = harnessEnvSlug(envId, 40);
+  return `oma-harness-${slug}`;
 }
 
 export function harnessToolNameForEnv(envId: string): string {
-  return resolveHarnessToolName(envId, false);
+  return resolveHarnessToolName(envId);
 }
 
 /** AGS StartSandboxInstance CustomConfiguration.Env entries (F4 / D1). */
@@ -551,6 +534,7 @@ export {
   DEFAULT_SANDBOX_INFRA,
   DEFAULT_SANDBOX_RESOURCES,
   resolveSandboxConfig,
+  resolveSandboxImageRegistryType,
   assertSandboxAcquireAllowed,
   buildAgsSandboxResources,
   applyResolvedSandboxToConfig,
@@ -571,20 +555,26 @@ export function normalizeAgentConfig(config: AgentConfig): AgentConfig {
   return applyResolvedSandboxToConfig(config, resolved);
 }
 
+/**
+ * Local `.env` / `.env.harness` overrides (dev only). Applied after agent.yaml or AGENT_CONFIG_B64.
+ */
+export function applyDevEnvOverrides(config: AgentConfig): AgentConfig {
+  const next: AgentConfig = { ...config };
+  const name = process.env.AGENT_NAME?.trim();
+  const system = process.env.AGENT_SYSTEM?.trim();
+  const model = process.env.AGENT_MODEL?.trim();
+  if (name) next.name = name;
+  if (system) next.system = decodeURIComponent(system);
+  if (model) next.model = model;
+  return normalizeAgentConfig(next);
+}
+
 // ── Loader ────────────────────────────────────────────────────────────────────
 //
-// Loading priority:
-//   1. agent.yaml / agent.yml file — highest priority; present only when the
-//      user explicitly created one (e.g. cp agent.yaml.example agent.yaml).
-//      The template ships as agent.yaml.example so the default deploy carries
-//      no yaml, letting AGENT_CONFIG_B64 drive config in the cloud.
-//   2. AGENT_CONFIG / AGENT_CONFIG_B64 env var — written by `magent agent:update`
-//      (the normal cloud path when no yaml file is present)
-//   3. Individual env vars (AGENT_MODEL, AGENT_SYSTEM, AGENT_NAME) — backward compat fallback
-//
-// Rationale: a user-placed agent.yaml is an intentional, version-controlled
-// override that should always win. Without it, the cloud operator controls
-// the config via env vars — no yaml means no accidental bundled config freeze.
+//   1. agent.yaml / agent.yml
+//   2. AGENT_CONFIG / AGENT_CONFIG_B64（magent 云上部署）
+//   3. AGENT_NAME / AGENT_MODEL / AGENT_SYSTEM
+//   4. applyDevEnvOverrides — `.env` / `.env.harness` 与 yaml 重叠项（研发本地）
 
 export async function loadAgentConfig(): Promise<AgentConfig> {
   // Priority 1: YAML file (highest — explicit, version-controlled config)
@@ -598,7 +588,7 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
   for (const p of searchPaths) {
     try {
       const content = await fs.readFile(p, "utf-8");
-      const config = normalizeAgentConfig(parseYaml(content) as AgentConfig);
+      const config = applyDevEnvOverrides(normalizeAgentConfig(parseYaml(content) as AgentConfig));
       console.log(`[Config] Loaded agent config from: ${p}`);
       return config;
     } catch {
@@ -614,7 +604,7 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
 
   if (rawConfig) {
     try {
-      const config = normalizeAgentConfig(JSON.parse(rawConfig) as AgentConfig);
+      const config = applyDevEnvOverrides(normalizeAgentConfig(JSON.parse(rawConfig) as AgentConfig));
       console.log(`[Config] Loaded from AGENT_CONFIG env var`);
       return config;
     } catch (err) {
@@ -624,11 +614,13 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
 
   // Priority 3: pure env vars (backward compatible)
   console.log("[Config] No agent.yaml or AGENT_CONFIG found, using environment variables");
-  return normalizeAgentConfig({
-    name: process.env.AGENT_NAME ?? "open-managed-agent",
-    model: process.env.AGENT_MODEL ?? "hunyuan-t1-latest",
-    system: process.env.AGENT_SYSTEM
-      ? decodeURIComponent(process.env.AGENT_SYSTEM)
-      : "You are a helpful assistant.",
-  });
+  return applyDevEnvOverrides(
+    normalizeAgentConfig({
+      name: process.env.AGENT_NAME ?? "open-managed-agent",
+      model: process.env.AGENT_MODEL ?? "hunyuan-t1-latest",
+      system: process.env.AGENT_SYSTEM
+        ? decodeURIComponent(process.env.AGENT_SYSTEM)
+        : "You are a helpful assistant.",
+    }),
+  );
 }

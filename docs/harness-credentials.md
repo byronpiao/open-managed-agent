@@ -84,14 +84,14 @@ node scripts/check-harness-ready.mjs
    | 使用自有 TCR 私有镜像 | `QcloudTCRReadOnlyAccess`（必须） |
    | 启用 COS 工作区持久化 | 再加 COS 写权限（见下节） |
 
-6. **角色名称**：如 `OMAHarnessSandbox`（仅字母数字及 `+=,.@-_`）。
+6. **角色名称**：如 `HarnessSandboxRole`（仅字母数字及 `+=,.@-_`）。
 7. 复制角色 **ARN**，形如：
    ```text
-   qcs::cam::uin/1234567890:roleName/OMAHarnessSandbox
+   qcs::cam::uin/1234567890:roleName/HarnessSandboxRole
    ```
 8. 在将要执行 `magent agent:create` 的终端：
    ```bash
-   export HARNESS_TOOL_ROLE_ARN='qcs::cam::uin/1234567890:roleName/OMAHarnessSandbox'
+   export HARNESS_TOOL_ROLE_ARN='qcs::cam::uin/1234567890:roleName/HarnessSandboxRole'
    node scripts/check-harness-ready.mjs
    ```
 
@@ -128,10 +128,10 @@ node scripts/check-harness-ready.mjs
 | 变量 | 何时需要 |
 |------|----------|
 | `CLOUDBASE_AGENT_ID` | 部署后记下 id，`magent run -a` 时可省略 |
-| `LLM_API_KEY` + `LLM_MODEL` + URL | 使用自有 LLM 厂商（见 [使用指南 · 选择模型](./harness-tutorial.md#选择模型)） |
+| yaml `model`（含 id / apiKey / apiBaseUrl） | 使用自有 LLM 厂商；见 [选择模型](./harness-tutorial.md#选择模型) |
 | `HARNESS_TOOL_ROLE_ARN` | 见上表 |
 | `HARNESS_COS_*` | 启用 COS 工作区时整组必填 |
-| `HARNESS_SANDBOX_IMAGE` | 自定义 TCR 镜像地址 |
+| `agent.harness.yaml` `sandbox.image` | 自定义 TCR 镜像地址 |
 
 ---
 

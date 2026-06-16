@@ -6,10 +6,11 @@
  */
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { loadEnv } from "./load-env.mjs";
+import { loadEnv, applyHarnessCosFromHarnessFile } from "./load-env.mjs";
 import { COS_POST_WRITE_SETTLE_MS, postWorkspaceSnapshot } from "./cos-lib.mjs";
 
 loadEnv();
+applyHarnessCosFromHarnessFile();
 
 const envId = process.env.CLOUDBASE_ENV_ID;
 const subPath = process.env.HARNESS_COS_SUBPATH?.trim() || `harness-e2e-${Date.now().toString(36)}`;

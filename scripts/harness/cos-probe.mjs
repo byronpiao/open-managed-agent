@@ -4,10 +4,14 @@
  * With HARNESS_COS_ENABLED=1 expects snapshot 200; otherwise documents §5 skip.
  */
 import { setTimeout as sleep } from "node:timers/promises";
-import { loadEnv, assertHarnessCreds } from "./load-env.mjs";
+import { loadEnv, assertHarnessCreds, applyHarnessCosFromHarnessFile } from "./load-env.mjs";
+import { harnessCosEnabledFromMap, readHarnessEnvMap } from "../../lib/harness-env-file.mjs";
 import { COS_POST_WRITE_SETTLE_MS, postWorkspaceSnapshot } from "./cos-lib.mjs";
 
 loadEnv();
+if (harnessCosEnabledFromMap(readHarnessEnvMap())) {
+  applyHarnessCosFromHarnessFile();
+}
 assertHarnessCreds();
 
 const envId = process.env.CLOUDBASE_ENV_ID;

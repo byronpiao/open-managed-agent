@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Update AGS sandbox tool image to HARNESS_SANDBOX_IMAGE.
- * Resolves tool by HARNESS_TOOL_ID (`.env.harness` only) or by oma-harness-{env} name.
+ * Update AGS sandbox tool image to the harness pinned sandbox image
+ * (agent.harness.yaml sandbox.image, else HARNESS_PUBLIC_MAGENT_IMAGE).
+ * When `.env.harness` has HARNESS_COS_ENABLED=1, also syncs StorageMounts.
  */
 import { execSync } from "child_process";
-import { writeFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import {
@@ -13,18 +13,15 @@ import {
   pinnedHarnessToolId,
   readHarnessEnvMap,
 } from "../../lib/harness-env-file.mjs";
-import { loadEnv } from "./load-env.mjs";
+import { resolveHarnessOperationalSandboxImage } from "../../lib/resolve-harness-sandbox-image.mjs";
+import { loadEnv, applyHarnessCosFromHarnessFile } from "./load-env.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
 
 loadEnv();
 
-const image = process.env.HARNESS_SANDBOX_IMAGE?.trim();
-if (!image) {
-  console.error("Missing HARNESS_SANDBOX_IMAGE");
-  process.exit(1);
-}
+const image = await resolveHarnessOperationalSandboxImage(repoRoot);
 
 const envMap = readHarnessEnvMap();
 const envId = process.env.CLOUDBASE_ENV_ID?.trim() || envMap.get("CLOUDBASE_ENV_ID")?.trim();
@@ -59,20 +56,25 @@ if (!tool) {
 
 const currentTag = tool.CustomConfiguration?.Image?.split(":").pop();
 const nextTag = image.split(":").pop();
-if (currentTag === nextTag) {
+const hasCosMounts = (tool.StorageMounts ?? []).length > 0;
+const needsCosMounts = cosEnabled && !hasCosMounts;
+if (currentTag === nextTag && !needsCosMounts) {
   console.log(`Tool ${tool.ToolId} (${tool.ToolName}) already on tag ${nextTag} — skip`);
   process.exit(0);
 }
 
-const cfg = { ...tool.CustomConfiguration, Image: image, ImageRegistryType: "personal" };
-delete cfg.ImageDigest;
+if (cosEnabled) {
+  applyHarnessCosFromHarnessFile();
+}
 
-const cfgPath = "/tmp/oma-harness-tool-custom-configuration.json";
-writeFileSync(cfgPath, JSON.stringify(cfg));
+const { syncHarnessAgsTool } = await import(
+  "../../packages/agent-runtime/dist/harness/sandbox/orchestrator.js"
+);
 
 console.log(`Updating ${tool.ToolId} (${tool.ToolName}) → ${image}`);
-execSync(`tcb sandbox tool update ${tool.ToolId} --custom-configuration "$(cat ${cfgPath})"`, {
-  stdio: "inherit",
-  shell: "/bin/bash",
+await syncHarnessAgsTool({
+  envId,
+  toolId: tool.ToolId,
+  image,
 });
 console.log("Done. Wait ~120s after tool update before instance start (AGS image pull).");

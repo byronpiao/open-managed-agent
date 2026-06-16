@@ -23,7 +23,8 @@ sandbox:
   resources:              # 可选；省略则用默认值
     cpu: "2"
     memory: "2Gi"
-  # image: ...            # 高级：覆盖 HARNESS_SANDBOX_IMAGE / 部署模板
+  # image: ...            # 高级：覆盖内置 HARNESS_PUBLIC_MAGENT_IMAGE
+  # imageRegistryType: enterprise   # 企业版 TCR（默认 personal）
   # timeout: 30m          # serverless：AGS DefaultTimeout；durable：0 = 长驻（Talos，未接线）
   env:                    # 可选：起箱时注入 TRW 实例 env（显式白名单式 passthrough）
     MY_FEATURE_FLAG: "on"
@@ -44,17 +45,7 @@ sandbox:
 
 与 TRW **workspace API** 运行时 env 白名单（`tcb-remote-workspace/docs/workspace-env.md`）无关 — `sandbox.env` 只管**起箱**一刻的实例 env。
 
-Hermes（Talos only）内部示例见 `scripts/harness/scenarios/agent.hermes.yaml`：
-
-```yaml
-runtime: harness
-engine: hermes
-sandbox:
-  infra: durable
-  resources:
-    cpu: "2"
-    memory: "4Gi"
-```
+Hermes（**内部草案，未对客**）：Talos `durable` 尚未接线；LLM 配置按 **OpenAI 兼容** `model` ModelSpec 预留（与 opencode 相同形状），见 `scripts/harness/scenarios/agent.hermes.yaml`。
 
 ## 默认值（解析入口 `normalizeAgentConfig`）
 
@@ -65,7 +56,8 @@ sandbox:
 | `sandbox.infra` | `serverless` |
 | `sandbox.resources.cpu` | `"2"` |
 | `sandbox.resources.memory` | `"2Gi"` |
-| `sandbox.image` | 未设置 → 走 `HARNESS_SANDBOX_IMAGE` / 部署模板 |
+| `sandbox.image` | 未设置 → 内置 `HARNESS_PUBLIC_MAGENT_IMAGE` |
+| `sandbox.imageRegistryType` | 未设置 → `personal`（AGS ImageRegistryType） |
 | `sandbox.timeout` | 未设置 → orchestrator 内 `30m`（AGS DefaultTimeout） |
 
 `memory` 可写 `"4Gi"` 或裸数字 `4`（解析为 `4Gi`）。

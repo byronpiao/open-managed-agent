@@ -3,9 +3,9 @@
  * Harness product acceptance — product-feel checks on top of matrix-parity.
  *
  *   npm run harness -- product-acceptance
- *   npm run harness -- product-acceptance --engines all
+ *   npm run harness -- product-acceptance --engine all
  *
- * NOT part of harness:smoke. Uses standard .env.harness + preflight tier (port 19090).
+ * NOT part of default CI. Uses `.env.harness` + LLM preflight env (port 19090).
  */
 
 import { strict as assert } from "node:assert";
@@ -18,19 +18,21 @@ import {
   loadEnv,
   assertHarnessCreds,
   applyHarnessScenario,
-  applyHarnessLlmTier,
   applyHarnessTestDefaults,
   applyScenarioEnv,
+  captureHarnessLlmEnv,
+  describeHarnessLlmMode,
+  hasAnthropicByokInEnv,
   parseHarnessEnginesArg,
   harnessEnginesIncludeOpencode,
   harnessEnginesIncludeClaude,
+  resolveOpencodeModelFromEnv,
+  restoreHarnessLlmEnv,
 } from "./load-env.mjs";
+import { harnessPreflightDoneFromArgv } from "../../lib/harness-cli-flags.mjs";
 import { buildMatrixParityAgentConfig } from "../../tests/harness/matrix-parity.test.mjs";
 import { runMatrixParityTests } from "../../tests/harness/matrix-parity.test.mjs";
 
-/** Parent `envForHarnessTier` / `HARNESS_E2E_OPENCODE_TIER` — pin before `loadEnv()`. */
-const harnessTierPin = process.env.HARNESS_LLM_TIER?.trim();
-const opencodeTierPin = process.env.HARNESS_E2E_OPENCODE_TIER?.trim();
 loadEnv();
 assertHarnessCreds();
 
@@ -38,30 +40,17 @@ const ENGINES = parseHarnessEnginesArg(process.argv.slice(2));
 const RUN_OPENCODE = harnessEnginesIncludeOpencode(ENGINES);
 const RUN_CLAUDE = harnessEnginesIncludeClaude(ENGINES);
 
-function applyPinnedHarnessTier(tier) {
-  if (tier === "anthropic-byok") {
-    applyScenarioEnv("local-claude");
-    applyHarnessLlmTier("anthropic-byok");
-    return;
+if (!harnessPreflightDoneFromArgv()) {
+  if (RUN_CLAUDE && !RUN_OPENCODE) {
+    applyHarnessScenario("local-claude");
+  } else {
+    applyHarnessScenario("local-opencode");
   }
-  if (tier === "byok") {
-    applyScenarioEnv("local-opencode");
-    applyHarnessLlmTier("byok");
-    return;
-  }
-  applyHarnessLlmTier(tier);
-}
-
-if (harnessTierPin) {
-  applyPinnedHarnessTier(harnessTierPin);
-} else if (opencodeTierPin === "zen") {
-  applyHarnessLlmTier("zen");
-} else if (RUN_CLAUDE && !RUN_OPENCODE) {
-  applyHarnessScenario("local-claude");
-} else {
-  applyHarnessScenario("local-opencode");
 }
 applyHarnessTestDefaults();
+
+/** Parent preflight wrote AGENT_MODEL / LLM_* — snapshot for opencode↔claude switches */
+const opencodeLlmEnvSnapshot = captureHarnessLlmEnv(process.env);
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const E2E_PORT = 19090;
@@ -88,11 +77,9 @@ function record(id, status, detail = "") {
 }
 
 function resolveOpencodeModel() {
-  const tier =
-    process.env.HARNESS_E2E_OPENCODE_TIER?.trim() || process.env.HARNESS_LLM_TIER?.trim();
-  if (tier === "zen" || process.env.HARNESS_FORCE_ZEN === "1") return "zen";
-  if (tier === "platform") return buildMatrixParityAgentConfig().model;
-  return process.env.LLM_MODEL?.trim() ?? buildMatrixParityAgentConfig().model;
+  return (
+    resolveOpencodeModelFromEnv() ?? buildMatrixParityAgentConfig().model
+  );
 }
 
 function buildAcceptanceAgentConfig() {
@@ -578,11 +565,7 @@ async function runReAcquire(sessionId) {
 }
 
 function restoreOpencodeHarnessTier() {
-  if (harnessTierPin) {
-    applyPinnedHarnessTier(harnessTierPin);
-  } else if (opencodeTierPin === "zen") {
-    applyHarnessLlmTier("zen");
-  }
+  restoreHarnessLlmEnv(opencodeLlmEnvSnapshot);
   applyHarnessTestDefaults();
 }
 
@@ -732,19 +715,11 @@ async function runHitlReal() {
 }
 
 function applyClaudeHarnessLlmTier() {
-  const tier =
-    process.env.HARNESS_E2E_CLAUDE_TIER?.trim() || process.env.HARNESS_LLM_TIER?.trim();
-  if (tier === "anthropic-byok") {
+  if (hasAnthropicByokInEnv()) {
     applyScenarioEnv("local-claude");
-    applyHarnessLlmTier("anthropic-byok");
-    applyHarnessTestDefaults();
-    return;
-  }
-  if (tier === "platform" || tier === "zen") {
+  } else {
     applyHarnessScenario("local-claude");
-    return;
   }
-  if (tier) applyPinnedHarnessTier(tier);
   applyHarnessTestDefaults();
 }
 
@@ -962,8 +937,7 @@ async function main() {
 
   console.log("=== Harness product acceptance ===");
   console.log(
-    `engines=${ENGINES} tier=${process.env.HARNESS_LLM_TIER} ` +
-      `opencodeTier=${process.env.HARNESS_E2E_OPENCODE_TIER ?? "-"} ` +
+    `engines=${ENGINES} llm=${describeHarnessLlmMode()} ` +
       `model=${resolveOpencodeModel()} port=${E2E_PORT} env=${process.env.CLOUDBASE_ENV_ID}`,
   );
 

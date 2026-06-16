@@ -5,19 +5,19 @@
   <rect width="1000" height="400" fill="#020617"/><rect width="1000" height="400" fill="url(#grid)"/>
   <text x="500" y="34" fill="#f8fafc" font-family="JetBrains Mono, monospace" font-size="16" font-weight="700" text-anchor="middle">Harness Acceptance Scenarios</text>
   <rect x="40" y="70" width="280" height="140" rx="8" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
-  <text x="180" y="100" fill="#22d3ee" font-family="JetBrains Mono, monospace" font-size="12" font-weight="600" text-anchor="middle">local / test:full</text>
+  <text x="180" y="100" fill="#22d3ee" font-family="JetBrains Mono, monospace" font-size="12" font-weight="600" text-anchor="middle">local / test:merge</text>
   <text x="180" y="125" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10" text-anchor="middle">Host process + real AGS</text>
   <text x="180" y="145" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10" text-anchor="middle">CloudBase AI default LLM</text>
   <text x="180" y="165" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10" text-anchor="middle">COS optional (⑥ segment)</text>
-  <text x="180" y="190" fill="#64748b" font-family="JetBrains Mono, monospace" font-size="9" text-anchor="middle">npm run test:full</text>
+  <text x="180" y="190" fill="#64748b" font-family="JetBrains Mono, monospace" font-size="9" text-anchor="middle">npm run test:merge</text>
   <rect x="360" y="70" width="280" height="140" rx="8" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
-  <text x="500" y="100" fill="#34d399" font-family="JetBrains Mono, monospace" font-size="12" font-weight="600" text-anchor="middle">cloud-tcbr</text>
+  <text x="500" y="100" fill="#34d399" font-family="JetBrains Mono, monospace" font-size="12" font-weight="600" text-anchor="middle">cloud-tcbr-opencode</text>
   <text x="500" y="125" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10" text-anchor="middle">tcbr container deploy</text>
   <text x="500" y="145" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10" text-anchor="middle">opencode zen (strip BYOK)</text>
   <text x="500" y="165" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10" text-anchor="middle">COS stripped</text>
-  <text x="500" y="190" fill="#64748b" font-family="JetBrains Mono, monospace" font-size="9" text-anchor="middle">harness -- cloud-tcbr</text>
+  <text x="500" y="190" fill="#64748b" font-family="JetBrains Mono, monospace" font-size="9" text-anchor="middle">harness -- cloud-tcbr-opencode</text>
   <rect x="680" y="70" width="280" height="140" rx="8" fill="#0f172a" stroke="#fbbf24" stroke-width="1.5"/>
-  <text x="820" y="100" fill="#fbbf24" font-family="JetBrains Mono, monospace" font-size="12" font-weight="600" text-anchor="middle">cloud-scf</text>
+  <text x="820" y="100" fill="#fbbf24" font-family="JetBrains Mono, monospace" font-size="12" font-weight="600" text-anchor="middle">cloud-scf-opencode</text>
   <text x="820" y="125" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10" text-anchor="middle">SCF function deploy</text>
   <text x="820" y="145" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10" text-anchor="middle">custom LLM (③ scenario)</text>
   <text x="820" y="165" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10" text-anchor="middle">TENCENTCLOUD_* role inject</text>
