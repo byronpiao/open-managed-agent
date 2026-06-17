@@ -453,18 +453,81 @@ magent agent:export  [--id <id>] [-o <file>] # 导出当前运行配置为 YAML
 # ─── 对话 ─────────────────────────────────────────────────
 magent run   -a <id> -m "..."    # 一次性对话（自动创建/销毁 session）
 magent chat  -s <id> -m "..."    # 向已有 session 发消息
-magent repl  -a <id>             # 交互式 REPL
+magent repl  -a <id>             # 交互式 REPL（多轮，上下文保持）
 
 # ─── Session 管理 ─────────────────────────────────────────
-magent session:create --agent <id>
-magent session:list
-magent session:get    --id <session-id>
-magent session:delete --id <session-id>
+magent session:create -a <agent-id> [--title <title>]
+magent session:list   -a <agent-id>
+magent session:get    -i <session-id> -a <agent-id>
+magent session:delete -i <session-id> -a <agent-id>
 
 # ─── 透明代理（任意 tcb 命令）────────────────────────────
 magent functions:list -e <envId>    # 等效 tcb functions:list
 magent storage:list                 # 等效 tcb storage:list
 # 所有未识别命令均透明转发给内置 tcb CLI
+```
+
+### Session 与对话示例
+
+**1) 创建 Agent（TCBR 云托管，推荐生产使用）**
+
+```bash
+magent agent:create -n my-agent --type tcbr -e <env-id>
+# 输出: ✅ Agent created: agent-my-agent-xxxxx
+```
+
+**2) 交互式多轮对话（REPL）**
+
+```bash
+magent repl -a agent-my-agent-xxxxx -e <env-id>
+
+🤖 OpenManagedAgent REPL
+Type your message, press Enter. Ctrl+C to exit.
+
+Connecting... my-agent
+Creating session... f4c937ba-0543-4fca-88ba-727b5b90d576
+
+You: 你好 我叫小明
+Agent: 你好，小明！很高兴认识你！我是你的助手。有什么我可以帮助你的吗？😊
+  (end_turn)
+
+You: 你还记得我叫什么吗
+Agent: 当然记得！你叫小明。这是我们刚才认识时你告诉我的名字。
+  (end_turn)
+
+You: <Ctrl+C>  # 退出
+```
+
+> REPL 在同一 session 内保持上下文，Agent 能记住前几轮对话内容。
+
+**3) 查看 Session 列表**
+
+```bash
+magent session:list -a agent-my-agent-xxxxx -e <env-id>
+
+Sessions (3):
+  f4c937ba-0543-4fca-88ba-727b5b90d576
+    title  : (untitled)
+    status : idle
+    created: 6/17/2026, 5:30:12 PM
+  ...
+```
+
+> Session 数据持久化在 CloudBase FlexDB 中，Agent 冷启动后仍可查看历史 session。
+
+**4) 恢复已有 Session 继续对话**
+
+```bash
+# 用 chat 命令在已有 session 上继续对话
+magent chat -s f4c937ba-0543-4fca-88ba-727b5b90d576 \
+  -a agent-my-agent-xxxxx -e <env-id> \
+  -m "你还记得我叫什么吗"
+```
+
+**5) 一次性对话（run，不保留 session）**
+
+```bash
+magent run -a agent-my-agent-xxxxx -e <env-id> -m "写一个 Python 冒泡排序"
 ```
 
 ### 缺少 envId 时的行为
