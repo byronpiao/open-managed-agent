@@ -112,7 +112,7 @@ export interface AcquireHarnessSandboxArgs {
 }
 
 function resolveCredentials(opts: OrchestratorOptions): ResolvedCredentials {
-  const apiKey = opts.apiKey ?? process.env.TCB_API_KEY ?? "";
+  const apiKey = opts.apiKey ?? process.env.CLOUDBASE_APIKEY ?? "";
   const cam = resolveCamControlPlaneCredentials();
   const secretId = opts.secretId ?? cam.secretId;
   const secretKey = opts.secretKey ?? cam.secretKey;

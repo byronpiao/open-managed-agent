@@ -46,7 +46,6 @@ export async function startManagedAgentsE2eRuntime({
     PORT: String(port),
     CLOUDBASE_SERVER_URL: base,
     CLOUDBASE_ENV_ID: process.env.CLOUDBASE_ENV_ID ?? "managed-agents-e2e",
-    OAK_USE_MEMORY_STORE: "1",
     AGENT_CONFIG: JSON.stringify(agentConfig),
   };
 

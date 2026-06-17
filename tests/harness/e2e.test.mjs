@@ -29,8 +29,8 @@ import { resolveSandboxImageFromYaml } from "../../lib/resolve-harness-sandbox-i
 
 loadEnv();
 
-/** Existing flag: session/sync in memory (no FlexDB). Cross-process restart tests need FlexDB. */
-const MEMORY_STORE = process.env.OAK_USE_MEMORY_STORE === "1";
+/** No FlexDB creds → runtime auto-selects memory store. Cross-process restart tests need FlexDB. */
+const MEMORY_STORE = !process.env.TCB_SECRET_ID && !process.env.TCB_SECRET_KEY;
 
 const FULL = process.argv.includes("--full");
 const LLM_SUITE = process.argv.includes("--llm");
@@ -194,10 +194,9 @@ async function startRuntime({
     AGENT_CONFIG: JSON.stringify(cfg),
   };
   if (MEMORY_STORE || !useCloudDb) {
-    childEnv.OAK_USE_MEMORY_STORE = "1";
+    // no DB creds → runtime auto-selects memory store
   } else {
-    delete childEnv.OAK_USE_MEMORY_STORE;
-    delete childEnv.OAK_DISABLE_SANDBOX;
+    // FlexDB creds present — runtime will use FlexDB
   }
 
   child = spawn(process.execPath, ["packages/agent-runtime/dist/index.js"], {
@@ -1247,7 +1246,7 @@ async function main() {
       if (E2E_OPENCODE) {
         if (MEMORY_STORE) {
           console.log(
-            "⊘ opencode sync cross-restart（OAK_USE_MEMORY_STORE=1，内存 store 不跨 runtime 进程）",
+            "⊘ opencode sync cross-restart（memory store, 不跨 runtime 进程）",
           );
         } else {
           await testSyncPersistence();
@@ -1268,7 +1267,7 @@ async function main() {
         }
         if (MEMORY_STORE) {
           console.log(
-            "⊘ claude SessionStore cross-restart（OAK_USE_MEMORY_STORE=1）",
+            "⊘ claude SessionStore cross-restart（memory store）",
           );
         } else {
           await testClaudeSessionPersistence();
@@ -1297,7 +1296,7 @@ async function main() {
       const dbPressure = parseDbPressureArgs(process.argv.slice(2));
       if (dbPressure.enabled) {
         if (MEMORY_STORE) {
-          console.log("⊘ db-pressure（OAK_USE_MEMORY_STORE=1）");
+          console.log("⊘ db-pressure（memory store）");
         } else {
           const envId = process.env.CLOUDBASE_ENV_ID;
           const deps = { sleep, startRuntime, stopRuntime, rpc, promptSessionText, waitSandboxReady };

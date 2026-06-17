@@ -6,7 +6,7 @@
  *
  * Resolution order:
  * 1. opencode only: explicit `model: zen` → built-in zen (no host LLM injection)
- * 2. CloudBase platform AI (TCB_API_KEY + envId, default hy3-preview)
+ * 2. CloudBase platform AI (CLOUDBASE_APIKEY + envId, default hy3-preview)
  * 3. Custom provider (ModelSpec or explicit LLM_* / non-platform base URLs)
  */
 
@@ -76,7 +76,7 @@ export function hasExplicitCustomLlmEnv(): boolean {
   if (openai && !isCloudBaseAiGatewayUrl(openai)) return true;
   if (anthropic && !isCloudBaseAiGatewayUrl(anthropic)) return true;
   const llmKey = process.env.LLM_API_KEY?.trim();
-  const tcbKey = process.env.TCB_API_KEY?.trim();
+  const tcbKey = process.env.CLOUDBASE_APIKEY?.trim();
   if (llmKey && !tcbKey) return true;
   if (llmKey && tcbKey && llmKey !== tcbKey) return true;
   return false;
@@ -87,7 +87,7 @@ function resolveEnvId(): string | undefined {
 }
 
 function resolvePlatformApiKey(): string | undefined {
-  return process.env.TCB_API_KEY?.trim() || process.env.LLM_API_KEY?.trim() || undefined;
+  return process.env.CLOUDBASE_APIKEY?.trim() || process.env.LLM_API_KEY?.trim() || undefined;
 }
 
 function resolvePlatformModelId(config: AgentConfig): string {

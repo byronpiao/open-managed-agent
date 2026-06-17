@@ -39,7 +39,7 @@ sandbox:
 |------|------|
 | 键名 | `UPPER_SNAKE_CASE`，最长 128 字符 |
 | 值 | 非空字符串，最长 8192 字符 |
-| **禁止** | `SECRET_MASTER_KEY`、`MCPORTER_CONFIG_CONTENT`、`OPENCODE_CONFIG_CONTENT`、云凭证、`TCB_API_KEY` / `LLM_API_KEY` / `OPENAI_*` / `ANTHROPIC_*`，以及任意 `HARNESS_*`、`ENABLE_AGENT_*` 前缀 |
+| **禁止** | `SECRET_MASTER_KEY`、`MCPORTER_CONFIG_CONTENT`、`OPENCODE_CONFIG_CONTENT`、云凭证、`CLOUDBASE_APIKEY` / `LLM_API_KEY` / `OPENAI_*` / `ANTHROPIC_*`，以及任意 `HARNESS_*`、`ENABLE_AGENT_*` 前缀 |
 
 解析入口：`normalizeSandboxEnv`（`sandbox-config.ts` → `resolveSandboxConfig`）；注入：`buildHarnessSandboxEnv`（`deploy.ts`）。
 

@@ -50,7 +50,6 @@ RUN apt-get update \
 USER agent
 
 COPY --chown=agent:agent package*.json ./
-COPY --chown=agent:agent vendor ./vendor
 
 RUN npm config set registry https://mirrors.cloud.tencent.com/npm/ \
  && npm install --omit=dev --no-audit --no-fund \

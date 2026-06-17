@@ -205,7 +205,7 @@ export function isScfServerless(): boolean {
   return false;
 }
 
-/** 真 AGS 验收前：CloudBase + TCB_REGION +（可选）COS。local 主链用 TCB_API_KEY → hy3-preview，不要求 LLM_*。 */
+/** 真 AGS 验收前：CloudBase + TCB_REGION +（可选）COS。local 主链用 CLOUDBASE_APIKEY → hy3-preview，不要求 LLM_*。 */
 export function assertHarnessAgsRuntimeEnv(): void {
   assertHarnessCloudCreds();
   if (!process.env.TCB_REGION?.trim()) {

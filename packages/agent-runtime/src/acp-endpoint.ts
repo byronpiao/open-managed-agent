@@ -275,14 +275,20 @@ async function handleSessionLoad(
   config: AgentConfig,
 ): Promise<boolean> {
   const sessionId = String(params.sessionId ?? "");
-  const agent = getKernelAgent(config);
-  const summary = await agent.sessions.get(sessionId);
-  if (!summary) {
-    res.json(rpcError(id, -32602, `Session not found: ${sessionId}`));
-    return true;
-  }
 
+  // When replay is requested, skip the sessions.get() gate and go straight
+  // to loading history from the kernel session. The kernel may have auto-
+  // created the session store internally (credentials-based), so our
+  // agent.sessions.get() — which returns null in kernel beta — would
+  // incorrectly reject valid sessions that are in the store but not yet
+  // indexed by sessions.get().
   if (!params.replay) {
+    const agent = getKernelAgent(config);
+    const summary = await agent.sessions.get(sessionId);
+    if (!summary) {
+      res.json(rpcError(id, -32602, `Session not found: ${sessionId}`));
+      return true;
+    }
     res.json(rpcResult(id, { sessionId }));
     return true;
   }

@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 export async function fetchGatewayAccessToken(envId: string): Promise<string> {
-  const pinned = process.env.TCB_API_KEY?.trim();
+  const pinned = process.env.CLOUDBASE_APIKEY?.trim();
   if (pinned) return pinned;
 
   const cam = resolveCamControlPlaneCredentials();

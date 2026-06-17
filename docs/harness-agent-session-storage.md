@@ -26,7 +26,7 @@
 | Claude | `harness_claude_session_summaries` | **沙箱内** | 增量 fold 的 summary |
 | Claude | `harness_claude_session_messages` | **沙箱内** | 消息元数据（与 entries 双写） |
 
-本地研发若未配置 `TCB_SECRET_*` 或设 `OAK_USE_MEMORY_STORE=1`，OpenCode sync 落 **内存**，不进 FlexDB。
+本地研发若未配置 `TCB_SECRET_*`，OpenCode sync 落 **内存**，不进 FlexDB。
 
 ---
 
@@ -46,11 +46,11 @@
 - 写库进程：**AGS 沙箱内** Claude ACP 进程，凭证由 OMA `buildHarnessInitCredEnv()` 注入（`TENCENTCLOUD_SECRETID` / `TENCENTCLOUD_SECRETKEY`）
 - `CLAUDE_CONFIG_DIR=/tmp/.claude` 仅为 SDK 本地缓存，**不是** SoR（Source of Record）
 
-### 与 `TCB_API_KEY` 的区别
+### 与 `CLOUDBASE_APIKEY` 的区别
 
 | 凭证 | 用途 |
 |------|------|
-| `TCB_API_KEY` | AGS 沙箱数据面、默认 CloudBase AI LLM |
+| `CLOUDBASE_APIKEY` | AGS 沙箱数据面、默认 CloudBase AI LLM |
 | `TCB_SECRET_ID` / `TCB_SECRET_KEY`（CAM） | FlexDB 读写（会话外置、托管 Agent 的 `oak_*` 等） |
 
 ---

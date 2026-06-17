@@ -227,8 +227,8 @@ class InMemoryHarnessSessionStore implements HarnessSessionStore {
 
 interface CloudBaseCredentials {
   envId: string;
-  secretId: string;
-  secretKey: string;
+  secretId?: string;
+  secretKey?: string;
   sessionToken?: string;
   region?: string;
 }
@@ -251,13 +251,15 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
     if (!this.dbPromise) {
       this.dbPromise = (async () => {
         const mod = await import("@cloudbase/node-sdk");
-        const app = mod.default.init({
-          env: this.credentials.envId,
-          secretId: this.credentials.secretId,
-          secretKey: this.credentials.secretKey,
-          sessionToken: this.credentials.sessionToken,
-          region: this.credentials.region,
-        });
+        // When secretId/secretKey are present, pass them (CAM signing).
+        // When absent (CLOUDBASE_APIKEY path), init with just env — the SDK's
+        // normalizeConfig() reads CLOUDBASE_APIKEY from the environment.
+        const initOpts: Record<string, unknown> = { env: this.credentials.envId };
+        if (this.credentials.secretId) initOpts.secretId = this.credentials.secretId;
+        if (this.credentials.secretKey) initOpts.secretKey = this.credentials.secretKey;
+        if (this.credentials.sessionToken) initOpts.sessionToken = this.credentials.sessionToken;
+        if (this.credentials.region) initOpts.region = this.credentials.region;
+        const app = mod.default.init(initOpts);
         return app.database() as CloudBaseDatabase;
       })();
     }
@@ -502,14 +504,15 @@ function resolveCloudBaseCredentials(envId: string): CloudBaseCredentials | null
   const secretKey = cam.secretKey;
   const sessionToken = cam.sessionToken;
   const region = process.env.TCB_REGION?.trim();
-  if (!secretId || !secretKey || !region) return null;
-  return {
-    envId,
-    secretId,
-    secretKey,
-    sessionToken,
-    region,
-  };
+  if (secretId && secretKey && region) {
+    return { envId, secretId, secretKey, sessionToken, region };
+  }
+  // No CAM credentials — but CLOUDBASE_APIKEY allows FlexDB via Bearer auth.
+  // The @cloudbase/node-sdk picks it up from env; no secretId/secretKey needed.
+  if (process.env.CLOUDBASE_APIKEY?.trim()) {
+    return { envId };
+  }
+  return null;
 }
 
 let _store: HarnessSessionStore | null = null;
@@ -517,7 +520,7 @@ let _store: HarnessSessionStore | null = null;
 export function getHarnessSessionStore(projectKey: string): HarnessSessionStore {
   if (_store) return _store;
   const useMemory =
-    process.env.OAK_USE_MEMORY_STORE === "1" || !resolveCloudBaseCredentials(projectKey);
+    !resolveCloudBaseCredentials(projectKey);
   if (useMemory) {
     _store = new InMemoryHarnessSessionStore();
     harnessLog({ lane: "session_store", operation: "driver.init", driver: "memory" }).emit({
@@ -573,7 +576,7 @@ async function getHarnessStoreDiagUncached(projectKey: string): Promise<{
   };
 }> {
   const useMemory =
-    process.env.OAK_USE_MEMORY_STORE === "1" || !resolveCloudBaseCredentials(projectKey);
+    !resolveCloudBaseCredentials(projectKey);
   const store = getHarnessSessionStore(projectKey);
   const sessions = await store.list({ limit: 500 });
   return {

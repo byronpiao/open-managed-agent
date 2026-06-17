@@ -9,7 +9,6 @@ import { dirname, join } from "node:path";
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const runtimeDist = join(root, "packages/agent-runtime/dist/managed-agents/index.js");
 
-process.env.OAK_USE_MEMORY_STORE = "1";
 
 const {
   projectCmaInboundToDriverCommand,

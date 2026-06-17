@@ -5,8 +5,6 @@
  * Prereqs (in another terminal):
  *   cd /Users/yang/git/open-managed-agent
  *   export CLOUDBASE_ENV_ID=test-6g2rfs50c69b7fb8
- *   export OAK_DISABLE_SANDBOX=1
- *   export OAK_USE_MEMORY_STORE=1
  *   export PORT=9000
  *   node packages/agent-runtime/dist/index.js
  *

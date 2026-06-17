@@ -3,7 +3,8 @@
 #   npm run build --workspace=packages/agent-runtime
 #   docker compose -f scripts/harness/docker-compose.local.yml up --build
 #
-# Uses only existing runtime env: OAK_USE_MEMORY_STORE, AGENT_CONFIG, PORT.
+# Uses only existing runtime env: AGENT_CONFIG, PORT.
+# Session store auto-selects memory (no FlexDB creds) vs FlexDB (creds present).
 services:
   harness-runtime:
     platform: linux/amd64
@@ -14,7 +15,6 @@ services:
       - "19090:8080"
     environment:
       PORT: "8080"
-      OAK_USE_MEMORY_STORE: "1"
       CLOUDBASE_ENV_ID: local-docker
       AGENT_CONFIG: >-
         {"name":"HarnessDocker","runtime":"harness","engine":"opencode","system":"Docker local smoke agent."}

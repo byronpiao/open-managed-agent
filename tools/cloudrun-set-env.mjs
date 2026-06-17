@@ -71,8 +71,6 @@ const envMap = {
   ANTHROPIC_BASE_URL: anthropicBase,
   ANTHROPIC_AUTH_TOKEN: anthropicToken,
   AGENT_MODEL: model,
-  OAK_DISABLE_SANDBOX: "1",
-  OAK_USE_MEMORY_STORE: "1",
 };
 
 console.log("Submitting EnvParam change for", serviceName);

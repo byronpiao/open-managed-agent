@@ -71,12 +71,12 @@ E2E 验收：`tests/managed-agents/e2e-managed-agents-harness.test.mjs` 启动�
 
 ```bash
 cd open-managed-agent
-OAK_USE_MEMORY_STORE=1 npm run build
-OAK_USE_MEMORY_STORE=1 node tests/managed-agents/unit.test.mjs
-npm run build && OAK_USE_MEMORY_STORE=1 node tests/managed-agents/e2e-managed-agents-harness.test.mjs
+npm run build
+node tests/managed-agents/unit.test.mjs
+npm run build && node tests/managed-agents/e2e-managed-agents-harness.test.mjs
 ```
 
-无 FlexDB 凭证时 Store 自动退回内存（与 `OAK_USE_MEMORY_STORE=1` 相同逻辑）。
+无 FlexDB 凭证时 Store 自动退回内存；有 `TCB_SECRET_*` 时走 FlexDB。
 
 ## 与沙箱的关系
 

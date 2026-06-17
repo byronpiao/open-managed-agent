@@ -177,9 +177,9 @@ without --omit=optional, or set options.pathToClaudeCodeExecutable.`
 **修复**：`makeSseSink()` 改为把所有帧收集到 `frames[]` 数组，`sseDone()` 通过 `sse.getAll()` 一次性写入 `res.end()`。  
 **代码**：`kernel-adapter.ts:makeSseSink()` 和 `acp-endpoint.ts:sseDone()`。
 
-### 4. OAK_DISABLE_SANDBOX + 凭证未自动注入
-**症状**：`AgsStatefulSandbox requires TCB_API_KEY`；`CloudBase credentials missing`  
-**修复**：`magent.mjs` 的 `buildCloudRunEnvParam`（tcbr）和 `scfEnvMap`（scf）在无 `TCB_API_KEY` 时自动注入 `OAK_DISABLE_SANDBOX=1`，在无 `TCB_SECRET_*` 时自动从 tcb-login STS 取凭证。
+### 4. 凭证未自动注入
+**症状**：`AgsStatefulSandbox requires CLOUDBASE_APIKEY`；`CloudBase credentials missing`
+**修复**：runtime 根据 `sandbox.enabled`（yaml）和 `CLOUDBASE_APIKEY` 前置检查自动决定是否启用 sandbox；`magent.mjs` 的 `scfEnvMap`（scf）在无 `TCB_SECRET_*` 时自动从 tcb-login STS 取凭证。
 
 ### 5. agent:create 部署时 agent.yaml 污染 AGENT_CONFIG_B64
 **根因**：`packages/agent-runtime/agent.yaml` 被意外提交，优先级高于 `AGENT_CONFIG_B64`，导致所有 SCF agent 加载了测试配置。  
@@ -215,11 +215,11 @@ kernel 的 `session.send()` 是一个 async generator，内部等待 claude bina
 
 - **路径 A**：claude binary 的 stdout pipe 在 `process.setuid(1001)` 之后失效。已知：SCF 进程以 root 启动，uid-shim 在 `--import` 阶段 setuid。Pipe fd 由 kernel 在 `spawn()` 时创建，如果进程 uid 在 spawn 前后不一致可能有权限问题。但 setuid 在 `import 'index.js'` 之前运行，`spawn()` 在之后——理论上 spawn 继承 uid=1001，应该没问题。
   
-- **路径 B**：`OAK_DISABLE_SANDBOX=1` 改变了 kernel 的执行路径，导致 claude binary 的 stdout 协议不同。kernel 可能在 sandbox 模式和非 sandbox 模式下使用不同的 stdin/stdout 协议与 claude binary 通信。
+- **路径 B**：sandbox 控制逻辑改变了 kernel 的执行路径，导致 claude binary 的 stdout 协议不同。kernel 可能在 sandbox 模式和非 sandbox 模式下使用不同的 stdin/stdout 协议与 claude binary 通信。
 
 - **路径 C**：在 SCF 的 linux/x64 环境中，`process.setuid(1001)` 后 `/var/user/node_modules` 对 uid=1001 不可读（权限 700），导致 claude binary spawn 成功但无法读取其依赖，静默失败。需要验证 `/var/user` 的实际权限。
 
-- **路径 D**：kernel 内部有某个条件检查 sandbox 状态，在 `OAK_DISABLE_SANDBOX=1` 时走了一条早返回路径，在 generator 第一次 yield 前就退出了。
+- **路径 D**：kernel 内部有某个条件检查 sandbox 状态，在 sandbox 禁用时走了一条早返回路径，在 generator 第一次 yield 前就退出了。
 
 ### 复现步骤
 

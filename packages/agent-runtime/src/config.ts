@@ -94,6 +94,26 @@ export type HarnessEngine = "opencode" | "claude" | "codebuddy" | "hermes";
 export type DataPlaneEngineSlug = "opencode" | "claudecode" | "codebuddy" | "hermes";
 
 /**
+ * Sandbox configuration — top-level feature toggle shared by managed and harness.
+ *
+ * Managed mode: `enabled: true` activates AGS sandbox (bash/file tools).
+ * Harness mode: `infra`/`resources`/`image`/`timeout`/`env` control placement.
+ */
+export interface SandboxConfig {
+  /** Enable AGS sandbox for managed agents (provides bash/file tools). Default: false. */
+  enabled?: boolean;
+  /**
+   * Harness-only: sandbox placement (infra, resources, image, timeout, env).
+   * Ignored when runtime=managed. Normalized with defaults on load.
+   */
+  infra?: import("./harness/sandbox/sandbox-config.js").SandboxInfra;
+  resources?: import("./harness/sandbox/sandbox-config.js").SandboxResourcesInput;
+  image?: string;
+  timeout?: string | number;
+  env?: Record<string, string>;
+}
+
+/**
  * Shared by managed (OAK loop on gateway) and harness (loop in AGS sandbox).
  * Fields like tools / mcp_servers / skills are interpreted per runtime in deploy.ts.
  */
@@ -112,11 +132,8 @@ export interface AgentConfig {
   mcp_servers?: McpServer[];
   skills?: Skill[];
   metadata?: Record<string, string>;
-  /**
-   * Harness sandbox placement (draft — see docs/sandbox.md).
-   * Ignored when runtime=managed. Normalized with defaults on load.
-   */
-  sandbox?: import("./harness/sandbox/sandbox-config.js").SandboxConfig;
+  /** Sandbox feature. Managed: `enabled` toggle. Harness: full placement config. */
+  sandbox?: SandboxConfig;
   // Storage
   sessions_collection?: string; // NoSQL collection name for sessions, default: "acp_sessions"
 }
@@ -322,11 +339,6 @@ export async function resolveSkills(config: AgentConfig): Promise<AgentConfig> {
 // ── Mapping to kernel AgentConfig ─────────────────────────────────────────────
 
 import {
-  AgsStatefulSandbox,
-  CloudBaseDbDriver,
-  CloudBaseSessionStore,
-  InMemoryDriver,
-  InMemoryPermissionStore,
   type AgentConfig as KernelAgentConfig,
   type CloudBaseCredentials,
   type McpServerConfig as KernelMcpServerConfig,
@@ -336,8 +348,6 @@ import {
 export interface ToKernelOptions {
   /** Override envId; default reads CLOUDBASE_ENV_ID env var */
   envId?: string;
-  /** Use in-memory store instead of CloudBase DB (tests). Default: false */
-  useInMemoryStore?: boolean;
   /** ToolDefinition[] built from AgentConfig.tools[type=custom], passed by kernel-adapter */
   customToolDefs?: import("@cloudbase/open-agent-kernel").ToolDefinition[];
 }
@@ -392,14 +402,13 @@ function resolveCloudBaseCredentials(envId: string): CloudBaseCredentials | null
 /**
  * Translate the YAML-shaped `AgentConfig` into a kernel `AgentConfig`.
  *
- * - `system` → `systemPrompt`
- * - `model` → forwarded as ModelInput (string form)
- * - `mcp_servers[]` → kernel `mcpServers` map (HTTP transport)
- * - tools with `permission_policy.type === 'always_ask'` → `permissions.requireApproval`
- *   (string-array rule). MCP tool names are namespaced as `mcp__<server>__<tool>`.
- * - Sandbox: AGS stateful sandbox with `scope: 'session'`, cloudbaseTools off (one-shot).
- * - Session store: CloudBaseSessionStore + CloudBaseDbDriver (`oak_*` collections),
- *   `projectKey = envId` for multi-tenant isolation.
+ * Kernel beta now handles most defaults declaratively:
+ *   - `credentials` → auto-creates CloudBaseDbDriver for session/permission store
+ *   - `sandbox: { enabled: true }` → auto-creates AgsStatefulSandbox
+ *   - `session: { enabled: true }` → auto-creates CloudBaseSessionStore + driver
+ *
+ * We no longer manually instantiate CloudBaseDbDriver / CloudBaseSessionStore /
+ * AgsStatefulSandbox / InMemoryPermissionStore.
  */
 export function toKernelAgentConfig(
   config: AgentConfig,
@@ -420,14 +429,12 @@ export function toKernelAgentConfig(
 
   // ── requireApproval rule ────────────────────────────────────────────────
   const approvalNames: string[] = [];
-  // Built-in tools (sandbox provides them; tool names follow `mcp__sandbox__*` convention)
   const builtinPolicies = resolveBuiltinTools(config);
   for (const [name, policy] of builtinPolicies) {
     if (policy.enabled && policy.permissionPolicy.type === "always_ask") {
       approvalNames.push(`mcp__sandbox__${name}`);
     }
   }
-  // MCP toolset overrides
   for (const t of getMcpToolsets(config)) {
     const defaultAsk = t.default_config?.permission_policy?.type === "always_ask";
     if (defaultAsk) approvalNames.push(`mcp__${t.mcp_server_name}__*`);
@@ -440,42 +447,40 @@ export function toKernelAgentConfig(
   const requireApproval: RequireApprovalRule | undefined =
     approvalNames.length > 0 ? approvalNames : undefined;
 
-  // ── Session store ───────────────────────────────────────────────────────
-  // OAK_USE_MEMORY_STORE=1 → all session/transcript persistence in-memory.
-  // Useful for local dev when CloudBase DB credentials are unavailable.
-  const useMemoryStore = opts.useInMemoryStore || process.env.OAK_USE_MEMORY_STORE === "1";
-  let sessionStore: unknown;
-  if (useMemoryStore) {
-    sessionStore = new CloudBaseSessionStore({
-      driver: new InMemoryDriver(),
-      projectKey: envId,
-    });
-  } else {
-    const credentials = resolveCloudBaseCredentials(envId);
-    sessionStore = new CloudBaseSessionStore({
-      driver: new CloudBaseDbDriver(credentials ? { credentials } : undefined),
-      projectKey: envId,
-    });
-  }
+  // ── Credentials ─────────────────────────────────────────────────────────
+  // Resolve from env vars or tcb login cache; pass to kernel declaratively.
+  // Kernel auto-creates CloudBaseDbDriver / CloudBaseSessionStore / permission store
+  // when credentials are provided. Without credentials, kernel falls back to
+  // in-memory stores (no persistence, but safe for local dev).
+  //
+  // When no CAM credentials (secretId/secretKey) are available but CLOUDBASE_APIKEY
+  // is set, we still enable the session store. The @cloudbase/node-sdk picks up
+  // CLOUDBASE_APIKEY from the env and uses it for Bearer auth to FlexDB — no
+  // CAM signing needed. We pass a minimal credentials object with just envId so
+  // the kernel creates CloudBaseSessionStore, and the SDK's normalizeConfig()
+  // falls through to the CLOUDBASE_APIKEY env var when secretId/secretKey are
+  // empty.
+  const credentials = resolveCloudBaseCredentials(envId);
+  const hasApiKey = !!process.env.CLOUDBASE_APIKEY;
+  // When no CAM credentials but CLOUDBASE_APIKEY is available, pass minimal
+  // credentials (empty secretId/secretKey) so the kernel creates
+  // CloudBaseSessionStore. The @cloudbase/node-sdk picks up CLOUDBASE_APIKEY
+  // from the env when secretId/secretKey are not passed to init().
+  const effectiveCredentials = credentials ?? (
+    hasApiKey
+      ? { envId, secretId: "", secretKey: "" } as CloudBaseCredentials
+      : null
+  );
 
   // ── Model spec ──────────────────────────────────────────────────────────
-  // Canonical config form is ModelSpec ({id, apiKey, apiBaseUrl, options}) in
-  // agent.yaml. A bare string in `model` is auto-promoted to {id: <string>}
-  // and routed through CloudBase TokenHub.
   const baseModel: ModelSpec = typeof config.model === "string"
     ? { id: config.model }
     : { ...config.model };
-  // Pass the bare ID through if no key/url is set — the kernel can still
-  // recognize a hosted model by name and route it through TokenHub.
   const model: string | ModelSpec = baseModel.apiKey || baseModel.apiBaseUrl || baseModel.options
     ? baseModel
     : baseModel.id;
 
   // ── Sandbox capabilities ─────────────────────────────────────────────────
-  // Map agent_toolset enabled flags → SandboxCapabilities.
-  //   bash         → shell
-  //   read_file / write_file / list_files → filesystem
-  // If no agent_toolset is configured, default is all enabled.
   const builtinPoliciesForCaps = resolveBuiltinTools(config);
   const shellEnabled = builtinPoliciesForCaps.get("bash")?.enabled ?? true;
   const fsEnabled =
@@ -484,12 +489,24 @@ export function toKernelAgentConfig(
     (builtinPoliciesForCaps.get("list_files")?.enabled ?? true);
   const sandboxCapabilities = (!shellEnabled || !fsEnabled)
     ? { shell: shellEnabled, filesystem: fsEnabled }
-    : undefined; // omit when all enabled — kernel defaults to all-on
+    : undefined;
 
   // ── Sandbox ─────────────────────────────────────────────────────────────
-  // AGS sandbox needs TCB_API_KEY (data plane) + TCB_SECRET_* (control plane).
-  // Set OAK_DISABLE_SANDBOX=1 for local dev where those aren't available.
-  const disableSandbox = process.env.OAK_DISABLE_SANDBOX === "1";
+  // Sandbox is a first-class feature, controlled by config.sandbox.enabled.
+  // Default: disabled. User opts in via yaml:
+  //   sandbox:
+  //     enabled: true
+  // Prerequisites: CLOUDBASE_APIKEY must be present (AGS sandbox requires it).
+  // If sandbox.enabled=true but no CLOUDBASE_APIKEY, sandbox is silently disabled
+  // with a warning — avoids a crash at prompt time.
+  const sandboxRequested = config.sandbox?.enabled === true;
+  if (sandboxRequested && !hasApiKey) {
+    console.warn(
+      "[Config] sandbox.enabled=true but CLOUDBASE_APIKEY is not set — " +
+      "AGS sandbox requires a CloudBase API key. Disabling sandbox."
+    );
+  }
+  const sandboxEnabled = sandboxRequested && hasApiKey;
 
   return {
     envId,
@@ -498,25 +515,23 @@ export function toKernelAgentConfig(
     metadata: config.metadata,
     model,
     systemPrompt: config.system,
+    cwd: "/tmp",
+    credentials: effectiveCredentials ?? undefined,
     mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-    sandbox: disableSandbox
-      ? undefined
-      : {
-          runtime: new AgsStatefulSandbox(),
+    sandbox: sandboxEnabled
+      ? {
+          enabled: true,
           scope: "session",
           cloudbaseTools: false,
           ...(sandboxCapabilities ? { capabilities: sandboxCapabilities } : {}),
-        },
-    permissions: requireApproval
-      ? {
-          requireApproval,
-          store: new InMemoryPermissionStore(),
         }
       : undefined,
-    session: {
-      store: sessionStore,
-      projectKey: envId,
-    },
+    permissions: requireApproval
+      ? { requireApproval }
+      : undefined,
+    session: effectiveCredentials
+      ? { enabled: true, projectKey: envId }
+      : undefined,
     tools: opts.customToolDefs && opts.customToolDefs.length > 0
       ? opts.customToolDefs
       : undefined,
@@ -525,7 +540,7 @@ export function toKernelAgentConfig(
 
 export type {
   SandboxInfra,
-  SandboxConfig,
+  SandboxConfig as HarnessSandboxConfig,
   SandboxResources,
   ResolvedSandboxConfig,
 } from "./harness/sandbox/sandbox-config.js";
@@ -550,9 +565,13 @@ export {
 /** Apply sandbox defaults after YAML / AGENT_CONFIG parse (harness or explicit sandbox block). */
 export function normalizeAgentConfig(config: AgentConfig): AgentConfig {
   const { runtime } = resolveRuntime(config);
-  if (runtime !== "harness" && config.sandbox === undefined) return config;
-  const resolved = resolveSandboxConfig({ sandbox: config.sandbox, engine: config.engine });
-  return applyResolvedSandboxToConfig(config, resolved);
+  // For harness: resolve full sandbox placement (infra/resources/image) with defaults.
+  // For managed: sandbox.enabled is used as-is; no placement resolution needed.
+  if (runtime === "harness") {
+    const resolved = resolveSandboxConfig({ sandbox: config.sandbox, engine: config.engine });
+    return applyResolvedSandboxToConfig(config, resolved);
+  }
+  return config;
 }
 
 /**

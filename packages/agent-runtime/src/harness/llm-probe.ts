@@ -268,13 +268,13 @@ export async function probeHarnessOpenAiLlm(options?: {
   }
 }
 
-/** CloudBase AI gateway (TCB_API_KEY + envId) — local harness tier ①, ~30s fail-fast. */
+/** CloudBase AI gateway (CLOUDBASE_APIKEY + envId) — local harness tier ①, ~30s fail-fast. */
 export async function probeCloudBasePlatformLlm(options?: {
   timeoutMs?: number;
   maxTokens?: number;
 }): Promise<HarnessLlmProbeResult> {
   const envId = process.env.CLOUDBASE_ENV_ID?.trim() || process.env.TCB_ENV_ID?.trim();
-  const apiKey = process.env.TCB_API_KEY?.trim();
+  const apiKey = process.env.CLOUDBASE_APIKEY?.trim();
   // Tier ① platform probe — never use BYOK LLM_MODEL from .env.harness ③ 段.
   const model = HARNESS_CLOUDBASE_DEFAULT_MODEL;
   if (!envId || !apiKey) {
@@ -378,7 +378,7 @@ export async function probeCloudBasePlatformAnthropicLlm(options?: {
   maxTokens?: number;
 }): Promise<HarnessLlmProbeResult> {
   const envId = process.env.CLOUDBASE_ENV_ID?.trim() || process.env.TCB_ENV_ID?.trim();
-  const apiKey = process.env.TCB_API_KEY?.trim();
+  const apiKey = process.env.CLOUDBASE_APIKEY?.trim();
   const model = HARNESS_CLOUDBASE_DEFAULT_MODEL;
   if (!envId || !apiKey) {
     return {

@@ -35,11 +35,13 @@ function wrapHarnessLinked(store: CmaStore): CmaStore {
 }
 
 function useMemoryStore(): boolean {
-  if (process.env.OAK_USE_MEMORY_STORE === "1") return true;
   const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "";
   if (!envId) return true;
   const cred = resolveCamControlPlaneCredentials();
-  return !cred.secretId || !cred.secretKey;
+  if (cred.secretId && cred.secretKey) return false;
+  // No CAM credentials — but CLOUDBASE_APIKEY allows FlexDB via Bearer auth.
+  if (process.env.CLOUDBASE_APIKEY?.trim()) return false;
+  return true;
 }
 
 /** Singleton Managed Agents store for this runtime process. */

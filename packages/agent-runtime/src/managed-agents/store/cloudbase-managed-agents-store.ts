@@ -27,8 +27,8 @@ import {
 
 interface CloudBaseCredentials {
   envId: string;
-  secretId: string;
-  secretKey: string;
+  secretId?: string;
+  secretKey?: string;
   sessionToken?: string;
   region?: string;
 }
@@ -73,13 +73,22 @@ export class CloudBaseManagedAgentsStore implements CmaStore {
     const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "";
     if (!envId) return null;
     const cred = resolveCamControlPlaneCredentials();
-    if (!cred.secretId || !cred.secretKey) return null;
-    return {
-      envId,
-      secretId: cred.secretId,
-      secretKey: cred.secretKey,
-      sessionToken: cred.sessionToken,
-    };
+    if (cred.secretId && cred.secretKey) {
+      return {
+        envId,
+        secretId: cred.secretId,
+        secretKey: cred.secretKey,
+        sessionToken: cred.sessionToken,
+      };
+    }
+    // No CAM credentials — but if CLOUDBASE_APIKEY is set (TCBR deploys set it
+    // from CLOUDBASE_APIKEY), the @cloudbase/node-sdk can use Bearer auth for FlexDB.
+    // Return a minimal credential object; #db() will init the SDK without
+    // explicit secretId/secretKey so normalizeConfig() picks up the env var.
+    if (process.env.CLOUDBASE_APIKEY?.trim()) {
+      return { envId };
+    }
+    return null;
   }
 
   async #db(): Promise<CloudBaseDatabase | null> {
@@ -88,13 +97,15 @@ export class CloudBaseManagedAgentsStore implements CmaStore {
     if (!this.#dbPromise) {
       this.#dbPromise = (async () => {
         const mod = await import("@cloudbase/node-sdk");
-        const app = mod.default.init({
-          env: cred.envId,
-          secretId: cred.secretId,
-          secretKey: cred.secretKey,
-          sessionToken: cred.sessionToken,
-          region: cred.region,
-        });
+        // When secretId/secretKey are present, pass them explicitly (CAM signing).
+        // When absent (CLOUDBASE_APIKEY path), init with just env — the SDK's
+        // normalizeConfig() reads CLOUDBASE_APIKEY from the environment.
+        const initOpts: Record<string, unknown> = { env: cred.envId };
+        if (cred.secretId) initOpts.secretId = cred.secretId;
+        if (cred.secretKey) initOpts.secretKey = cred.secretKey;
+        if (cred.sessionToken) initOpts.sessionToken = cred.sessionToken;
+        if (cred.region) initOpts.region = cred.region;
+        const app = mod.default.init(initOpts);
         return app.database() as CloudBaseDatabase;
       })();
     }

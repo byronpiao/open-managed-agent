@@ -125,7 +125,7 @@ function hasHarnessCamCredentials() {
     return true;
   }
   if (readTcbLoginCredential()) return true;
-  if (process.env.TCB_API_KEY?.trim()) return true;
+  if (process.env.CLOUDBASE_APIKEY?.trim()) return true;
   return false;
 }
 
@@ -410,9 +410,9 @@ export function loadEnv() {
   hydrateCloudEnvFromCli();
 }
 
-/** Resolve TCB_API_KEY from CAM when unset (for probes / local harness). */
+/** Resolve CLOUDBASE_APIKEY from CAM when unset (for probes / local harness). */
 export async function hydrateTcbApiKeyFromCam() {
-  if (process.env.TCB_API_KEY?.trim()) return;
+  if (process.env.CLOUDBASE_APIKEY?.trim()) return;
   const { ensureTcbApiKeyInProcess } = await import("../../lib/resolve-tcb-api-key.mjs");
   await ensureTcbApiKeyInProcess();
 }
@@ -478,7 +478,7 @@ if (isCli) {
         console.log(`  COS=${cosMissing.length ? `missing ${cosMissing.join(",")}` : "ok"}`);
       }
       console.log(
-        `  gateway token=${process.env.TCB_API_KEY ? "ok (CAM-derived)" : "not resolved"}`,
+        `  gateway token=${process.env.CLOUDBASE_APIKEY ? "ok (CAM-derived)" : "not resolved"}`,
       );
       console.log(
         `  HARNESS_TOOL_ID=${process.env.HARNESS_TOOL_ID ?? "(unset — auto oma-harness-{env})"}`,

@@ -144,7 +144,7 @@ tool update 后约 **120s** 再 start。
 
 | 条件 | 行为 |
 |------|------|
-| `TCB_API_KEY` + `CLOUDBASE_ENV_ID`，未配自定义 LLM | CloudBase AI `hy3-preview`（OpenAI / Anthropic 同一 gateway） |
+| `CLOUDBASE_APIKEY` + `CLOUDBASE_ENV_ID`，未配自定义 LLM | CloudBase AI `hy3-preview`（OpenAI / Anthropic 同一 gateway） |
 | `model: zen`（仅 opencode） | 箱内内置 zen，不走 CloudBase AI |
 | 自定义 `LLM_*` 或 ModelSpec | 第三方 provider |
 
@@ -172,7 +172,7 @@ tool update 后约 **120s** 再 start。
 |----|------|
 | SoR | CloudBase `harness_claude_*`（非 `/tmp/.claude`） |
 | 箱内 config | `CLAUDE_CONFIG_DIR=/tmp/.claude`（ephemeral，仅 SDK 本地缓存） |
-| LLM | 默认 `TCB_API_KEY` → CloudBase AI；自定义时宿主机 `LLM_*` → 箱内 `ANTHROPIC_*` |
+| LLM | 默认 `CLOUDBASE_APIKEY` → CloudBase AI；自定义时宿主机 `LLM_*` → 箱内 `ANTHROPIC_*` |
 | 镜像 | magent 须含 `dist/agents/claude-acp-harness.js` + `@cloudbase/open-agent-kernel`（见 TRW `vendor/`） |
 
 OMA re-acquire 后 `claude-session-warm.ts` 调箱内 `session/load`（`replay:false`），与 opencode 的 `harness_sync_events` replay 互补。
@@ -193,7 +193,7 @@ OMA re-acquire 后 `claude-session-warm.ts` 调箱内 `session/load`（`replay:f
 | 8 | 外部 MCP | mcporter | matrix #8 |
 | 9 | CloudBase 箱内 MCP | `workspace/init` | matrix #9 |
 | 10 | Skills | `.agents/skills/` | matrix #10 |
-| 11 | 模型与密钥 | `TCB_API_KEY` + 默认 `hy3-preview`；可选 zen / BYOK | local + cloud probe |
+| 11 | 模型与密钥 | `CLOUDBASE_APIKEY` + 默认 `hy3-preview`；可选 zen / BYOK | local + cloud probe |
 
 ---
 

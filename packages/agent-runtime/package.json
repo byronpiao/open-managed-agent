@@ -18,7 +18,7 @@
     "@cloudbase/manager-node": "^4.4.0",
     "@cloudbase/signature-nodejs": "^2.2.0",
     "@cloudbase/node-sdk": "^3.16.0",
-    "@cloudbase/open-agent-kernel": "file:./vendor/cloudbase-open-agent-kernel-0.1.0-alpha.0.tgz",
+    "@cloudbase/open-agent-kernel": "^0.1.0-beta.2",
     "@opentelemetry/api": "^1.9.0",
     "cos-nodejs-sdk-v5": "^2.15.4",
     "cors": "^2.8.5",

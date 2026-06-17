@@ -289,8 +289,8 @@ export function buildHarnessSandboxEnv(args: {
       }
     }
     const platform = resolveCloudBasePlatformLlm(args.config);
-    if (platform?.apiKey && !merged.some((e) => e.Name === "TCB_API_KEY")) {
-      merged.push({ Name: "TCB_API_KEY", Value: platform.apiKey });
+    if (platform?.apiKey && !merged.some((e) => e.Name === "CLOUDBASE_APIKEY")) {
+      merged.push({ Name: "CLOUDBASE_APIKEY", Value: platform.apiKey });
     }
     const byokKey = process.env.LLM_API_KEY?.trim();
     if (
@@ -415,7 +415,6 @@ export function applyHarnessRuntimeEnv(
   } = {},
 ): Record<string, string> {
   if (config.runtime !== "harness") return envMap;
-  delete envMap.OAK_DISABLE_SANDBOX;
   if (opts.harnessToolId) envMap.HARNESS_TOOL_ID = opts.harnessToolId;
   const mcporter = buildMcporterConfig({
     config,

@@ -167,7 +167,7 @@ export TCB_SECRET_KEY=...
 |------|------|
 | **本机脚本**（已 `magent login`） | 与 CLI 相同：用环境 ID + 登录态下的 CAM 凭证换取 Bearer（与 `magent run` 同源） |
 | **服务端 / CI** | 使用 [CI 与无交互部署](#ci-与无交互部署) 中的 `TCB_SECRET_ID` / `TCB_SECRET_KEY` 换取 Bearer |
-| **控制台 API Key** | 在 CloudBase 控制台为环境创建 API Key，作为 `accessKey` / `TCB_API_KEY` 传入 SDK |
+| **控制台 API Key** | 在 CloudBase 控制台为环境创建 API Key，作为 `accessKey` / `CLOUDBASE_APIKEY` 传入 SDK |
 
 SDK 连接沙箱 Agent 时务必设置 `runtime: "harness"`。示例见 [使用指南 · 第 5 步](./harness-tutorial.md#第-5-步在应用里调用可选) 与 [Managed Agents 使用指南](./managed-agents-guide.md)。
 

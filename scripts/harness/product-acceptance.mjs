@@ -199,10 +199,9 @@ async function startRuntime({ agentConfig, useCloudDb = true } = {}) {
     AGENT_CONFIG: JSON.stringify(cfg),
   };
   if (useCloudDb) {
-    delete childEnv.OAK_USE_MEMORY_STORE;
-    delete childEnv.OAK_DISABLE_SANDBOX;
+    // no env overrides needed — runtime auto-selects memory vs FlexDB by credential presence
   } else {
-    childEnv.OAK_USE_MEMORY_STORE = "1";
+    // no DB creds → runtime auto-selects memory store
   }
 
   child = spawn(process.execPath, ["packages/agent-runtime/dist/index.js"], {

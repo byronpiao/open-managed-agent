@@ -63,15 +63,17 @@ export function getKernelAgent(config: AgentConfig): KernelAgent {
   if (_kernelAgent) return _kernelAgent;
   const customToolDefs = getCustomTools(config).map(makeClientSideToolDefinition);
   const kernelConfig = toKernelAgentConfig(config, { customToolDefs });
-  // Stash the SessionStore reference so ACP can do synchronous index writes
-  // (kernel's own registerSession is fire-and-forget — see
-  // open-agent-kernel/src/public/create-agent.ts:332-346 — and gets dropped
-  // when SCF/cloudrun recycles the instance before the write lands).
+
+  // When we explicitly set session.store (before kernel auto-resolution),
+  // capture it for ACP's synchronous index writes. If kernel auto-creates
+  // the store internally, we won't have access here — syncRegisterSession
+  // will gracefully skip (kernel's own registerSession is fire-and-forget).
   _sessionStore = (kernelConfig.session?.store as SessionStoreLike | undefined) ?? null;
   console.log(
     `[KernelAdapter] sessionStore captured: type=${typeof _sessionStore}, ` +
     `hasRegisterSession=${typeof _sessionStore?.registerSession === "function"}`,
   );
+
   _kernelAgent = createAgent(kernelConfig);
   console.log(`[KernelAdapter] kernel Agent created (id=${_kernelAgent.id})`);
   return _kernelAgent;
