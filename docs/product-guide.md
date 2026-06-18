@@ -44,7 +44,7 @@ cp .env.example .env
 编辑 `.env`：
 ```ini
 CLOUDBASE_ENV_ID=your-env-id
-CLOUDBASE_ACCESS_KEY=your-access-key
+CLOUDBASE_APIKEY=your-apikey
 ```
 
 #### 模型凭证（二选一）

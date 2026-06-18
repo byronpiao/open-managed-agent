@@ -577,7 +577,16 @@ async function handleSessionLoad(
   }
 
   if (!params.replay) {
-    res.json(rpcResult(id, { sessionId }));
+    res.json(rpcResult(id, {
+      sessionId,
+      _meta: {
+        status: row.status,
+        engine: row.engine,
+        instanceId: row.instanceId,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      },
+    }));
     return true;
   }
 

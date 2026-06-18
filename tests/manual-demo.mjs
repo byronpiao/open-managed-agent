@@ -19,7 +19,7 @@
  *   node tests/manual-demo.mjs <agentId> <envId> [path]            (override all)
  *
  * Defaults are baked in below for the stop-resume-demo agent. Override via
- * argv or env vars (CLOUDBASE_AGENT_ID, CLOUDBASE_ENV_ID, CLOUDBASE_ACCESS_KEY).
+ * argv or env vars (CLOUDBASE_AGENT_ID, CLOUDBASE_ENV_ID, CLOUDBASE_APIKEY).
  */
 
 import { readFileSync } from "node:fs";
@@ -39,10 +39,10 @@ const DEFAULT_ACCESS_KEY =
 const agentId   = process.argv[2] || process.env.CLOUDBASE_AGENT_ID  || DEFAULT_AGENT_ID;
 const envId     = process.argv[3] || process.env.CLOUDBASE_ENV_ID    || DEFAULT_ENV_ID;
 const target    = process.argv[4] || "/etc/hostname";
-const accessKey = process.env.CLOUDBASE_ACCESS_KEY || DEFAULT_ACCESS_KEY;
+const accessKey = process.env.CLOUDBASE_APIKEY || DEFAULT_ACCESS_KEY;
 
 if (!agentId || !envId || !accessKey) {
-  console.error("Missing config. Set agentId, envId, and CLOUDBASE_ACCESS_KEY.");
+  console.error("Missing config. Set agentId, envId, and CLOUDBASE_APIKEY.");
   process.exit(1);
 }
 

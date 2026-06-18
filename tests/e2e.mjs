@@ -31,9 +31,9 @@ if (existsSync(envFile)) {
 }
 
 const ENV_ID = process.env.CLOUDBASE_ENV_ID;
-const API_KEY = process.env.CLOUDBASE_ACCESS_KEY;
+const API_KEY = process.env.CLOUDBASE_APIKEY;
 if (!ENV_ID || !API_KEY) {
-  console.error("❌ 请在 .env 中配置 CLOUDBASE_ENV_ID 和 CLOUDBASE_ACCESS_KEY");
+  console.error("❌ 请在 .env 中配置 CLOUDBASE_ENV_ID 和 CLOUDBASE_APIKEY");
   process.exit(1);
 }
 
@@ -76,7 +76,7 @@ function magent(cmd) {
   const output = execSync(fullCmd, {
     encoding: "utf-8",
     timeout: 300000,
-    env: { ...process.env, CLOUDBASE_ENV_ID: ENV_ID, CLOUDBASE_ACCESS_KEY: API_KEY, CLOUDBASE_AGENT_ID: AGENT_ID },
+    env: { ...process.env, CLOUDBASE_ENV_ID: ENV_ID, CLOUDBASE_APIKEY: API_KEY, CLOUDBASE_AGENT_ID: AGENT_ID },
   });
   printOutput(output.trim());
   return output;

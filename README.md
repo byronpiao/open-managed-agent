@@ -420,7 +420,6 @@ npm install -g open-managed-agent
 | `CLOUDBASE_ENV_ID` | CloudBase 环境 ID（可用 `-e` 覆盖） |
 | `CLOUDBASE_AGENT_ID` | 默认 Agent ID（可免 `--id`） |
 | `CLOUDBASE_APIKEY` | 环境 API Key（JWT）；SDK `accessKey` 同源，用于 FlexDB / AI Gateway / AGS |
-| `CLOUDBASE_ACCESS_KEY` | 同上（历史变量名，可与 `CLOUDBASE_APIKEY` 互填） |
 | `CLOUDBASE_SERVER_URL` | 自定义 Server URL |
 
 ### 命令列表

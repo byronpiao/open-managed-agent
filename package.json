@@ -26,6 +26,7 @@
   "dependencies": {
     "@cloudbase/cli": "latest",
     "@cloudbase/signature-nodejs": "^2.2.0",
+    "commander": "^15.0.0",
     "open-managed-agent-runtime": "workspace:*",
     "yaml": "^2.7.0"
   },
@@ -42,5 +43,6 @@
     "dev:harness": "node scripts/dev-harness.mjs",
     "harness": "npm run build:runtime && node scripts/harness/index.mjs",
     "check:harness": "node scripts/check-harness-ready.mjs"
-  }
+  },
+  "packageManager": "pnpm@10.20.0+sha512.cf9998222162dd85864d0a8102e7892e7ba4ceadebbf5a31f9c2fce48dfce317a9c53b9f6464d1ef9042cba2e02ae02a9f7c143a2b438cd93c91840f0192b9dd"
 }

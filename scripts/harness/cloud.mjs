@@ -369,7 +369,7 @@ async function getAuthHeaders(envId) {
   }
 
   if (!accessKey) {
-    accessKey = process.env.CLOUDBASE_ACCESS_KEY?.trim() ?? "";
+    accessKey = process.env.CLOUDBASE_APIKEY?.trim() ?? "";
   }
   if (!accessKey) {
     throw new Error(

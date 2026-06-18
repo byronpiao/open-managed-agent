@@ -20,6 +20,7 @@ agent.harness.claude.yaml
 packages/agent-runtime/agent.yaml
 packages/agent-runtime/agent.yml
 packages/agent-runtime/agent.harness.yaml
+packages/agent-runtime/.deploy-cloudrun
 # Legacy local deploy copy — use agent.harness.yaml
 agent.sandbox.yaml
 

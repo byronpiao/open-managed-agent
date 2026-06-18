@@ -14,10 +14,10 @@
 
 const ENV_ID = process.env.CLOUDBASE_ENV_ID ?? "";
 const AGENT_ID = process.env.CLOUDBASE_AGENT_ID ?? "";
-const API_KEY = process.env.CLOUDBASE_ACCESS_KEY ?? "";
+const API_KEY = process.env.CLOUDBASE_APIKEY ?? "";
 
 if (!ENV_ID || !AGENT_ID || !API_KEY) {
-  console.error("Error: CLOUDBASE_ENV_ID, CLOUDBASE_AGENT_ID, and CLOUDBASE_ACCESS_KEY are required");
+  console.error("Error: CLOUDBASE_ENV_ID, CLOUDBASE_AGENT_ID, and CLOUDBASE_APIKEY are required");
   console.error("Set them in .env or export them before running tests");
   process.exit(1);
 }

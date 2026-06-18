@@ -276,20 +276,27 @@ async function handleSessionLoad(
 ): Promise<boolean> {
   const sessionId = String(params.sessionId ?? "");
 
-  // When replay is requested, skip the sessions.get() gate and go straight
-  // to loading history from the kernel session. The kernel may have auto-
-  // created the session store internally (credentials-based), so our
-  // agent.sessions.get() — which returns null in kernel beta — would
-  // incorrectly reject valid sessions that are in the store but not yet
-  // indexed by sessions.get().
   if (!params.replay) {
+    // Existence check via kernel SessionManagement.get(). The kernel reads
+    // the session index (no side effects, no auto-create), returning null
+    // when the session has no FlexDB record. Returns the SessionSummary as
+    // _meta so the CLI can render status/timestamps (mirrors Anthropic
+    // `sessions retrieve`).
     const agent = getKernelAgent(config);
     const summary = await agent.sessions.get(sessionId);
     if (!summary) {
       res.json(rpcError(id, -32602, `Session not found: ${sessionId}`));
       return true;
     }
-    res.json(rpcResult(id, { sessionId }));
+    res.json(rpcResult(id, {
+      sessionId,
+      _meta: {
+        status: summary.status,
+        userId: summary.userId,
+        createdAt: summary.createdAt,
+        updatedAt: summary.updatedAt,
+      },
+    }));
     return true;
   }
 
