@@ -493,7 +493,7 @@ def opencode_models() -> None:
         '  <rect x="60" y="70" width="250" height="200" rx="10" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>',
         '  <text x="185" y="100" fill="#1d4ed8" font-size="13" font-weight="600" text-anchor="middle">1 · Default</text>',
         '  <text x="185" y="130" fill="#111827" font-size="12" text-anchor="middle">omit model or hy3-preview</text>',
-        '  <text x="185" y="155" fill="#6b7280" font-size="11" text-anchor="middle">TCB_API_KEY + CAM</text>',
+        '  <text x="185" y="155" fill="#6b7280" font-size="11" text-anchor="middle">CLOUDBASE_APIKEY + CAM</text>',
         '  <text x="185" y="178" fill="#6b7280" font-size="11" text-anchor="middle">CloudBase AI gateway</text>',
         '  <text x="185" y="210" fill="#16a34a" font-size="11" font-weight="600" text-anchor="middle">Recommended start</text>',
         '  <rect x="355" y="70" width="250" height="200" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="2"/>',
