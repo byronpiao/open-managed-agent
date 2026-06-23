@@ -15,18 +15,30 @@
 # when running as uid==0. uid-shim.mjs drops root via process.setuid(1001)
 # before any module loads. --import (Node 20+) loads it as ESM before index.js.
 
-export HOME=/tmp
-export CLAUDE_CONFIG_DIR=/tmp/.claude
+# OAK workRoot: kernel 把所有自管目录统一落在 <workRoot>/.oak/ 下
+#   .oak/agent/.claude   → CLAUDE_CONFIG_DIR(Agent 全局配置;kernel 无条件设置,无需我们 export)
+#   .oak/users/<e>/<u>/  → userMemory per-user 配置
+#   .oak/sync/           → COS 同步临时区
+# 显式把 workRoot 钉到 /tmp(SCF 唯一保证可写的地方),让 kernel 不走 home 探测、行为确定。
+export OAK_SESSION_LOCAL_DIR=/tmp
 
 # Create dirs and hand them to uid 1001 BEFORE Node starts. uid-shim's
 # `chown -R agent:agent /tmp` runs as root (uid-shim runs before setuid),
 # but a stricter mount on /tmp itself can stop chown of the mount root —
 # only the children can be reliably chowned. So we explicitly create the
 # children we need and chown those.
-mkdir -p /tmp/.claude /tmp/workspace /tmp/claude-cache
-chown -R 1001:1001 /tmp/.claude /tmp/workspace /tmp/claude-cache 2>/dev/null || true
-chmod 0755 /tmp/.claude /tmp/workspace /tmp/claude-cache 2>/dev/null || true
+# Open up /tmp itself so uid 1001 can create files/dirs at the top level
+# (e.g. os.tmpdir() / mkdtemp). chown of the mount root is rejected by SCF,
+# but chmod is not — 1777 is the standard Linux /tmp mode (world-writable +
+# sticky bit so users can't delete each other's files).
+chmod 1777 /tmp 2>/dev/null || true
 
-cd /tmp
+# /tmp/.oak: kernel 的统一自管根(见上)。/tmp/workspace: session cwd。
+# 预建并 chown 给 1001,避免子进程写不进(写不进会静默 exit 0 + 0 输出)。
+mkdir -p /tmp/.oak /tmp/workspace
+chown -R 1001:1001 /tmp/.oak /tmp/workspace 2>/dev/null || true
+chmod 0755 /tmp/.oak /tmp/workspace 2>/dev/null || true
+
+cd /tmp/workspace
 
 exec node --import /var/user/uid-shim.mjs /var/user/dist/index.js

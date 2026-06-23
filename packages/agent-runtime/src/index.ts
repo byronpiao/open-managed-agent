@@ -25,6 +25,17 @@ import { getKernelAgent, getStoreDiag } from "./kernel-adapter.js";
 const port = Number(process.env.PORT ?? 9000);
 
 async function main() {
+  // 以 root(euid=0)运行时告警:claude CLI 会拒绝 --dangerously-skip-permissions,
+  // 导致 SDK 收不到任何 stream event。uid-shim 应已降权,这里只在万一没降权时提示。
+  if (typeof process.geteuid === "function" && process.geteuid() === 0) {
+    // eslint-disable-next-line no-console
+    console.error(
+      "[runtime] WARNING: running as root (euid=0) — claude CLI will reject " +
+        "--dangerously-skip-permissions, the agent will produce no output. " +
+        "Ensure uid-shim drops privileges (start as root + --import uid-shim, no `USER` directive).",
+    );
+  }
+
   const rawConfig = await loadAgentConfig();
   const config = await resolveSkills(rawConfig);
   const { runtime, engine } = resolveRuntime(config);
