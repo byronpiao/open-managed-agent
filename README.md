@@ -160,7 +160,7 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 | 可选 | `model: zen` | 箱内 OpenCode 内置，**不扣** CloudBase AI 额度（仅 opencode） |
 | 可选 | yaml 中 `model` 对象 | 自有 OpenAI / Anthropic 兼容 endpoint + Key |
 
-完整步骤：[用户故事](./docs/harness-user-story.md) → [使用指南](./docs/harness-tutorial.md) · [OpenCode](./docs/harness-opencode.md) · [Claude Code](./docs/harness-claude-code.md)
+完整步骤（用户文档）：[用户故事](./docs/harness-user-story.md) → [使用指南](./docs/harness-tutorial.md) · [OpenCode](./docs/harness-opencode.md) · [Claude Code](./docs/harness-claude-code.md) · [凭证](./docs/harness-credentials.md)
 
 **Managed Agents HTTP**（`/v1/sessions` + SSE）：[用户故事 · 故事 B](./docs/harness-user-story.md#故事-b使用-ma-http-协议接入) · [使用指南](./docs/managed-agents-guide.md)
 
@@ -194,7 +194,7 @@ magent agent:create --name my-sandbox --runtime harness --engine opencode \
 
 ### 自定义数据面镜像（可选）
 
-默认不必改镜像。要预装依赖或自有基础环境：构建镜像并推到与沙箱**同地域**的 [腾讯云 TCR](https://console.cloud.tencent.com/tcr)，在 `agent.harness.yaml` 写 `sandbox.image`。步骤见 [使用指南 · 自定义沙箱镜像](./docs/harness-tutorial.md#自定义沙箱镜像可选)。
+默认不必改镜像。要预装依赖或自有基础环境：镜像须含箱内 Agent（magent 规格）；推到与沙箱**同地域**的 [腾讯云 TCR](https://console.cloud.tencent.com/tcr)，在 `agent.harness.yaml` 写 `sandbox.image`。步骤见 [使用指南 · 沙箱镜像](./docs/harness-tutorial.md#沙箱镜像)。
 
 ### 更多能力
 
@@ -729,13 +729,17 @@ magent agent:create --name my-agent --env <env-id>
 
 ---
 
-## 研发贡献（Harness）
+## 研发贡献（仓库维护者）
+
+> 以下文档与命令**不对客**；终端用户只需上文 [沙箱内 Agent](#沙箱内-agent) 中的用户文档链。
 
 | 文档 | 用途 |
 |------|------|
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | 验收两轴 · npm 脚本 · release |
-| [Harness一条龙.md](../Harness一条龙.md) | Agent 按步骤跑 + 排障 |
-| [scenarios/README.md](./scripts/harness/scenarios/README.md) | 6 格 LLM / COS |
+| [Harness一条龙.md](../Harness一条龙.md) | monorepo 可执行验收 + 排障 |
+| [docs/harness-architecture.md](./docs/harness-architecture.md) | 运行时架构 · 日志 |
+| [docs/harness-env.md](./docs/harness-env.md) | `.env.harness` · 场景矩阵 |
+| [scenarios/README.md](./scripts/harness/scenarios/README.md) | LLM / COS 验收格 |
 
 ```bash
 npm test

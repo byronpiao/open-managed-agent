@@ -1,4 +1,6 @@
-# Harness 运维备忘（大白话）
+# Harness 运维备忘（维护者专用）
+
+> **用户排障：** [使用指南 · 常见问题](./harness-tutorial.md#常见问题) · [凭证说明](./harness-credentials.md)
 
 ![Harness test scenarios (internal)](./diagrams/harness-test-scenarios.svg)
 

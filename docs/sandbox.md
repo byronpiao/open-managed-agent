@@ -1,7 +1,7 @@
-# agent.yaml `sandbox`（内部草案）
+# agent.yaml `sandbox`（维护者草案）
 
-> **状态：草案** — 字段语义、默认值、校验规则随时可能调整。  
-> **不对客开放**：文档与解析占位供 OMA / TRW 内部联调；托管控制台与公开 API **不识别** 此块。  
+> **状态：内部字段** — 托管控制台与公开用户文档**不承诺**此块；用户换镜像见 [使用指南 · 沙箱镜像](./harness-tutorial.md#沙箱镜像)。  
+> 字段语义、默认值可能调整；仅 OMA / TRW 联调与研发验收使用。  
 > **实现进度**：`serverless`（AGS）路径已接线 CPU/Mem/timeout/image；`durable`（Talos）在 orchestrator 层 **显式拒绝**，待 manage-node 落地。
 
 ## 与 `runtime` / `engine` 的分工

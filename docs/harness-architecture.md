@@ -1,7 +1,10 @@
-# 沙箱内 Agent — 架构参考
+# 沙箱内 Agent — 架构参考（维护者专用）
 
-> 环境变量：[harness-env.md](./harness-env.md) · 上手：[harness-tutorial.md](./harness-tutorial.md) · 会话外置：[harness-agent-session-storage.md](./harness-agent-session-storage.md)  
-> 验收编排：[CONTRIBUTING.md](../CONTRIBUTING.md) · [Harness一条龙.md](../../Harness一条龙.md)
+> **用户文档：** [使用指南](./harness-tutorial.md) · [凭证说明](./harness-credentials.md) · [用户故事](./harness-user-story.md)  
+> 本文描述运行时架构、日志与仓库内验收；**不对客**。
+
+环境变量：[harness-env.md](./harness-env.md) · 会话外置：[harness-agent-session-storage.md](./harness-agent-session-storage.md)  
+验收编排：[CONTRIBUTING.md](../CONTRIBUTING.md) · [Harness一条龙.md](../../Harness一条龙.md)
 
 `runtime=harness`：思考循环在 **AGS 沙箱内 engine**（opencode / claude / codebuddy）跑 ACP；OMA Runtime 负责会话索引、sync、client tool 桥、MCP relay。
 

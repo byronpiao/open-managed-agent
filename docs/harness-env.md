@@ -1,9 +1,9 @@
-# 沙箱 Agent — 环境变量（研发与验收）
+# 沙箱 Agent — 环境变量（维护者专用）
 
-> **对客部署请读：** [使用指南](./harness-tutorial.md) · [凭证说明](./harness-credentials.md)  
-> 日常只需 `magent login` + `tcb env use` + `agent.yaml`，**不必**创建本页所述的 `.env.harness`。
+> **用户部署请只读：** [使用指南](./harness-tutorial.md) · [凭证说明](./harness-credentials.md)  
+> 日常只需 `magent login` + `tcb env use` + `agent.harness.yaml`，**不必**读本文或创建 `.env.harness`。
 
-本文面向 **仓库内验收、镜像推送、场景矩阵**；与快速开始无关的内容请勿抄进对客材料。
+本文仅供 **OMA 仓库内研发**：验收脚本、镜像推送、场景矩阵。内容不面向终端客户。
 
 ---
 

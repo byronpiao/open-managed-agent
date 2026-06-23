@@ -21,8 +21,6 @@
 | 4 按引擎 | [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md) | 换引擎或换模型 |
 | 5 HTTP 集成 | [Managed Agents 使用指南](./managed-agents-guide.md) | 应用后端走 REST + SSE |
 
-**研发验收**（非对客）：[CONTRIBUTING.md](../CONTRIBUTING.md) · monorepo [Harness一条龙.md](../../Harness一条龙.md)
-
 ---
 
 ## 开始之前
@@ -158,7 +156,7 @@ for await (const event of client.sessions.prompt(session.id, "列出当前目录
 | **4** | 工具与审批 | `agent_toolset`、bash `always_ask` | [能力进阶 · 沙箱工具](#沙箱工具bash-等) |
 | **5** | 外部能力 | MCP、`skills` 文件 | [能力进阶 · MCP / Skills](#外部-mcp) |
 | **6** | 长任务存盘 | COS 工作区（**须在首次 `agent:create` 前**配置） | [工作区持久化](#工作区持久化-cos) |
-| **7** | 自定义环境 | 自有 TCR 镜像 | [自定义沙箱镜像](#自定义沙箱镜像可选) |
+| **7** | 自定义环境 | 自有 TCR 镜像 | [沙箱镜像](#沙箱镜像) |
 | **8** | 业务集成 | REST + SSE | [managed-agents-guide](./managed-agents-guide.md) |
 
 > **COS / 自定义镜像**：环境变量在**创建沙箱工具**时写入平台；若你已按默认方式部署，要启用 COS 或换镜像，请**新建一个 harness Agent**（可复用同一 `HARNESS_TOOL_ROLE_ARN`），并在新的 `agent:create` 前 export 相应变量。
@@ -289,25 +287,31 @@ skills:
 
 ---
 
-## 自定义沙箱镜像（可选）
+## 沙箱镜像
 
-**快速开始不必改镜像。** 默认镜像已包含常用编码环境。
+### 默认（推荐）
 
-若需预装依赖或自有基础镜像：
+不配置 `sandbox.image` 时，平台使用内置 **magent** 规格镜像：远程工作区（:9000）+ 箱内 **OpenCode / Claude Code / CodeBuddy** 的 ACP 能力。快速开始**不必改镜像**。
 
-1. 在自定义 Dockerfile 中安装所需依赖，构建镜像。  
-2. 将镜像推送到与沙箱**同地域**的 [腾讯云容器镜像服务 TCR](https://console.cloud.tencent.com/tcr)。  
-3. 在 `agent.harness.yaml` 指定镜像：
+### 自定义（可选）
+
+仅在需要预装系统依赖、固定工具链版本或企业私有基础镜像时：
+
+1. 构建的镜像须**保留箱内 Agent 与 ACP**（与 magent 规格同等能力）；仅 minimal「无 Agent」镜像无法用于 `runtime: harness`。  
+2. 将镜像推到与沙箱**同地域**的 [腾讯云容器镜像服务 TCR](https://console.cloud.tencent.com/tcr)。  
+3. 在 `agent.harness.yaml` 指定：
 
 ```yaml
 sandbox:
   image: ccr.ccs.tencentyun.com/<命名空间>/<镜像>:<tag>
-  imageRegistryType: enterprise   # 企业版 TCR；个人版省略（默认 personal）
+  imageRegistryType: enterprise   # 企业版 TCR；个人版可省略（默认 personal）
 ```
 
-更换镜像 tag 后执行 `magent agent:update -f ./agent.harness.yaml -a <agentId>`，下次起沙箱时生效。
+4. `magent agent:update -f ./agent.harness.yaml -a <agentId>`，**下次起沙箱**时生效。
 
-**首次**在本环境创建沙箱工具时，角色须能拉取该 TCR 仓库（通常勾选 `QcloudTCRReadOnlyAccess`），见 [凭证说明](./harness-credentials.md)。
+**首次**在本环境创建沙箱工具时，`HARNESS_TOOL_ROLE_ARN` 须能拉取该 TCR 仓库（通常 `QcloudTCRReadOnlyAccess`），见 [凭证说明](./harness-credentials.md)。
+
+若你已按默认方式部署、现在要换镜像，请**新建一个 harness Agent**（可复用同一 `HARNESS_TOOL_ROLE_ARN`），并在 `agent:create` 前写好 `sandbox.image`。
 
 ---
 
@@ -330,10 +334,6 @@ export HARNESS_COS_MOUNT_DIR=/mnt/workspace
 ```
 
 同一 `HARNESS_TOOL_ROLE_ARN` 还须允许向该桶**写入**（快照需要上传对象）。预设可加 `QcloudCOSFullAccess`，或配置桶级策略 — 见 [凭证说明 · COS](./harness-credentials.md#cos-工作区与快照角色还要什么权限)。
-
-> 仓库内 **npm 验收** 的 COS 行为（矩阵不挂 / cos-e2e / cloud `--with-cos`）见 [CONTRIBUTING.md](../CONTRIBUTING.md) 与 [scenarios/README.md](../scripts/harness/scenarios/README.md)，与上文对客 `export` 路径互补。
-
-**本地 ACP 调试**（`npm run dev:harness`）：可在 `agent.harness.yaml` 设 `sandbox.auth: none`；见 `agent.harness.yaml.example`。
 
 ---
 
@@ -360,6 +360,8 @@ magent agent:update -f ./agent.harness.yaml -a "$CLOUDBASE_AGENT_ID"
 | 模型 401 / 额度 | 控制台检查 CloudBase AI 开关与 Token 包 |
 | 不想用 CloudBase AI 额度 | opencode 可设 `model: zen` |
 | 改了 yaml 不生效 | 执行 `magent agent:update -f ...` |
+| ACP / 对话 404 | 确认未把沙箱镜像换成「无 Agent」规格；自定义镜像须含箱内 ACP |
+| 换 COS 或镜像不生效 | 须**新建** harness Agent，在 `agent:create` 前 export / 写好配置 |
 
 ---
 

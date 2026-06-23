@@ -7,7 +7,7 @@ import { resolveAnthropicApiKeyFromEnv } from "./llm-providers.js";
 
 /** Built-in default when agent yaml omits sandbox.image (bumped by build-push-magent-public.sh). */
 export const HARNESS_PUBLIC_MAGENT_IMAGE =
-  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260615-1818-59b1a5-magent";
+  "ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:260623-2043-32f3de-magent";
 
 export function requireEnv(name: string, hint?: string): string {
   const value = process.env[name]?.trim();

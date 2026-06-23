@@ -1,7 +1,7 @@
-# Harness 会话外置存储
+# Harness 会话外置存储（维护者专用）
 
-> 读者：架构评审、运维、研发。  
-> 关联：[harness-architecture.md](./harness-architecture.md) · [harness-env.md](./harness-env.md)
+> **用户文档：** [使用指南](./harness-tutorial.md) · [Managed Agents](./managed-agents-guide.md)  
+> 读者：架构评审、运维、研发。
 
 沙箱内 Agent（`runtime=harness`）的思考与工具在 **AGS 沙箱**里执行；箱内磁盘随实例 TTL 清空。要让对话跨沙箱回收、re-acquire 后仍能续聊，必须把会话「真相」写到箱外。
 
