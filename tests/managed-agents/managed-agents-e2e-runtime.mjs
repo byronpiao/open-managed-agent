@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
+/** Empty cwd so loadAgentConfig() does not pick up repo-root agent.yaml over AGENT_CONFIG. */
+const e2eRuntimeCwd = join(dirname(fileURLToPath(import.meta.url)), "e2e-runtime-cwd");
 
 export const MANAGED_AGENTS_E2E_PORT = 19191;
 export const MANAGED_AGENTS_E2E_BASE = `http://127.0.0.1:${MANAGED_AGENTS_E2E_PORT}`;
@@ -49,8 +51,8 @@ export async function startManagedAgentsE2eRuntime({
     AGENT_CONFIG: JSON.stringify(agentConfig),
   };
 
-  child = spawn(process.execPath, ["packages/agent-runtime/dist/index.js"], {
-    cwd: repoRoot,
+  child = spawn(process.execPath, [join(repoRoot, "packages/agent-runtime/dist/index.js")], {
+    cwd: e2eRuntimeCwd,
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });

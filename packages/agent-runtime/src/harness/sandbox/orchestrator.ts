@@ -20,6 +20,7 @@ import {
 import { fetchGatewayAccessToken } from "../tcb-gateway-token.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 import { harnessTrace, harnessLog, harnessOutboundCorrelationHeaders } from "../logging.js";
+import { injectOutboundTraceHeaders, withActiveSpan } from "../telemetry.js";
 import { recordHarnessAcquireDuration } from "../metrics.js";
 import {
   buildCosMountOptions,
@@ -535,11 +536,7 @@ function buildHarnessSandboxHandle(args: {
       const initHeaders = (init?.headers as Record<string, string> | undefined) ?? {};
       return fetch(`${args.baseUrl}${p}`, {
         ...init,
-        headers: {
-          ...headers,
-          ...harnessOutboundCorrelationHeaders(),
-          ...initHeaders,
-        },
+        headers: mergeSandboxDataPlaneHeaders(headers, initHeaders),
       });
     },
     async refreshInstanceAccessToken() {
@@ -570,6 +567,19 @@ function buildHarnessSandboxHandle(args: {
       }
     },
   };
+}
+
+function mergeSandboxDataPlaneHeaders(
+  base: Record<string, string>,
+  initHeaders?: Record<string, string>,
+): Record<string, string> {
+  const merged: Record<string, string> = {
+    ...base,
+    ...harnessOutboundCorrelationHeaders(),
+    ...(initHeaders ?? {}),
+  };
+  injectOutboundTraceHeaders(merged);
+  return merged;
 }
 
 function buildDataPlaneHeaders(args: {
@@ -607,7 +617,7 @@ async function waitForReady(args: {
     });
     try {
       const res = await fetch(`${baseUrl}/health`, {
-        headers,
+        headers: mergeSandboxDataPlaneHeaders(headers),
         signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
       });
       if (res.ok) {
@@ -651,6 +661,18 @@ export class AgsStatefulSandboxOrchestrator {
   }
 
   async acquire(args: AcquireHarnessSandboxArgs): Promise<HarnessSandboxHandle> {
+    return withActiveSpan(
+      "harness.acquire",
+      {
+        engine: args.engine,
+        envId: args.envId,
+        ...(args.acpSessionId ? { acpSessionId: args.acpSessionId } : {}),
+      },
+      async () => this.acquireInner(args),
+    );
+  }
+
+  private async acquireInner(args: AcquireHarnessSandboxArgs): Promise<HarnessSandboxHandle> {
     const startedAt = Date.now();
     const wl = harnessLog({
       lane: "orchestrator",
@@ -820,7 +842,7 @@ export class AgsStatefulSandboxOrchestrator {
     try {
       const res = await fetch(`${baseUrl}/api/workspace/init`, {
         method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
+        headers: mergeSandboxDataPlaneHeaders(headers, { "Content-Type": "application/json" }),
         body: JSON.stringify({
           env: envMap,
           ...(skills ? { skills } : {}),

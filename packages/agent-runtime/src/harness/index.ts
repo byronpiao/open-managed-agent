@@ -51,8 +51,11 @@ export {
   resolveHarnessRequestId,
   resolveHarnessCorrelationFromHeaders,
   parseCloudbaseTraceHeader,
+  parseTraceparent,
+  buildSyntheticTraceparent,
   normalizeInboundRequestId,
   buildHarnessOutboundCorrelationHeaders,
+  TRACEPARENT_HEADER,
 } from "./logging.js";
 
 export {
@@ -62,6 +65,8 @@ export {
   recordHarnessSyncExported,
   recordHarnessAcceptanceOutcome,
 } from "./metrics.js";
+
+export { getTelemetrySummary, getMetricsExportMode, getTracesExportMode } from "./telemetry-init.js";
 
 export {
   HARNESS_SYNC_EVENTS_COLLECTION,

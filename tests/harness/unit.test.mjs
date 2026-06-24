@@ -51,8 +51,11 @@ import {
   openAiChatCompletionsUrl,
   normalizeInboundRequestId,
   parseCloudbaseTraceHeader,
+  parseTraceparent,
+  buildSyntheticTraceparent,
   resolveHarnessCorrelationFromHeaders,
   buildHarnessOutboundCorrelationHeaders,
+  TRACEPARENT_HEADER,
 } from "../../packages/agent-runtime/dist/harness/index.js";
 import {
   getHarnessSessionStore,
@@ -1451,14 +1454,60 @@ test("normalizeInboundRequestId rejects unsafe values", () => {
   assert.equal(normalizeInboundRequestId("bad id space"), undefined);
 });
 
-test("parseCloudbaseTraceHeader decodes traceId", () => {
+test("parseCloudbaseTraceHeader decodes traceId and spanId", () => {
   const traceId = "8f431b7e-bfcc-423e-99d8-cda72471ff49";
   const spanId = "bbe75687-fffb-6cb8";
   const raw = Buffer.from(`${traceId},${spanId},on`, "utf-8").toString("base64");
   const parsed = parseCloudbaseTraceHeader(raw);
   assert.equal(parsed.traceId, traceId);
+  assert.equal(parsed.spanId, "bbe75687fffb6cb8");
   assert.equal(parsed.raw, raw);
   assert.deepEqual(parseCloudbaseTraceHeader("not-base64!!!"), {});
+});
+
+test("parseTraceparent decodes W3C trace context", () => {
+  const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+  const parsed = parseTraceparent(tp);
+  assert.equal(parsed.traceId, "4bf92f3577b34da6a3ce929d0e0e4736");
+  assert.equal(parsed.spanId, "00f067aa0ba902b7");
+  assert.equal(parsed.source, "traceparent");
+});
+
+test("resolveHarnessCorrelationFromHeaders prefers traceparent", () => {
+  const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+  const ctx = resolveHarnessCorrelationFromHeaders({
+    traceparent: tp,
+    "x-cloudbase-request-id": "req-1",
+  });
+  assert.equal(ctx.requestId, "req-1");
+  assert.equal(ctx.traceId, "4bf92f3577b34da6a3ce929d0e0e4736");
+  assert.equal(ctx.traceSource, "traceparent");
+  assert.equal(ctx.traceRaw, tp);
+});
+
+test("buildHarnessOutboundCorrelationHeaders never forges scf headers", () => {
+  const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+  const w3c = buildHarnessOutboundCorrelationHeaders({
+    requestId: "oma-1",
+    traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+    spanId: "00f067aa0ba902b7",
+    traceRaw: tp,
+    traceSource: "traceparent",
+  });
+  assert.equal(w3c["X-Request-Id"], "oma-1");
+  assert.equal(w3c.traceparent, tp);
+  assert.equal(w3c["x-scf-request-id"], undefined);
+
+  const cloud = buildHarnessOutboundCorrelationHeaders({
+    requestId: "oma-1",
+    traceId: "8f431b7e-bfcc-423e-99d8-cda72471ff49",
+    spanId: "bbe75687fffb6cb8",
+    traceRaw: "b64payload",
+    traceSource: "cloudbase",
+    cloudbaseTrace: "b64payload",
+  });
+  assert.equal(cloud["x-cloudbase-trace"], "b64payload");
+  assert.match(cloud.traceparent, /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
 });
 
 test("resolveHarnessCorrelationFromHeaders uses inbound or generates", () => {
@@ -1468,17 +1517,6 @@ test("resolveHarnessCorrelationFromHeaders uses inbound or generates", () => {
   assert.equal(inbound.requestId, "scf-req-1");
   const generated = resolveHarnessCorrelationFromHeaders({});
   assert.match(generated.requestId, /^[0-9a-f-]{36}$/i);
-});
-
-test("buildHarnessOutboundCorrelationHeaders never forges scf headers", () => {
-  const headers = buildHarnessOutboundCorrelationHeaders({
-    requestId: "oma-1",
-    traceId: "trace-abc",
-    cloudbaseTrace: "b64payload",
-  });
-  assert.equal(headers["X-Request-Id"], "oma-1");
-  assert.equal(headers["x-cloudbase-trace"], "b64payload");
-  assert.equal(headers["x-scf-request-id"], undefined);
 });
 
 test("resolveHarnessSandboxIdlePauseMs defaults to 20 minutes", () => {
