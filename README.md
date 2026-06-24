@@ -736,8 +736,8 @@ magent agent:create --name my-agent --env <env-id>
 | 文档 | 用途 |
 |------|------|
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | 验收两轴 · npm 脚本 · release |
-| [Harness一条龙.md](../Harness一条龙.md) | monorepo 可执行验收 + 排障 |
-| [docs/harness-architecture.md](./docs/harness-architecture.md) | 运行时架构 · 日志 |
+| [docs/harness-architecture.md](./docs/harness-architecture.md) | 运行时架构 · 日志 · 验收 |
+| [docs/harness-observability.md](./docs/harness-observability.md) | traceparent · 可选 OTEL |
 | [docs/harness-env.md](./docs/harness-env.md) | `.env.harness` · 场景矩阵 |
 | [scenarios/README.md](./scripts/harness/scenarios/README.md) | LLM / COS 验收格 |
 

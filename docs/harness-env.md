@@ -20,7 +20,7 @@ cp .env.harness.example .env.harness
 node scripts/harness/load-env.mjs --check
 ```
 
-验收场景矩阵：[scripts/harness/scenarios/README.md](../scripts/harness/scenarios/README.md) · 编排：[CONTRIBUTING.md](../CONTRIBUTING.md) · [Harness一条龙.md](../../Harness一条龙.md)
+验收场景矩阵：[scripts/harness/scenarios/README.md](../scripts/harness/scenarios/README.md) · 编排：[CONTRIBUTING.md](../CONTRIBUTING.md) · [harness-architecture.md](./harness-architecture.md)
 
 ---
 

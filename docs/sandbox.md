@@ -1,7 +1,7 @@
 # agent.yaml `sandbox`（维护者草案）
 
 > **状态：内部字段** — 托管控制台与公开用户文档**不承诺**此块；用户换镜像见 [使用指南 · 沙箱镜像](./harness-tutorial.md#沙箱镜像)。  
-> 字段语义、默认值可能调整；仅 OMA / TRW 联调与研发验收使用。  
+> 字段语义、默认值可能调整；仅 harness 联调与研发验收使用。  
 > **实现进度**：`serverless`（AGS）路径已接线 CPU/Mem/timeout/image；`durable`（Talos）在 orchestrator 层 **显式拒绝**，待 manage-node 落地。
 
 ## 与 `runtime` / `engine` 的分工
@@ -26,7 +26,7 @@ sandbox:
   # image: ...            # 高级：覆盖内置 HARNESS_PUBLIC_MAGENT_IMAGE
   # imageRegistryType: enterprise   # 企业版 TCR（默认 personal）
   # timeout: 30m          # serverless：AGS DefaultTimeout；durable：0 = 长驻（Talos，未接线）
-  env:                    # 可选：起箱时注入 TRW 实例 env（显式白名单式 passthrough）
+  env:                    # 可选：起箱时注入沙箱实例 env（显式白名单式 passthrough）
     MY_FEATURE_FLAG: "on"
     WORKSPACE_FOLDER_PATHS: "/custom"   # 可覆盖 OMA 默认值（非 deny 键）
 ```
@@ -43,7 +43,7 @@ sandbox:
 
 解析入口：`normalizeSandboxEnv`（`sandbox-config.ts` → `resolveSandboxConfig`）；注入：`buildHarnessSandboxEnv`（`deploy.ts`）。
 
-与 TRW **workspace API** 运行时 env 白名单（`tcb-remote-workspace/docs/workspace-env.md`）无关 — `sandbox.env` 只管**起箱**一刻的实例 env。
+与箱内 **workspace API** 运行时 env 白名单无关 — `sandbox.env` 只管**起箱**一刻的实例 env。
 
 Hermes（**内部草案，未对客**）：Talos `durable` 尚未接线；LLM 配置按 **OpenAI 兼容** `model` ModelSpec 预留（与 opencode 相同形状），见 `scripts/harness/scenarios/agent.hermes.yaml`。
 
@@ -67,7 +67,7 @@ Hermes（**内部草案，未对客**）：Talos `durable` 尚未接线；LLM �
 | `sandbox.infra` | 后端 | 今日行为 |
 |-----------------|------|----------|
 | `serverless` | AGS（CreateSandboxTool / StartSandboxInstance） | **已接线**：Resources、DefaultTimeout、Image |
-| `durable` | Talos VM + TRW Hermes preset 等 | **未接线**：`acquire` 抛 `SandboxConfigError` |
+| `durable` | Talos VM + Hermes preset 等 | **未接线**：`acquire` 抛 `SandboxConfigError` |
 
 ## 引擎 × infra 校验（`assertSandboxAcquireAllowed`）
 
@@ -92,4 +92,3 @@ Hermes（**内部草案，未对客**）：Talos `durable` 尚未接线；LLM �
 
 - [harness-env.md](./harness-env.md) — 沙箱镜像与 LLM 环境变量
 - [harness-architecture.md](./harness-architecture.md) — Harness 总览
-- TRW Talos runbook：`tcb-remote-workspace/docs/infra/talos-runbook.md`

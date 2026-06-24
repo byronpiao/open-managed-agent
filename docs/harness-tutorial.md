@@ -349,6 +349,16 @@ magent agent:update -f ./agent.harness.yaml -a "$CLOUDBASE_AGENT_ID"
 
 ---
 
+## 可观测性
+
+默认：OMA Runtime **stdout** 结构化日志；向沙箱转发时透传 `traceparent`（或 `x-cloudbase-trace`）与 `X-Request-Id`，便于与 CloudBase [服务调用日志](https://docs.cloudbase.net/logger/tracelog) 对齐。
+
+集成方在调用 Managed Agents / ACP 时建议带上 `traceparent` 与 `X-Request-Id`。可选 OpenTelemetry（Runtime 与沙箱实例 env 分开配置）。
+
+详见 [可观测性](./harness-observability.md)。
+
+---
+
 ## 常见问题
 
 | 现象 | 处理 |
@@ -370,5 +380,6 @@ magent agent:update -f ./agent.harness.yaml -a "$CLOUDBASE_AGENT_ID"
 - [README · 沙箱内 Agent](../README.md#沙箱内-agent)
 - [用户故事 · 选型](./harness-user-story.md)
 - [凭证说明](./harness-credentials.md)
+- [可观测性](./harness-observability.md)
 - [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md)
 - [Managed Agents HTTP](./managed-agents-guide.md)
