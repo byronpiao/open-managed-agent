@@ -115,8 +115,7 @@ export async function verifyCloudClaudeSessionStore(agentId, envId) {
   }
 
   const engineSessionId = await waitForEngineSessionId(envId, sessionId);
-  await sleep(10000);
-  const entryCount = await waitForClaudeSessionEntries(engineSessionId, 1, 48);
+  const entryCount = await waitForClaudeSessionEntries(engineSessionId);
   console.log(
     `✓ harness_claude_session_entries rows=${entryCount} engineSessionId=${engineSessionId}`,
   );

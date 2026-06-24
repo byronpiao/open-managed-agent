@@ -65,8 +65,8 @@ function loadMaProtocolAgentSpec(scenario) {
 }
 
 async function verifyClaudeStoreAfterMaPrompt(envId, acpSessionId, label) {
-  const engineSessionId = await waitForEngineSessionId(envId, acpSessionId, 48);
-  const entryCount = await waitForClaudeSessionEntries(engineSessionId, 1, 48);
+  const engineSessionId = await waitForEngineSessionId(envId, acpSessionId);
+  const entryCount = await waitForClaudeSessionEntries(engineSessionId);
   assert.ok(entryCount >= 1, `${label}: harness_claude_session_entries`);
 
   const { getHarnessSessionStore } = await import(
