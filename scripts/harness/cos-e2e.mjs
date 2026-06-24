@@ -7,6 +7,7 @@
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadEnv, applyHarnessCosFromHarnessFile } from "./load-env.mjs";
+import { resolveHarnessByokModel } from "../../lib/harness-llm-env.mjs";
 import { COS_POST_WRITE_SETTLE_MS, postWorkspaceSnapshot } from "./cos-lib.mjs";
 
 loadEnv();
@@ -35,7 +36,7 @@ async function acquireSandbox(orch, label) {
   );
   const agentConfig = {
     name: "CosE2E",
-    model: process.env.LLM_MODEL ?? "mimo-v2.5",
+    model: resolveHarnessByokModel(),
     system: "cos e2e",
     runtime: "harness",
     engine: "opencode",

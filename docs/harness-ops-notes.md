@@ -1,8 +1,10 @@
-# Harness 运维备忘（大白话）
+# Harness 运维备忘（维护者专用）
+
+> **用户排障：** [使用指南 · 常见问题](./harness-tutorial.md#常见问题) · [凭证说明](./harness-credentials.md)
 
 ![Harness test scenarios (internal)](./diagrams/harness-test-scenarios.svg)
 
-验收命令与矩阵：[CONTRIBUTING.md](../CONTRIBUTING.md) · [Harness一条龙.md](../../Harness一条龙.md) · [scenarios/README.md](../scripts/harness/scenarios/README.md)
+验收命令与矩阵：[CONTRIBUTING.md](../CONTRIBUTING.md) · [harness-architecture.md](./harness-architecture.md) · [scenarios/README.md](../scripts/harness/scenarios/README.md)
 
 ## OpenCode 对话会不会丢？
 
@@ -60,18 +62,22 @@ npm run harness -- product-acceptance --engine all   # 含 Claude
 
 **FlexDB 紧**：部分用例故意走 FlexDB（跨进程重启）；`session/new` 可能 `LimitExceeded.OutOfReadRequestQuota`。可 `OAK_USE_MEMORY_STORE=1` 跑其它验收，或错峰重试 product-acceptance。
 
-## 日志关联（OMA ↔ TRW）
+## 日志关联（Runtime ↔ 沙箱数据面）
 
-| 字段 | OMA | TRW | 用途 |
-|------|-----|-----|------|
+详见 [harness-observability.md](./harness-observability.md)。
+
+| 字段 | OMA Runtime | 沙箱数据面 | 用途 |
+|------|-------------|------------|------|
 | `traceId` / `trace_id` | `harnessLog` | access / tool_call | CloudBase 服务调用日志 |
+| `spanId` | `harnessLog`（有 `traceparent` 时） | — | W3C parent span |
 | `requestId` / `request_id` | `harnessLog` | Hono access | 单次 HTTP |
 | `acpSessionId` / `harness_acp_session_id` | scope + 已有 env | 已有 env | harness 会话 |
 
-链路可从 OMA 或直连 TRW 开始；无入站 id 时各自生成 `requestId`。产品验收结束会打一行 `product_acceptance_summary` JSON（含 `sessionId`）。
+入站优先 `traceparent`；无入站 id 时各自生成 `requestId`。产品验收结束会打一行 `product_acceptance_summary` JSON（含 `sessionId`）。
 
 本地调试：
 
 ```bash
 LOG_LEVEL=debug npm run harness -- run --infra local --engine opencode
+curl -s localhost:9000/healthz | jq .telemetry
 ```

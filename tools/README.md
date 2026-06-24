@@ -30,4 +30,4 @@ Reads `.env` via `scripts/env.mjs`；若存在 `.env.harness` 则叠加 LLM 等 
 | `LLM_API_KEY` | `.env.harness` | 优先；与 `ANTHROPIC_BASE_URL` 成对 |
 | `ANTHROPIC_BASE_URL` | `.env.harness` | 必填（无 harness 时可放 `.env`） |
 | `ANTHROPIC_AUTH_TOKEN` | `.env` | 仅当未设 `LLM_API_KEY` 时回退 |
-| `LLM_MODEL` | `.env.harness` | 可选，默认 `mimo-v2.5-pro` |
+| `LLM_MODEL` | scenario ③ / `.env.harness` | 可选；验收缺省见 `lib/harness-llm-env.mjs`（非对客 env 名） |

@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
-# Build TRW magent preset, push public CCR, sync OMA defaults + AGS tool.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# MAINTAINER ONLY — 不是对客流程，日常用户 / 集成方不要运行本脚本。
+#
+# 做什么：在 monorepo 里 build TRW magent 镜像 → push 公共 CCR → 回写
+#   HARNESS_PUBLIC_MAGENT_IMAGE → 可选 sync-tool。
+# 谁该跑：OMA/TRW 发版维护者（改箱内 Agent / TRW 后 bump 默认镜像）。
+# 用户怎么用新镜像：什么都不做（跟内置默认）或 agent.harness.yaml sandbox.image。
+# 文档：Harness一条龙 §3 · docs/harness-architecture.md（维护者）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 set -euo pipefail
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -23,10 +31,12 @@ echo "IMAGE=$FULL_IMAGE"
 OMA_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HARNESS_ENV_TS="${OMA_ROOT}/packages/agent-runtime/src/harness/harness-env.ts"
 
-cd "$TRW_ROOT"
-pnpm build:prod
+cd "$OMA_ROOT"
 unset PORT HOST
 npm run test:merge
+
+cd "$TRW_ROOT"
+pnpm build:prod
 PRESET="$PRESET" ./scripts/build.sh --preset "$PRESET" --platform linux/amd64 --load
 docker tag "tcb-sandbox-ags:app-${PRESET}" "$FULL_IMAGE"
 docker push "$FULL_IMAGE"

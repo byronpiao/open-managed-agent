@@ -5,7 +5,7 @@
 | 文档 | 读者 |
 |------|------|
 | [docs/harness-tutorial.md](docs/harness-tutorial.md) | 对客部署 |
-| [../Harness一条龙.md](../Harness一条龙.md) | Agent / 研发：按步骤验收 + 排障 |
+| [docs/harness-architecture.md](docs/harness-architecture.md) | Agent / 研发：架构 · 验收 · 排障 |
 | [scripts/harness/scenarios/README.md](scripts/harness/scenarios/README.md) | 6 格 LLM / COS 矩阵 |
 | [docs/harness-architecture.md](docs/harness-architecture.md) | 架构与日志 |
 
@@ -179,7 +179,7 @@ OAK_USE_MEMORY_STORE=1 npm run harness -- run --infra local --engine all
 
 ## 9. 排障（节选）
 
-完整表：[Harness一条龙.md §8](../Harness一条龙.md) · [harness-architecture.md §6](docs/harness-architecture.md#6-排障)
+完整表：[harness-architecture.md §6](docs/harness-architecture.md#6-排障) · [harness-observability.md](docs/harness-observability.md)
 
 | 现象 | 处理 |
 |------|------|

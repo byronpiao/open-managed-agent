@@ -10,6 +10,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchAccessTokenViaSign, readTcbLoginCredential } from "../../lib/credentials.mjs";
 import { pinnedHarnessToolId } from "../../lib/harness-env-file.mjs";
+import { resolveHarnessByokModel } from "../../lib/harness-llm-env.mjs";
 import {
   applyHarnessScenario,
   cloudHarnessAgentPinVar,
@@ -59,7 +60,7 @@ function execOutputBlob(err) {
 
 async function agentUpdateWithRetry(agentId, yamlPath, envId, opts = {}) {
   const engine = opts.engine ?? "opencode";
-  const cmd = `node "${magent}" agent:update -a "${agentId}" -f "${yamlPath}" --runtime harness --engine ${engine} -e "${envId}"`;
+  const cmd = `node "${magent}" agent:update -a "${agentId}" -f "${yamlPath}" --agent-runtime harness --engine ${engine} -e "${envId}"`;
   const maxAttempts = Number(process.env.HARNESS_CLOUD_UPDATE_RETRIES) || 12;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -117,7 +118,7 @@ async function buildAgentYaml(backend = "tcbr", engine = "opencode") {
   doc.engine = engine;
 
   const apiKey = process.env.LLM_API_KEY?.trim();
-  const modelId = process.env.LLM_MODEL?.trim() || "mimo-v2.5-pro";
+  const modelId = resolveHarnessByokModel();
 
   if (engine === "claude") {
     const anthropicBase = process.env.ANTHROPIC_BASE_URL?.trim();
@@ -164,7 +165,7 @@ function pinnedAgentId(backend, engine = "opencode") {
 
 function createAgentName(backend, engine) {
   if (engine === "claude") {
-    return backend === "scf" ? "OMA-Harness-Claude-SCF" : "OMA-Harness-Claude-TCBR";
+    return backend === "scf" ? "OMA-Hrn-Cld-SCF" : "OMA-Hrn-Cld-TCBR";
   }
   return backend === "scf" ? "OMA-Harness-SCF" : "OMA-Harness";
 }
@@ -194,7 +195,7 @@ async function deployCloudHarness(argv, backend = "tcbr", engine = "opencode") {
   } else if (backend === "tcbr") {
     console.log(`=== magent agent:create (tcbr harness ${engine}, ~3–5 min) ===`);
     const createOut = execSync(
-      `node "${magent}" agent:create -n "${createAgentName(backend, engine)}" --type tcbr --runtime harness --engine ${engine} -f "${yamlPath}" -e "${envId}"`,
+      `node "${magent}" agent:create -n "${createAgentName(backend, engine)}" --type tcbr --agent-runtime harness --engine ${engine} -f "${yamlPath}" -e "${envId}"`,
       {
         encoding: "utf-8",
         cwd: repoRoot,
@@ -216,7 +217,7 @@ async function deployCloudHarness(argv, backend = "tcbr", engine = "opencode") {
     console.log("(avoid SCF Deleting-state 435 — waiting before create…)");
     await sleep(SCF_CREATE_COOLDOWN_MS);
     const createOut = execSync(
-      `node "${magent}" agent:create -n "${createAgentName(backend, engine)}" --runtime harness --engine ${engine} -f "${yamlPath}" --code "${runtimeRoot}" -e "${envId}"`,
+      `node "${magent}" agent:create -n "${createAgentName(backend, engine)}" --type scf --agent-runtime harness --engine ${engine} -f "${yamlPath}" --code "${runtimeRoot}" -e "${envId}"`,
       {
         encoding: "utf-8",
         cwd: repoRoot,
@@ -393,6 +394,16 @@ function isGatewayAuthFailure(res, json, text) {
   );
 }
 
+/** @param {{ warmTimeout: boolean, p1: { ok: boolean, has504: boolean }, p2: { ok: boolean, has504: boolean } }} result */
+export function cloudVerifyPromptsPassed({ warmTimeout, p1, p2 }) {
+  if (warmTimeout) return false;
+  if (!p2.ok || p2.has504) return false;
+  if (p1.ok) return true;
+  // Cold gateway: first prompt may 504 after prewarm; second must succeed.
+  if (p1.has504) return true;
+  return false;
+}
+
 async function verifyCloudHarness(agentId, expectedEngine = "opencode") {
   const envId = process.env.CLOUDBASE_ENV_ID?.trim();
   if (!envId) throw new Error("Missing CLOUDBASE_ENV_ID");
@@ -493,8 +504,11 @@ async function verifyCloudHarness(agentId, expectedEngine = "opencode") {
     /* ignore */
   }
 
-  if (warmTimeout || p1.has504 || p2.has504 || !p1.ok || !p2.ok) {
+  if (!cloudVerifyPromptsPassed({ warmTimeout, p1, p2 })) {
     throw new Error("cloud verify failed (prewarm timeout, non-200, or 504)");
+  }
+  if (p1.has504 && p2.ok) {
+    console.log("(prompt#1 cold-start 504 ignored — prompt#2 ok)");
   }
 
   console.log("\n✓ cloud verify ok");

@@ -1,7 +1,7 @@
-# Harness 会话外置存储
+# Harness 会话外置存储（维护者专用）
 
-> 读者：架构评审、运维、研发。  
-> 关联：[harness-architecture.md](./harness-architecture.md) · [harness-env.md](./harness-env.md)
+> **用户文档：** [使用指南](./harness-tutorial.md) · [Managed Agents](./managed-agents-guide.md)  
+> 读者：架构评审、运维、研发。
 
 沙箱内 Agent（`runtime=harness`）的思考与工具在 **AGS 沙箱**里执行；箱内磁盘随实例 TTL 清空。要让对话跨沙箱回收、re-acquire 后仍能续聊，必须把会话「真相」写到箱外。
 
@@ -42,7 +42,7 @@
 
 ### Claude Code
 
-- 实现：箱内 `tcb-remote-workspace` 的 `claude-acp-harness.js` + `@cloudbase/open-agent-kernel` 的 `CloudBaseSessionStore`
+- 实现：箱内 `claude-acp-harness.js` + `@cloudbase/open-agent-kernel` 的 `CloudBaseSessionStore`
 - 写库进程：**AGS 沙箱内** Claude ACP 进程，凭证由 OMA `buildHarnessInitCredEnv()` 注入（`TENCENTCLOUD_SECRETID` / `TENCENTCLOUD_SECRETKEY`）
 - `CLAUDE_CONFIG_DIR=/tmp/.claude` 仅为 SDK 本地缓存，**不是** SoR（Source of Record）
 
@@ -170,7 +170,7 @@ Export 细节（`opencode-sync.ts`）：
 
 ### Claude：长会话 load 监控与上限说明
 
-**现象：** `session/load` 从 FlexDB 分页读 **全会话** entry；超长会话 re-acquire 慢。逻辑在 vendored `@cloudbase/open-agent-kernel`，不宜在 TRW 里硬改。
+**现象：** `session/load` 从 FlexDB 分页读 **全会话** entry；超长会话 re-acquire 慢。逻辑在 vendored `@cloudbase/open-agent-kernel`，不宜在箱内进程里硬改。
 
 **改法（产品/运维向）：**
 
@@ -202,9 +202,9 @@ Export 细节（`opencode-sync.ts`）：
 | 轮末 / delete 触发 | `packages/agent-runtime/src/harness/acp-endpoint.ts` |
 | re-acquire hydrate | `packages/agent-runtime/src/harness/sandbox/sandbox-prewarm.ts` |
 | 会话索引 | `packages/agent-runtime/src/harness/sandbox/session-store.ts` |
-| Claude 箱内 Store | `tcb-remote-workspace/src/harness/claude-session-store.ts` |
+| Claude 箱内 Store | magent 镜像内 `claude-acp-harness.js` + OAK `CloudBaseSessionStore` |
 | Claude warm load | `packages/agent-runtime/src/harness/claude-session-warm.ts` |
-| OAK SessionStore 实现 | `tcb-remote-workspace/vendor/cloudbase-open-agent-kernel-*.tgz` → `session-store/` |
+| OAK SessionStore 实现 | vendored `@cloudbase/open-agent-kernel` → `session-store/` |
 
 ---
 

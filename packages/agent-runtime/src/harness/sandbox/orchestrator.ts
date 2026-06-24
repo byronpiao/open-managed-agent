@@ -20,6 +20,7 @@ import {
 import { fetchGatewayAccessToken } from "../tcb-gateway-token.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 import { harnessTrace, harnessLog, harnessOutboundCorrelationHeaders } from "../logging.js";
+import { injectOutboundTraceHeaders, withActiveSpan } from "../telemetry.js";
 import { recordHarnessAcquireDuration } from "../metrics.js";
 import {
   buildCosMountOptions,
@@ -317,6 +318,29 @@ async function createHarnessTool(
   return toolId;
 }
 
+function isSandboxToolNameConflict(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("already exists");
+}
+
+async function createHarnessToolOrReuseExisting(
+  envId: string,
+  toolName: string,
+  cred: ResolvedCredentials,
+  sandbox: ResolvedSandboxConfig,
+  storageMounts?: Array<Record<string, unknown>>,
+): Promise<{ toolId: string; justCreated: boolean }> {
+  try {
+    const toolId = await createHarnessTool(envId, toolName, cred, sandbox, storageMounts);
+    return { toolId, justCreated: true };
+  } catch (err) {
+    if (!isSandboxToolNameConflict(err)) throw err;
+    const existing = await findToolByName(toolName, cred, envId);
+    if (!existing) throw err;
+    return { toolId: existing.toolId, justCreated: false };
+  }
+}
+
 async function syncHarnessToolConfiguration(
   toolId: string,
   cred: ResolvedCredentials,
@@ -359,7 +383,13 @@ async function ensureHarnessTool(
         message: `recreating harness tool ${toolName} with COS StorageMounts (~30s)`,
       });
       await deleteHarnessTool(existing.toolId, cred, envId);
-      const toolId = await createHarnessTool(envId, toolName, cred, sandbox, storageMounts);
+      const { toolId } = await createHarnessToolOrReuseExisting(
+        envId,
+        toolName,
+        cred,
+        sandbox,
+        storageMounts,
+      );
       return { toolId, justCreated: true };
     }
     try {
@@ -377,8 +407,14 @@ async function ensureHarnessTool(
     phase: "tool_create",
     message: `creating harness tool ${toolName} (first run, ~30s)`,
   });
-  const toolId = await createHarnessTool(envId, toolName, cred, sandbox, storageMounts);
-  return { toolId, justCreated: true };
+  const { toolId, justCreated } = await createHarnessToolOrReuseExisting(
+    envId,
+    toolName,
+    cred,
+    sandbox,
+    storageMounts,
+  );
+  return { toolId, justCreated };
 }
 
 function pickStartCustomConfiguration(env: HarnessEnvVar[]): Record<string, unknown> {
@@ -535,11 +571,7 @@ function buildHarnessSandboxHandle(args: {
       const initHeaders = (init?.headers as Record<string, string> | undefined) ?? {};
       return fetch(`${args.baseUrl}${p}`, {
         ...init,
-        headers: {
-          ...headers,
-          ...harnessOutboundCorrelationHeaders(),
-          ...initHeaders,
-        },
+        headers: mergeSandboxDataPlaneHeaders(headers, initHeaders),
       });
     },
     async refreshInstanceAccessToken() {
@@ -570,6 +602,19 @@ function buildHarnessSandboxHandle(args: {
       }
     },
   };
+}
+
+function mergeSandboxDataPlaneHeaders(
+  base: Record<string, string>,
+  initHeaders?: Record<string, string>,
+): Record<string, string> {
+  const merged: Record<string, string> = {
+    ...base,
+    ...harnessOutboundCorrelationHeaders(),
+    ...(initHeaders ?? {}),
+  };
+  injectOutboundTraceHeaders(merged);
+  return merged;
 }
 
 function buildDataPlaneHeaders(args: {
@@ -607,7 +652,7 @@ async function waitForReady(args: {
     });
     try {
       const res = await fetch(`${baseUrl}/health`, {
-        headers,
+        headers: mergeSandboxDataPlaneHeaders(headers),
         signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
       });
       if (res.ok) {
@@ -651,6 +696,18 @@ export class AgsStatefulSandboxOrchestrator {
   }
 
   async acquire(args: AcquireHarnessSandboxArgs): Promise<HarnessSandboxHandle> {
+    return withActiveSpan(
+      "harness.acquire",
+      {
+        engine: args.engine,
+        envId: args.envId,
+        ...(args.acpSessionId ? { acpSessionId: args.acpSessionId } : {}),
+      },
+      async () => this.acquireInner(args),
+    );
+  }
+
+  private async acquireInner(args: AcquireHarnessSandboxArgs): Promise<HarnessSandboxHandle> {
     const startedAt = Date.now();
     const wl = harnessLog({
       lane: "orchestrator",
@@ -820,7 +877,7 @@ export class AgsStatefulSandboxOrchestrator {
     try {
       const res = await fetch(`${baseUrl}/api/workspace/init`, {
         method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
+        headers: mergeSandboxDataPlaneHeaders(headers, { "Content-Type": "application/json" }),
         body: JSON.stringify({
           env: envMap,
           ...(skills ? { skills } : {}),

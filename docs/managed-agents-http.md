@@ -80,9 +80,9 @@ npm run build && node tests/managed-agents/e2e-managed-agents-harness.test.mjs
 
 ## 与沙箱的关系
 
-- **不在 TRW 沙箱内嵌 mosoo driver**；箱内仍走 `POST /api/agents/{slug}/acp`（:9000）。
+- **不在沙箱内嵌 mosoo driver**；箱内仍走 `POST /api/agents/{slug}/acp`（:9000）。
 - OMA Host：vendor `createCmaHttpHandler` → `createHarnessManagedAgentsDispatcher` → `forwardAcpToSandbox`。
-- TRW：单一 stdio ACP relay + 反向 RPC（permission / fs）。
+- 沙箱侧：单一 stdio ACP relay + 反向 RPC（permission / fs）。
 
 ## 已知缺口
 

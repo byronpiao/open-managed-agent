@@ -33,8 +33,6 @@ import {
   SANDBOX_TRW_MCP_RELAY_PATH,
   buildHarnessInitCredEnv,
   buildSkillsManifestEnv,
-  normalizeAgentRuntime,
-  applyHarnessRuntimeEnv,
   HARNESS_PUBLIC_MAGENT_IMAGE,
   resolveHarnessSandboxImage,
   deliverClientToolResult,
@@ -51,9 +49,16 @@ import {
   openAiChatCompletionsUrl,
   normalizeInboundRequestId,
   parseCloudbaseTraceHeader,
+  parseTraceparent,
+  buildSyntheticTraceparent,
   resolveHarnessCorrelationFromHeaders,
   buildHarnessOutboundCorrelationHeaders,
+  TRACEPARENT_HEADER,
 } from "../../packages/agent-runtime/dist/harness/index.js";
+import {
+  normalizeAgentRuntime,
+  applyHarnessRuntimeEnv,
+} from "../../lib/harness-deploy.mjs";
 import {
   getHarnessSessionStore,
   resetHarnessSessionStoreForTests,
@@ -77,6 +82,16 @@ import { parseHarnessRoleArn } from "../../lib/harness-preflight.mjs";
 const tests = [];
 function test(name, fn) {
   tests.push({ name, fn });
+}
+
+function withMemoryStore() {
+  const prev = { region: process.env.TCB_REGION, apiKey: process.env.CLOUDBASE_APIKEY };
+  delete process.env.TCB_REGION;
+  delete process.env.CLOUDBASE_APIKEY;
+  return () => {
+    if (prev.region !== undefined) process.env.TCB_REGION = prev.region;
+    if (prev.apiKey !== undefined) process.env.CLOUDBASE_APIKEY = prev.apiKey;
+  };
 }
 
 test("resolveRuntime defaults managed", () => {
@@ -344,6 +359,40 @@ test("parseHarnessEngineArg accepts opencode | claude | all", async () => {
   assert.ok(!harnessEnginesIncludeOpencode("claude"));
   assert.ok(harnessEnginesIncludeClaude("all"));
   assert.throws(() => parseHarnessEngineArg(["--engine", "codebuddy"]));
+});
+
+test("stripHarnessAxisArgv removes infra/engine flags for child harness spawns", async () => {
+  const { stripHarnessAxisArgv } = await import("../../lib/harness-cli-flags.mjs");
+  assert.deepEqual(
+    stripHarnessAxisArgv(["--infra", "tcbr,scf", "--engine", "opencode", "--verify-only"]),
+    ["--verify-only"],
+  );
+  assert.deepEqual(stripHarnessAxisArgv(["--infra=tcbr", "--engine=claude", "--full"]), ["--full"]);
+});
+
+test("cloudVerifyPromptsPassed tolerates cold-start prompt#1 504 when prompt#2 ok", async () => {
+  const { cloudVerifyPromptsPassed } = await import("../../scripts/harness/cloud.mjs");
+  const ok = { ok: true, has504: false };
+  const p1Cold = { ok: false, has504: true };
+  assert.ok(cloudVerifyPromptsPassed({ warmTimeout: false, p1: p1Cold, p2: ok }));
+  assert.ok(cloudVerifyPromptsPassed({ warmTimeout: false, p1: ok, p2: ok }));
+  assert.ok(!cloudVerifyPromptsPassed({ warmTimeout: true, p1: ok, p2: ok }));
+  assert.ok(!cloudVerifyPromptsPassed({ warmTimeout: false, p1: ok, p2: { ok: false, has504: false } }));
+  assert.ok(!cloudVerifyPromptsPassed({ warmTimeout: false, p1: { ok: false, has504: false }, p2: ok }));
+});
+
+test("cloud harness scf agent:create passes --type scf", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../scripts/harness/cloud.mjs", import.meta.url), "utf8");
+  assert.match(src, /--type scf --agent-runtime harness/);
+});
+
+test("resolveHarnessByokModel falls back to HARNESS_BYOK_DEFAULT_MODEL", async () => {
+  const { resolveHarnessByokModel, HARNESS_BYOK_DEFAULT_MODEL } = await import(
+    "../../lib/harness-llm-env.mjs"
+  );
+  assert.equal(resolveHarnessByokModel({}), HARNESS_BYOK_DEFAULT_MODEL);
+  assert.equal(resolveHarnessByokModel({ LLM_MODEL: "custom" }), "custom");
 });
 
 test("parseCloudCosMount and applyHarnessScenario cos axes", async () => {
@@ -1039,6 +1088,8 @@ test("buildHarnessSandboxEnv maps OpenAI env for hermes engine", () => {
 });
 
 test("harness sync event store append + hydrate round-trip", async () => {
+  const restore = withMemoryStore();
+  try {
   resetHarnessSyncEventStoreForTests();
   const store = getHarnessSyncEventStore("test-env");
   const aggregateId = "550e8400-e29b-41d4-a716-446655440000";
@@ -1104,9 +1155,12 @@ test("harness sync event store append + hydrate round-trip", async () => {
   assert.equal(replayed, 2);
   assert.ok(calls.some((c) => c.path.endsWith("/sync/replay")));
   resetHarnessSyncEventStoreForTests();
+  } finally { restore(); }
 });
 
 test("harness sync event store maxSeq and long list", async () => {
+  const restore = withMemoryStore();
+  try {
   resetHarnessSyncEventStoreForTests();
   const store = getHarnessSyncEventStore("test-env");
   const aggregateId = "agg-long-session";
@@ -1132,9 +1186,12 @@ test("harness sync event store maxSeq and long list", async () => {
   });
   assert.equal(inserted, 0);
   resetHarnessSyncEventStoreForTests();
+  } finally { restore(); }
 });
 
 test("persistOpencodeSyncForSession marks syncExportFailedAt after retries", async () => {
+  const restore = withMemoryStore();
+  try {
   const prevEnv = process.env.CLOUDBASE_ENV_ID;
   process.env.CLOUDBASE_ENV_ID = "test-env";
   resetHarnessSyncEventStoreForTests();
@@ -1182,6 +1239,7 @@ test("persistOpencodeSyncForSession marks syncExportFailedAt after retries", asy
   resetHarnessSyncEventStoreForTests();
   if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
   else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  } finally { restore(); }
 });
 
 test("warmClaudeEngineSession calls sandbox session/load", async () => {
@@ -1220,6 +1278,8 @@ test("warmClaudeEngineSession calls sandbox session/load", async () => {
 });
 
 test("markClaudeWarmOutcome updates harness_sessions.claudeWarmFailedAt", async () => {
+  const restore = withMemoryStore();
+  try {
   const prevEnv = process.env.CLOUDBASE_ENV_ID;
   process.env.CLOUDBASE_ENV_ID = "test-env";
   resetHarnessSessionStoreForTests();
@@ -1242,6 +1302,7 @@ test("markClaudeWarmOutcome updates harness_sessions.claudeWarmFailedAt", async 
   resetHarnessSessionStoreForTests();
   if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
   else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  } finally { restore(); }
 });
 
 test("probeClaudeSessionStoreAfterPrompt skips non-claude engine", async () => {
@@ -1263,6 +1324,8 @@ test("isClaudeEntryCountHigh uses fixed threshold 3000", async () => {
   assert.equal(isClaudeEntryCountHigh(3000), false);
   assert.equal(isClaudeEntryCountHigh(3001), true);
 
+  const restore = withMemoryStore();
+  try {
   const prevEnv = process.env.CLOUDBASE_ENV_ID;
   process.env.CLOUDBASE_ENV_ID = "test-env";
   resetHarnessSessionStoreForTests();
@@ -1282,9 +1345,12 @@ test("isClaudeEntryCountHigh uses fixed threshold 3000", async () => {
   resetHarnessSessionStoreForTests();
   if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
   else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  } finally { restore(); }
 });
 
 test("getHarnessStoreDiag exposes harness_sessions attention counters", async () => {
+  const restore = withMemoryStore();
+  try {
   const prevEnv = process.env.CLOUDBASE_ENV_ID;
   process.env.CLOUDBASE_ENV_ID = "test-env";
   resetHarnessSessionStoreForTests();
@@ -1306,6 +1372,7 @@ test("getHarnessStoreDiag exposes harness_sessions attention counters", async ()
   resetHarnessSessionStoreForTests();
   if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
   else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  } finally { restore(); }
 });
 
 test("resolveHarnessCosConfig returns null when disabled", () => {
@@ -1451,14 +1518,60 @@ test("normalizeInboundRequestId rejects unsafe values", () => {
   assert.equal(normalizeInboundRequestId("bad id space"), undefined);
 });
 
-test("parseCloudbaseTraceHeader decodes traceId", () => {
+test("parseCloudbaseTraceHeader decodes traceId and spanId", () => {
   const traceId = "8f431b7e-bfcc-423e-99d8-cda72471ff49";
   const spanId = "bbe75687-fffb-6cb8";
   const raw = Buffer.from(`${traceId},${spanId},on`, "utf-8").toString("base64");
   const parsed = parseCloudbaseTraceHeader(raw);
   assert.equal(parsed.traceId, traceId);
+  assert.equal(parsed.spanId, "bbe75687fffb6cb8");
   assert.equal(parsed.raw, raw);
   assert.deepEqual(parseCloudbaseTraceHeader("not-base64!!!"), {});
+});
+
+test("parseTraceparent decodes W3C trace context", () => {
+  const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+  const parsed = parseTraceparent(tp);
+  assert.equal(parsed.traceId, "4bf92f3577b34da6a3ce929d0e0e4736");
+  assert.equal(parsed.spanId, "00f067aa0ba902b7");
+  assert.equal(parsed.source, "traceparent");
+});
+
+test("resolveHarnessCorrelationFromHeaders prefers traceparent", () => {
+  const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+  const ctx = resolveHarnessCorrelationFromHeaders({
+    traceparent: tp,
+    "x-cloudbase-request-id": "req-1",
+  });
+  assert.equal(ctx.requestId, "req-1");
+  assert.equal(ctx.traceId, "4bf92f3577b34da6a3ce929d0e0e4736");
+  assert.equal(ctx.traceSource, "traceparent");
+  assert.equal(ctx.traceRaw, tp);
+});
+
+test("buildHarnessOutboundCorrelationHeaders never forges scf headers", () => {
+  const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+  const w3c = buildHarnessOutboundCorrelationHeaders({
+    requestId: "oma-1",
+    traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+    spanId: "00f067aa0ba902b7",
+    traceRaw: tp,
+    traceSource: "traceparent",
+  });
+  assert.equal(w3c["X-Request-Id"], "oma-1");
+  assert.equal(w3c.traceparent, tp);
+  assert.equal(w3c["x-scf-request-id"], undefined);
+
+  const cloud = buildHarnessOutboundCorrelationHeaders({
+    requestId: "oma-1",
+    traceId: "8f431b7e-bfcc-423e-99d8-cda72471ff49",
+    spanId: "bbe75687fffb6cb8",
+    traceRaw: "b64payload",
+    traceSource: "cloudbase",
+    cloudbaseTrace: "b64payload",
+  });
+  assert.equal(cloud["x-cloudbase-trace"], "b64payload");
+  assert.match(cloud.traceparent, /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
 });
 
 test("resolveHarnessCorrelationFromHeaders uses inbound or generates", () => {
@@ -1468,17 +1581,6 @@ test("resolveHarnessCorrelationFromHeaders uses inbound or generates", () => {
   assert.equal(inbound.requestId, "scf-req-1");
   const generated = resolveHarnessCorrelationFromHeaders({});
   assert.match(generated.requestId, /^[0-9a-f-]{36}$/i);
-});
-
-test("buildHarnessOutboundCorrelationHeaders never forges scf headers", () => {
-  const headers = buildHarnessOutboundCorrelationHeaders({
-    requestId: "oma-1",
-    traceId: "trace-abc",
-    cloudbaseTrace: "b64payload",
-  });
-  assert.equal(headers["X-Request-Id"], "oma-1");
-  assert.equal(headers["x-cloudbase-trace"], "b64payload");
-  assert.equal(headers["x-scf-request-id"], undefined);
 });
 
 test("resolveHarnessSandboxIdlePauseMs defaults to 20 minutes", () => {

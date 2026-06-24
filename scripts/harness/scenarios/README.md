@@ -1,6 +1,6 @@
 # Harness scenarios
 
-**6 格 = `--infra` × `--engine`**（见 [CONTRIBUTING.md](../../../CONTRIBUTING.md) · [Harness一条龙.md](../../../../Harness一条龙.md)）
+**6 格 = `--infra` × `--engine`**（见 [CONTRIBUTING.md](../../../CONTRIBUTING.md) · [harness-architecture.md](../../../docs/harness-architecture.md)）
 
 ```text
               │ engine opencode          │ engine claude

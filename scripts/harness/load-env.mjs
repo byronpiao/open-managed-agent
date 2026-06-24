@@ -232,13 +232,12 @@ export function cloudHarnessAgentPinVar(backend, engine = "opencode") {
 }
 
 export function pinnedCloudHarnessAgentId(backend, engine = "opencode", map = readHarnessEnvMap()) {
-  const primary = map.get(cloudHarnessAgentPinVar(backend, engine))?.trim();
+  const varName = cloudHarnessAgentPinVar(backend, engine);
+  const primary = map.get(varName)?.trim() || process.env[varName]?.trim();
   if (primary) return primary;
   if (engine === "opencode") {
-    const legacy =
-      backend === "scf"
-        ? map.get("HARNESS_CLOUD_SCF_AGENT_ID")?.trim()
-        : map.get("HARNESS_CLOUD_AGENT_ID")?.trim();
+    const legacyKey = backend === "scf" ? "HARNESS_CLOUD_SCF_AGENT_ID" : "HARNESS_CLOUD_AGENT_ID";
+    const legacy = map.get(legacyKey)?.trim() || process.env[legacyKey]?.trim();
     if (legacy) return legacy;
   }
   return "";
@@ -399,7 +398,6 @@ export function loadEnv() {
       "Missing .env.harness — run: cp .env.harness.example .env.harness",
     );
   }
-  for (const k of SCENARIO_LLM_KEYS) delete process.env[k];
   for (const [from, to] of ALIASES) {
     if (process.env[from] && !process.env[to]) process.env[to] = process.env[from];
   }

@@ -16,6 +16,7 @@
  *   /v1/agents|environments|sessions       Claude Managed Agents HTTP (harness)
  */
 
+import "./harness/telemetry-bootstrap.js";
 import express from "express";
 import cors from "cors";
 import { mountAcpEndpoint } from "./acp-endpoint.js";
@@ -113,6 +114,8 @@ async function main() {
           ...getSandboxPrewarmStats(),
         },
       };
+      const { getTelemetrySummary } = await import("./harness/telemetry-init.js");
+      payload.telemetry = getTelemetrySummary();
       const wantDiag = req.query.diag === "1" || req.query.verbose === "1";
       if (wantDiag) {
         try {

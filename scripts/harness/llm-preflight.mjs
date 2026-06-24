@@ -15,6 +15,7 @@ import {
   scenarioNeedsAnthropicByok,
   scenarioNeedsOpenAiByok,
   hasAnthropicScenarioEnv,
+  hasOpenAiScenarioEnv,
 } from "./scenario-matrix.mjs";
 
 /**
@@ -53,6 +54,24 @@ export async function runHarnessLlmPreflight(scenario, opts = {}) {
       return { mode: "platform", scenario: id, probe, protocol: "openai-chat" };
     }
     if (allowTestFallback && isPlatformQuotaExceeded(probe)) {
+      // Try OpenAI BYOK before zen — cloud-scf-opencode scenario provides the creds.
+      if (hasOpenAiScenarioEnv("cloud-scf-opencode")) {
+        try {
+          applyScenarioEnv("cloud-scf-opencode", target);
+          const byokProbe = await probeHarnessOpenAiLlm();
+          if (byokProbe.ok) {
+            return {
+              mode: "byok-openai",
+              scenario: id,
+              probe: byokProbe,
+              fallback: "hy3-preview quota → OpenAI BYOK",
+              protocol: "openai-chat",
+            };
+          }
+        } catch {
+          /* BYOK unavailable, fall through to zen */
+        }
+      }
       applyZenLlmEnv(target);
       return {
         mode: "zen",

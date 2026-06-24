@@ -70,6 +70,9 @@ export {
   buildHarnessOutboundCorrelationHeaders,
   INBOUND_REQUEST_ID_HEADERS,
   CLOUDBASE_TRACE_HEADER,
+  TRACEPARENT_HEADER,
+  parseTraceparent,
+  buildSyntheticTraceparent,
 } from "./correlation.js";
 
 /** Inbound request id only (no generation). */
@@ -94,7 +97,7 @@ export function harnessCorrelationContext(): HarnessCorrelationContext | undefin
   return requestContext.getStore();
 }
 
-/** Headers for sandbox data-plane fetch (x-cloudbase-trace + X-Request-Id). */
+/** Headers for sandbox data-plane fetch (traceparent / x-cloudbase-trace + X-Request-Id). */
 export function harnessOutboundCorrelationHeaders(): Record<string, string> {
   const ctx = requestContext.getStore();
   if (!ctx) return {};
@@ -107,6 +110,7 @@ function correlationLogFields(): Record<string, unknown> {
   return {
     requestId: ctx.requestId,
     ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+    ...(ctx.spanId ? { spanId: ctx.spanId } : {}),
   };
 }
 
