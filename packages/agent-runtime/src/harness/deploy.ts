@@ -5,7 +5,7 @@
 import fs from "fs";
 import path from "path";
 import type { AgentConfig, CustomTool, HarnessEnvVar, HarnessEngine } from "../config.js";
-import { buildHarnessInstanceEnv, getCustomTools, normalizeAgentConfig } from "../config.js";
+import { buildHarnessInstanceEnv, getCustomTools } from "../config.js";
 import {
   anthropicCompatToTrwEnv,
   codebuddyCompatToTrwEnv,
@@ -349,80 +349,3 @@ export function customToolsToMcpToolSchemas(
   }));
 }
 
-/** CLI / magent: resolve runtime= from flags before deploy. */
-export function agentLoopRuntimeFromArgs(
-  args: Record<string, unknown> = {},
-  config: Partial<AgentConfig> = {},
-): "managed" | "harness" {
-  const fromFlag = args["agent-runtime"];
-  if (fromFlag === "harness" || fromFlag === "managed") return fromFlag;
-  const r = args.runtime;
-  if (r === "harness" || r === "managed") return r;
-  return config.runtime ?? "managed";
-}
-
-/** CLI / magent: normalize agent.yaml + flags for harness vs managed deploy. */
-export function normalizeAgentRuntime(
-  config: AgentConfig,
-  args: Record<string, unknown> = {},
-): AgentConfig {
-  const runtime = agentLoopRuntimeFromArgs(args, config);
-  const engine = (args.engine as HarnessEngine | undefined) ?? config.engine ?? "opencode";
-  if (runtime === "harness") {
-    config.runtime = "harness";
-    config.engine =
-      engine === "claude" || engine === "codebuddy" || engine === "hermes"
-        ? engine
-        : "opencode";
-    return normalizeAgentConfig(config);
-  }
-  config.runtime = "managed";
-  delete config.engine;
-  return config;
-}
-
-/** Host env forwarded into cloud runtime container for orchestrator / LLM / COS. */
-const HARNESS_DEPLOY_ENV_KEYS = [
-  "HARNESS_TOOL_ROLE_ARN",
-  "TCB_REGION",
-  "LLM_API_KEY",
-  "LLM_MODEL",
-  "OPENAI_BASE_URL",
-  "ANTHROPIC_BASE_URL",
-  "HARNESS_COS_ENABLED",
-  "HARNESS_COS_BUCKET",
-  "HARNESS_COS_BUCKET_PATH",
-  "HARNESS_COS_ENDPOINT",
-  "HARNESS_COS_REGION",
-  "HARNESS_COS_MOUNT_NAME",
-  "HARNESS_COS_MOUNT_DIR",
-] as const;
-
-function forwardHarnessDeployEnv(envMap: Record<string, string>): void {
-  for (const key of HARNESS_DEPLOY_ENV_KEYS) {
-    const value = process.env[key]?.trim();
-    if (value) envMap[key] = value;
-  }
-}
-
-/** magent agent:create/update — merge harness env into SCF / CloudRun env map. */
-export function applyHarnessRuntimeEnv(
-  envMap: Record<string, string>,
-  config: AgentConfig,
-  opts: {
-    harnessToolId?: string;
-    clientToolCallbackBase?: string;
-  } = {},
-): Record<string, string> {
-  if (config.runtime !== "harness") return envMap;
-  if (opts.harnessToolId) envMap.HARNESS_TOOL_ID = opts.harnessToolId;
-  const mcporter = buildMcporterConfig({
-    config,
-    clientToolCallbackBase: opts.clientToolCallbackBase ?? "",
-  });
-  if (Object.keys(mcporter.mcpServers).length) {
-    envMap.MCPORTER_CONFIG_CONTENT = JSON.stringify(mcporter);
-  }
-  forwardHarnessDeployEnv(envMap);
-  return envMap;
-}

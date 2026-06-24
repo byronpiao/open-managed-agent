@@ -91,7 +91,11 @@ export type AgentRuntimeMode = "managed" | "harness";
 export type HarnessEngine = "opencode" | "claude" | "codebuddy" | "hermes";
 
 /** TRW route segment: POST /api/agents/{slug}/acp */
-export type DataPlaneEngineSlug = "opencode" | "claudecode" | "codebuddy" | "hermes";
+export type DataPlaneEngineSlug =
+  | "opencode"
+  | "claudecode"
+  | "codebuddy"
+  | "hermes";
 
 /**
  * Sandbox configuration — top-level feature toggle shared by managed and harness.
@@ -154,7 +158,9 @@ export function resolveRuntime(config: AgentConfig): ResolvedRuntime {
   return { runtime, engine };
 }
 
-export function engineToDataPlaneSlug(engine: HarnessEngine): DataPlaneEngineSlug {
+export function engineToDataPlaneSlug(
+  engine: HarnessEngine,
+): DataPlaneEngineSlug {
   switch (engine) {
     case "claude":
       return "claudecode";
@@ -173,7 +179,10 @@ export function harnessEnvSlug(envId: string, maxLen = 40): string {
 }
 
 /** Resolve auto-created AGS tool name for env (`oma-harness-{slug}`; COS is mount config only). */
-export function resolveHarnessToolName(envId: string, _cosEnabled = false): string {
+export function resolveHarnessToolName(
+  envId: string,
+  _cosEnabled = false,
+): string {
   const slug = harnessEnvSlug(envId, 40);
   return `oma-harness-${slug}`;
 }
@@ -249,7 +258,9 @@ export interface ResolvedToolPolicy {
   permissionPolicy: PermissionPolicy;
 }
 
-export function resolveBuiltinTools(config: AgentConfig): Map<string, ResolvedToolPolicy> {
+export function resolveBuiltinTools(
+  config: AgentConfig,
+): Map<string, ResolvedToolPolicy> {
   const result = new Map<string, ResolvedToolPolicy>();
 
   // Default: all built-in tools enabled with always_allow
@@ -257,7 +268,9 @@ export function resolveBuiltinTools(config: AgentConfig): Map<string, ResolvedTo
   let defaultEnabled = true;
 
   // Find agent_toolset in tools config
-  const toolset = config.tools?.find((t): t is AgentToolset => t.type === "agent_toolset");
+  const toolset = config.tools?.find(
+    (t): t is AgentToolset => t.type === "agent_toolset",
+  );
 
   if (toolset?.default_config) {
     if (toolset.default_config.enabled !== undefined) {
@@ -282,7 +295,8 @@ export function resolveBuiltinTools(config: AgentConfig): Map<string, ResolvedTo
       const existing = result.get(cfg.name);
       if (existing) {
         if (cfg.enabled !== undefined) existing.enabled = cfg.enabled;
-        if (cfg.permission_policy) existing.permissionPolicy = cfg.permission_policy;
+        if (cfg.permission_policy)
+          existing.permissionPolicy = cfg.permission_policy;
       }
     }
   }
@@ -293,13 +307,17 @@ export function resolveBuiltinTools(config: AgentConfig): Map<string, ResolvedTo
 // ── Helper: get custom tools ──────────────────────────────────────────────────
 
 export function getCustomTools(config: AgentConfig): CustomTool[] {
-  return (config.tools ?? []).filter((t): t is CustomTool => t.type === "custom");
+  return (config.tools ?? []).filter(
+    (t): t is CustomTool => t.type === "custom",
+  );
 }
 
 // ── Helper: get MCP toolsets ──────────────────────────────────────────────────
 
 export function getMcpToolsets(config: AgentConfig): McpToolset[] {
-  return (config.tools ?? []).filter((t): t is McpToolset => t.type === "mcp_toolset");
+  return (config.tools ?? []).filter(
+    (t): t is McpToolset => t.type === "mcp_toolset",
+  );
 }
 
 // ── Helper: inject skills into system prompt ─────────────────────────────────
@@ -326,7 +344,9 @@ export async function resolveSkills(config: AgentConfig): Promise<AgentConfig> {
         : `# Skill: ${skill.name}\n`;
       blocks.push(`${header}\n${content.trim()}`);
     } catch (err) {
-      console.warn(`[Config] Skill '${skill.name}': failed to read ${srcPath}: ${(err as Error).message}`);
+      console.warn(
+        `[Config] Skill '${skill.name}': failed to read ${srcPath}: ${(err as Error).message}`,
+      );
     }
   }
 
@@ -359,11 +379,14 @@ export interface ToKernelOptions {
  *   3. ~/.config/.cloudbase/auth.json (`tcb login` cache, local dev)
  * Returns null if nothing is found — let the kernel raise its own error then.
  */
-function resolveCloudBaseCredentials(envId: string): CloudBaseCredentials | null {
+function resolveCloudBaseCredentials(
+  envId: string,
+): CloudBaseCredentials | null {
   const env = process.env;
-  const secretId  = env.TCB_SECRET_ID  ?? env.TENCENTCLOUD_SECRETID;
+  const secretId = env.TCB_SECRET_ID ?? env.TENCENTCLOUD_SECRETID;
   const secretKey = env.TCB_SECRET_KEY ?? env.TENCENTCLOUD_SECRETKEY;
-  const sessionToken = env.TCB_TOKEN ?? env.TENCENTCLOUD_SESSIONTOKEN ?? env.TENCENTCLOUD_TOKEN;
+  const sessionToken =
+    env.TCB_TOKEN ?? env.TENCENTCLOUD_SESSIONTOKEN ?? env.TENCENTCLOUD_TOKEN;
   if (secretId && secretKey) {
     return { envId, secretId, secretKey, sessionToken };
   }
@@ -394,7 +417,10 @@ function resolveCloudBaseCredentials(envId: string): CloudBaseCredentials | null
       sessionToken: c.tmpToken,
     };
   } catch (err) {
-    console.warn("[Config] Failed to read tcb login credentials:", (err as Error).message);
+    console.warn(
+      "[Config] Failed to read tcb login credentials:",
+      (err as Error).message,
+    );
     return null;
   }
 }
@@ -416,14 +442,19 @@ export function toKernelAgentConfig(
 ): KernelAgentConfig {
   const envId = opts.envId ?? process.env.CLOUDBASE_ENV_ID ?? "";
   if (!envId) {
-    throw new Error("toKernelAgentConfig: envId is required (set CLOUDBASE_ENV_ID)");
+    throw new Error(
+      "toKernelAgentConfig: envId is required (set CLOUDBASE_ENV_ID)",
+    );
   }
 
   // ── MCP servers ─────────────────────────────────────────────────────────
   const mcpServers: Record<string, KernelMcpServerConfig> = {};
   for (const s of config.mcp_servers ?? []) {
     if (s.type === "url") {
-      mcpServers[s.name] = { type: "http", url: s.url } as KernelMcpServerConfig;
+      mcpServers[s.name] = {
+        type: "http",
+        url: s.url,
+      } as KernelMcpServerConfig;
     }
   }
 
@@ -436,7 +467,8 @@ export function toKernelAgentConfig(
     }
   }
   for (const t of getMcpToolsets(config)) {
-    const defaultAsk = t.default_config?.permission_policy?.type === "always_ask";
+    const defaultAsk =
+      t.default_config?.permission_policy?.type === "always_ask";
     if (defaultAsk) approvalNames.push(`mcp__${t.mcp_server_name}__*`);
     for (const cfg of t.configs ?? []) {
       if (cfg.permission_policy?.type === "always_ask") {
@@ -466,19 +498,21 @@ export function toKernelAgentConfig(
   // credentials (empty secretId/secretKey) so the kernel creates
   // CloudBaseSessionStore. The @cloudbase/node-sdk picks up CLOUDBASE_APIKEY
   // from the env when secretId/secretKey are not passed to init().
-  const effectiveCredentials = credentials ?? (
-    hasApiKey
-      ? { envId, secretId: "", secretKey: "" } as CloudBaseCredentials
-      : null
-  );
+  const effectiveCredentials =
+    credentials ??
+    (hasApiKey
+      ? ({ envId, secretId: "", secretKey: "" } as CloudBaseCredentials)
+      : null);
 
   // ── Model spec ──────────────────────────────────────────────────────────
-  const baseModel: ModelSpec = typeof config.model === "string"
-    ? { id: config.model }
-    : { ...config.model };
-  const model: string | ModelSpec = baseModel.apiKey || baseModel.apiBaseUrl || baseModel.options
-    ? baseModel
-    : baseModel.id;
+  const baseModel: ModelSpec =
+    typeof config.model === "string"
+      ? { id: config.model }
+      : { ...config.model };
+  const model: string | ModelSpec =
+    baseModel.apiKey || baseModel.apiBaseUrl || baseModel.options
+      ? baseModel
+      : baseModel.id;
 
   // ── Sandbox capabilities ─────────────────────────────────────────────────
   const builtinPoliciesForCaps = resolveBuiltinTools(config);
@@ -487,9 +521,10 @@ export function toKernelAgentConfig(
     (builtinPoliciesForCaps.get("read_file")?.enabled ?? true) ||
     (builtinPoliciesForCaps.get("write_file")?.enabled ?? true) ||
     (builtinPoliciesForCaps.get("list_files")?.enabled ?? true);
-  const sandboxCapabilities = (!shellEnabled || !fsEnabled)
-    ? { shell: shellEnabled, filesystem: fsEnabled }
-    : undefined;
+  const sandboxCapabilities =
+    !shellEnabled || !fsEnabled
+      ? { shell: shellEnabled, filesystem: fsEnabled }
+      : undefined;
 
   // ── Sandbox ─────────────────────────────────────────────────────────────
   // Sandbox is a first-class feature, controlled by config.sandbox.enabled.
@@ -503,7 +538,7 @@ export function toKernelAgentConfig(
   if (sandboxRequested && !hasApiKey) {
     console.warn(
       "[Config] sandbox.enabled=true but CLOUDBASE_APIKEY is not set — " +
-      "AGS sandbox requires a CloudBase API key. Disabling sandbox."
+        "AGS sandbox requires a CloudBase API key. Disabling sandbox.",
     );
   }
   const sandboxEnabled = sandboxRequested && hasApiKey;
@@ -515,7 +550,12 @@ export function toKernelAgentConfig(
     metadata: config.metadata,
     model,
     systemPrompt: config.system,
-    cwd: "/tmp",
+    // session 工作目录(claude CLI 的 cwd)。必须是对运行 uid(1001)可写的目录 ——
+    // claude 在 cwd 里做 git 检测/写临时文件,不可写会让子进程在 init 阶段静默
+    // TCBR=/workspace/session,均已 chown 给运行 uid);未设时退 /tmp/workspace。
+    // 不用 .oak 下的目录:那是 kernel 自管的配置区,cwd 是 session 级、可清理的工作区,
+    // 二者作用域不同(见 kernel path-derivation 布局)。
+    cwd: "/tmp/workspace",
     credentials: effectiveCredentials ?? undefined,
     mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
     sandbox: sandboxEnabled
@@ -526,15 +566,14 @@ export function toKernelAgentConfig(
           ...(sandboxCapabilities ? { capabilities: sandboxCapabilities } : {}),
         }
       : undefined,
-    permissions: requireApproval
-      ? { requireApproval }
-      : undefined,
+    permissions: requireApproval ? { requireApproval } : undefined,
     session: effectiveCredentials
       ? { enabled: true, projectKey: envId }
       : undefined,
-    tools: opts.customToolDefs && opts.customToolDefs.length > 0
-      ? opts.customToolDefs
-      : undefined,
+    tools:
+      opts.customToolDefs && opts.customToolDefs.length > 0
+        ? opts.customToolDefs
+        : undefined,
   };
 }
 
@@ -568,7 +607,10 @@ export function normalizeAgentConfig(config: AgentConfig): AgentConfig {
   // For harness: resolve full sandbox placement (infra/resources/image) with defaults.
   // For managed: sandbox.enabled is used as-is; no placement resolution needed.
   if (runtime === "harness") {
-    const resolved = resolveSandboxConfig({ sandbox: config.sandbox, engine: config.engine });
+    const resolved = resolveSandboxConfig({
+      sandbox: config.sandbox,
+      engine: config.engine,
+    });
     return applyResolvedSandboxToConfig(config, resolved);
   }
   return config;
@@ -607,7 +649,9 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
   for (const p of searchPaths) {
     try {
       const content = await fs.readFile(p, "utf-8");
-      const config = applyDevEnvOverrides(normalizeAgentConfig(parseYaml(content) as AgentConfig));
+      const config = applyDevEnvOverrides(
+        normalizeAgentConfig(parseYaml(content) as AgentConfig),
+      );
       console.log(`[Config] Loaded agent config from: ${p}`);
       return config;
     } catch {
@@ -616,14 +660,17 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
   }
 
   // Priority 2: AGENT_CONFIG or AGENT_CONFIG_B64 env var (from `magent agent:update`)
-  const rawConfig = process.env.AGENT_CONFIG
-    ?? (process.env.AGENT_CONFIG_B64
+  const rawConfig =
+    process.env.AGENT_CONFIG ??
+    (process.env.AGENT_CONFIG_B64
       ? Buffer.from(process.env.AGENT_CONFIG_B64, "base64").toString("utf-8")
       : null);
 
   if (rawConfig) {
     try {
-      const config = applyDevEnvOverrides(normalizeAgentConfig(JSON.parse(rawConfig) as AgentConfig));
+      const config = applyDevEnvOverrides(
+        normalizeAgentConfig(JSON.parse(rawConfig) as AgentConfig),
+      );
       console.log(`[Config] Loaded from AGENT_CONFIG env var`);
       return config;
     } catch (err) {
@@ -632,7 +679,9 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
   }
 
   // Priority 3: pure env vars (backward compatible)
-  console.log("[Config] No agent.yaml or AGENT_CONFIG found, using environment variables");
+  console.log(
+    "[Config] No agent.yaml or AGENT_CONFIG found, using environment variables",
+  );
   return applyDevEnvOverrides(
     normalizeAgentConfig({
       name: process.env.AGENT_NAME ?? "open-managed-agent",

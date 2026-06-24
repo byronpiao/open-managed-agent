@@ -4,9 +4,11 @@
 #   - SCF web function image must listen on PORT=9000 (TCBR uses 8080).
 #   - SCF /tmp at runtime is owned root:root mode 0755 — uid=1001 cannot
 #     write to it via the standard "scf_bootstrap drops to uid=1001" path.
-#     So we pre-create the writable subdirs (/tmp/.claude /tmp/workspace
-#     /tmp/claude-cache) AT BUILD TIME and chown them to 1001, OR run
-#     directly as 1001 from the start (uid 1001 is set by USER directive).
+#     So we pre-create the writable subdirs (/tmp/.oak /tmp/workspace)
+#     AT BUILD TIME and chown them to 1001; scf_bootstrap also re-creates
+#     + chowns them at runtime (build-time chown is reset by the SCF mount).
+#     /tmp/.oak is the kernel's unified work root (OAK_SESSION_LOCAL_DIR=/tmp →
+#     <workRoot>/.oak/{agent,users,sync}); /tmp/workspace is the session cwd.
 #   - We bake the linux-x64 native claude binary into the image so the SDK
 #     never has to extract or fetch it at runtime, and the optionalDeps
 #     platform-skip dance is gone.
@@ -29,9 +31,9 @@ RUN apt-get update \
  && echo $TZ > /etc/timezone \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --shell /bin/bash --uid 1001 agent \
- && mkdir -p /app /tmp/.claude /tmp/workspace /tmp/claude-cache \
- && chown -R agent:agent /app /tmp/.claude /tmp/workspace /tmp/claude-cache \
- && chmod 0755 /tmp/.claude /tmp/workspace /tmp/claude-cache
+ && mkdir -p /app /tmp/.oak /tmp/workspace \
+ && chown -R agent:agent /app /tmp/.oak /tmp/workspace \
+ && chmod 0755 /tmp/.oak /tmp/workspace
 
 WORKDIR /app
 
@@ -54,15 +56,25 @@ RUN npm install --omit=dev --no-audit --no-fund \
 COPY . .
 RUN chown -R agent:agent /app
 
-USER agent
+# NOTE: intentionally NO `USER agent` here. The container starts as root so
+# uid-shim.mjs (loaded via --import in CMD, and in scf_bootstrap) can chown the
+# runtime /tmp — SCF mounts it root:root, defeating build-time chown — then drop
+# to uid 1001 before the kernel/claude binary loads. `USER agent` would start at
+# 1001, the runtime chown would fail, and the claude subprocess couldn't write
+# under /tmp → SDK yields 0 messages → empty SSE.
 
 # SCF web function gateway probes this port. Don't change without also
 # updating cloudbaserc.json's imageConfig.imagePort.
 EXPOSE 9000
 
+# OAK_SESSION_LOCAL_DIR = kernel work root → all kernel-managed dirs live under
+#   <workRoot>/.oak/ (agent config, per-user memory, COS sync). Pin to /tmp (SCF's
+#   only guaranteed-writable area) so the kernel skips home-writability probing.
+# We do NOT set CLAUDE_CONFIG_DIR: the kernel sets it unconditionally to
+#   <workRoot>/.oak/agent/.claude — setting it here would be ignored/misleading.
+# HOME is irrelevant to the kernel (it writes via CLAUDE_CONFIG_DIR, not $HOME).
 ENV PORT=9000 \
-    HOME=/home/agent \
-    CLAUDE_CONFIG_DIR=/tmp/.claude \
-    OAK_SESSION_LOCAL_DIR=/tmp/.claude
+    OAK_SESSION_LOCAL_DIR=/tmp
 
+    
 CMD ["node", "dist/index.js"]

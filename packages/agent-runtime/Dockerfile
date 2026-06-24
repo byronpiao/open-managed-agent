@@ -18,9 +18,8 @@
 #     working dirs (/app /workspace /data /cache /tmp /var/tmp) to agent
 #     so business code can freely create files there. System dirs
 #     (/etc /usr /bin) intentionally stay read-only.
-#   - We only install production deps (--omit=dev). The pinned local kernel
-#     tarball under vendor/ is referenced as a file: dependency in
-#     package.json, so npm pulls it from the staged copy at install time.
+#   - We only install production deps (--omit=dev). The kernel is published
+#     to npm as @cloudbase/open-agent-kernel, no vendored tarball needed.
 #   - We also force-install @anthropic-ai/claude-agent-sdk-linux-x64
 #     because npm's optionalDependencies platform-detection sometimes
 #     skips it in containerized environments where the matching package
@@ -43,7 +42,7 @@ RUN apt-get update \
  && echo $TZ > /etc/timezone \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --shell /bin/bash --uid 1001 agent \
- && mkdir -p /workspace /data /cache \
+ && mkdir -p /workspace/.oak /workspace/session /data /cache \
  && chown -R agent:agent /app /workspace /data /cache /tmp /var/tmp \
  && chmod 1777 /tmp /var/tmp
 
@@ -59,5 +58,11 @@ RUN npm config set registry https://mirrors.cloud.tencent.com/npm/ \
 COPY --chown=agent:agent . .
 
 EXPOSE 8080
-ENV PORT=8080 HOME=/home/agent
+# OAK_SESSION_LOCAL_DIR = kernel work root → <workRoot>/.oak/{agent,users,sync}.
+# Pin to /workspace (chowned to agent, persistent in TCBR) so the kernel skips
+# home-writability probing and behaves deterministically. CLAUDE_CONFIG_DIR is
+# set by the kernel itself (<workRoot>/.oak/agent/.claude), don't set it here.
+ENV PORT=8080 \
+    HOME=/home/agent \
+    OAK_SESSION_LOCAL_DIR=/tmp
 CMD ["node", "dist/index.js"]

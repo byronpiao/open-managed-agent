@@ -22,9 +22,6 @@ export {
   buildSkillsManifestEnv,
   buildHarnessInitCredEnv,
   customToolsToMcpToolSchemas,
-  agentLoopRuntimeFromArgs,
-  normalizeAgentRuntime,
-  applyHarnessRuntimeEnv,
 } from "./deploy.js";
 
 export { mountHarnessAcpEndpoint } from "./acp-endpoint.js";

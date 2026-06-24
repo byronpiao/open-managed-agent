@@ -1,13 +1,14 @@
 {
   "name": "open-managed-agent",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "magent CLI — manage CloudBase AI agents from the command line",
   "bin": {
-    "magent": "./magent.mjs"
+    "magent": "magent.mjs"
   },
   "files": [
     "magent.mjs",
     "lib",
+    "packages/agent-runtime",
     "README.md"
   ],
   "keywords": [
@@ -27,7 +28,6 @@
     "@cloudbase/cli": "latest",
     "@cloudbase/signature-nodejs": "^2.2.0",
     "commander": "^15.0.0",
-    "open-managed-agent-runtime": "workspace:*",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
