@@ -44,6 +44,45 @@ index.ts → resolveRuntime(config)
 
 Managed Agents 面详见 [managed-agents-http.md](./managed-agents-http.md)。
 
+### 1.2.1 CLI / Runtime 拆分规则（编码器 / 解码器分离）
+
+> 上游 refactor（`47fa247`）将 CLI 从 `agent-runtime` npm 依赖中解耦。harness 链路须遵守同一规则。
+
+**原则：CLI（编码器）和 runtime（解码器）仅通过 env / yaml 通信，不通过代码 import。**
+
+| 侧 | 职责 | 位置 | kernel 依赖 |
+|----|------|------|------------|
+| **编码器**（CLI / 部署时） | 解析 flags → 构建配置 → 生成 env map → `magent agent:create/update` | `lib/harness-deploy.mjs`（纯 JS） | 无 |
+| **解码器**（Runtime / 运行时） | 读 `AGENT_CONFIG` / env → 构建箱内环境 → ACP / sync / store | `packages/agent-runtime/src/harness/`（TS） | 有 |
+
+**已移出 agent-runtime 的函数**（部署时在操作者机器上跑，不进入云上容器）：
+
+- `normalizeAgentRuntime` — flag → config runtime/engine 归一化
+- `agentLoopRuntimeFromArgs` — `--agent-runtime` / `--runtime` flag 解析
+- `applyHarnessRuntimeEnv` — 合并 harness env 到 SCF / CloudRun env map
+- `forwardHarnessDeployEnv` — 转发 `HARNESS_*` / `LLM_*` / `TCB_*` 到容器 env
+- `HARNESS_DEPLOY_ENV_KEYS` — 需转发的 env key 列表
+
+以上函数现位于 `lib/harness-deploy.mjs`，不再从 `packages/agent-runtime/dist` 导出。
+
+**留在 agent-runtime 的函数**（运行时在沙箱 / 网关内跑）：
+
+- `buildHarnessOpencodeConfigContent` / `buildHarnessSandboxEnv` — 箱内 env 构建
+- `buildMcporterConfig` / `buildHarnessAcpMcpServers` — MCP 配置
+- `getHarnessSessionStore` / `getHarnessSyncEventStore` — FlexDB session 存储
+- `probeCloudBasePlatformLlm` / `probeHarnessOpenAiLlm` — LLM 探活（运行时侧，因为需要与 runtime 共享 LLM provider 解析逻辑）
+- `resolveCamControlPlaneCredentials` / `HARNESS_PUBLIC_MAGENT_IMAGE` — 运行时常量
+
+**故意重复的函数**（两侧各一份，不共享）：
+
+`buildMcporterConfig`、`resolveRuntime`、`getCustomTools`、`normalizeAgentConfig`、`resolveSandboxConfig`、`normalizeSandboxEnv` — CLI 侧是纯 JS / 无 kernel，runtime 侧是 TS + kernel 类型。**不要试图共享**，那会重新引入依赖。
+
+**harness 验收脚本（`scripts/harness/`）的导入规则**：
+
+- ✅ 从 `dist/` 导入 runtime 侧函数（store、orchestrator、probe、harness-env 常量）— 这些是运行时 / 验证时用的
+- ❌ 不要从 `dist/` 导入已移出的编码器函数 — 从 `lib/harness-deploy.mjs` 导入
+- ✅ `tests/harness/unit.test.mjs` 测试编码器函数时，从 `lib/harness-deploy.mjs` 导入
+
 ### 1.3 研发验收路由
 
 ```bash
