@@ -33,8 +33,6 @@ import {
   SANDBOX_TRW_MCP_RELAY_PATH,
   buildHarnessInitCredEnv,
   buildSkillsManifestEnv,
-  normalizeAgentRuntime,
-  applyHarnessRuntimeEnv,
   HARNESS_PUBLIC_MAGENT_IMAGE,
   resolveHarnessSandboxImage,
   deliverClientToolResult,
@@ -57,6 +55,10 @@ import {
   buildHarnessOutboundCorrelationHeaders,
   TRACEPARENT_HEADER,
 } from "../../packages/agent-runtime/dist/harness/index.js";
+import {
+  normalizeAgentRuntime,
+  applyHarnessRuntimeEnv,
+} from "../../lib/harness-deploy.mjs";
 import {
   getHarnessSessionStore,
   resetHarnessSessionStoreForTests,
