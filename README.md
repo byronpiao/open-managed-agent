@@ -61,7 +61,23 @@ for await (const event of client.sessions.prompt(session.id, "Review this PR")) 
 
 ### 1. 安装 `magent` CLI
 
-**方式一：从源码安装（开发中）**
+**方式一：一行安装（推荐）**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yhsunshining/open-managed-agent/main/install.sh | bash
+```
+
+克隆仓库到 `~/.magent`，构建并全局注册 `magent` 命令。
+
+**方式二：从 npm 安装**
+
+```bash
+npm install -g open-managed-agent
+```
+
+安装后运行 `magent init` 下载模板到 `~/.magent`（`agent:create` 默认从这里查找代码目录）。
+
+**方式三：从源码安装（开发）**
 
 ```bash
 git clone <this-repo>
@@ -69,12 +85,6 @@ cd open-managed-agent
 npm install          # 同时安装内置的 @cloudbase/cli（无需单独安装 tcb）
 npm run build        # 构建 SDK 和 Runtime
 npm link             # 全局注册 magent 命令
-```
-
-**方式二：从 npm 安装（发布后可用）**
-
-```bash
-npm install -g open-managed-agent
 ```
 
 > `@cloudbase/cli`（tcb）作为内置依赖随 `open-managed-agent` 一起安装，**不需要手动安装 tcb**。
@@ -111,7 +121,7 @@ magent agent:create \
 
 未 `magent env use` 且未传 `-e` / `CLOUDBASE_ENV_ID` 时，`magent` 会提示先选环境。
 
-> 首次部署前需构建代码：`cd packages/agent-runtime && npm run build`
+> `agent:create` 会自动查找代码目录（优先级：`--code` → `~/.magent/config.json` → `~/.magent/packages/agent-runtime` → magent 安装位置），缺 `dist/` 时自动构建。用 `magent init` 可下载/更新模板到 `~/.magent`。
 
 ### 5. 配置 Agent
 
@@ -391,12 +401,24 @@ AGENT_MODEL + AGENT_SYSTEM 环境变量         ← 向后兼容
 ### 安装方式
 
 ```bash
+# 一行安装（推荐）
+curl -fsSL https://raw.githubusercontent.com/yhsunshining/open-managed-agent/main/install.sh | bash
+
+# 从 npm
+npm install -g open-managed-agent
+
 # 从源码
 npm install && npm link
-
-# 从 npm（发布后）
-npm install -g open-managed-agent
 ```
+
+### `magent init` — 下载/更新模板
+
+```bash
+magent init            # clone 或更新 ~/.magent，构建 runtime
+magent init --ref dev  # 指定分支
+```
+
+`agent:create` 默认从 `~/.magent/packages/agent-runtime` 查找代码目录；`npm install -g` 安装后运行一次 `magent init` 即可就绪。也可在 `~/.magent/config.json` 里设 `codePath` 指向自定义路径。
 
 ### 短标志（Short Flags）
 

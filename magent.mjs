@@ -40,6 +40,7 @@ import { registerSessionCommands } from "./lib/commands/session.mjs";
 import { registerChatCommands } from "./lib/commands/chat.mjs";
 import { registerEnvCommands } from "./lib/commands/env.mjs";
 import { registerCloudrunCommands } from "./lib/commands/cloudrun.mjs";
+import { registerInitCommand } from "./lib/commands/init.mjs";
 
 // ── Load .env file ──────────────────────────────────────────────────────────
 const envFile = new URL(".env", import.meta.url).pathname;
@@ -70,6 +71,7 @@ registerSessionCommands(program);
 registerChatCommands(program);
 registerEnvCommands(program);
 registerCloudrunCommands(program);
+registerInitCommand(program);
 
 // ── Login (proxy to tcb) ────────────────────────────────────────────────────
 program

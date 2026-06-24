@@ -24,17 +24,6 @@ OMA_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HARNESS_ENV_TS="${OMA_ROOT}/packages/agent-runtime/src/harness/harness-env.ts"
 
 cd "$TRW_ROOT"
-OAK_VENDOR="${OMA_ROOT}/packages/agent-runtime/vendor/cloudbase-open-agent-kernel-0.1.0-alpha.0.tgz"
-TRW_VENDOR="${TRW_ROOT}/vendor/cloudbase-open-agent-kernel-0.1.0-alpha.0.tgz"
-if [[ ! -f "$TRW_VENDOR" && -f "$OAK_VENDOR" ]]; then
-  mkdir -p "${TRW_ROOT}/vendor"
-  cp -f "$OAK_VENDOR" "$TRW_VENDOR"
-  echo "Synced OAK vendor tgz → TRW vendor/"
-fi
-if [[ ! -f "$TRW_VENDOR" ]]; then
-  echo "Missing $TRW_VENDOR (copy from open-managed-agent/packages/agent-runtime/vendor/)" >&2
-  exit 1
-fi
 pnpm build:prod
 unset PORT HOST
 npm run test:merge

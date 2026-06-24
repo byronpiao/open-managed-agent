@@ -555,7 +555,7 @@ export function toKernelAgentConfig(
     // TCBR=/workspace/session,均已 chown 给运行 uid);未设时退 /tmp/workspace。
     // 不用 .oak 下的目录:那是 kernel 自管的配置区,cwd 是 session 级、可清理的工作区,
     // 二者作用域不同(见 kernel path-derivation 布局)。
-    cwd: process.env.OAK_WORKSPACE_DIR ?? "/tmp/workspace",
+    cwd: "/tmp/workspace",
     credentials: effectiveCredentials ?? undefined,
     mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
     sandbox: sandboxEnabled

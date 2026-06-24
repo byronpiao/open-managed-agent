@@ -41,6 +41,14 @@ if (!ENV_ID || !ACCESS_KEY) {
   process.exit(1);
 }
 
+// ── Agent type (positional arg) ───────────────────────────────────
+// 用法: node tests/e2e-cli.mjs [tcbr|scf|scf-image]
+const AGENT_TYPE = (process.argv[2] ?? "tcbr").toLowerCase();
+if (!["scf", "scf-image", "tcbr"].includes(AGENT_TYPE)) {
+  console.error(`❌ 无效的 agent type: '${AGENT_TYPE}'，可选: tcbr | scf | scf-image`);
+  process.exit(1);
+}
+
 // ── ANSI helpers ───────────────────────────────────────────────────
 const dim   = (s) => `\x1b[2m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
@@ -135,13 +143,14 @@ ${bold("╚═══════════════════════
 
   Environment:  ${ENV_ID}
   Agent Name:   ${AGENT_NAME}
+  Agent Type:   ${AGENT_TYPE}
   Access Key:  ${ACCESS_KEY.slice(0, 20)}...
 `);
 
   // ── Step 1: 创建 Agent ─────────────────────────────────────
   console.log(bold("\n──── Step 1: 创建 Agent ──────────────────────"));
   const createOut = magent(
-    `agent:create --name "${AGENT_NAME}" --type tcbr --model hy3-preview ` +
+    `agent:create --name "${AGENT_NAME}" --type ${AGENT_TYPE} --model hy3-preview ` +
     `--system "You are a helpful assistant. When asked to use a tool, call the analyze_code tool." ` +
     `--code "${resolve(ROOT, "packages/agent-runtime")}"`,
   );
