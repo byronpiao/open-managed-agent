@@ -1,5 +1,5 @@
 /**
- * Preflight probe for OpenAI-compatible LLM (Mimo / shared keys).
+ * Preflight probe for OpenAI-compatible LLM (custom BYOK gateways).
  * Runs on the host before AGS acquire — catches 401 / quota without sandbox cost.
  */
 

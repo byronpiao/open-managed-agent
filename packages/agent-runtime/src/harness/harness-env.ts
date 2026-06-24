@@ -86,14 +86,14 @@ export function assertHarnessLlmEnv(): void {
   }
 }
 
-/** Host has custom OpenAI-compatible provider (Mimo tp/sk, etc.). */
+/** Host has custom OpenAI-compatible provider. */
 export function hasHarnessCustomLlmEnv(): boolean {
   return missingHarnessLlmEnv().length === 0;
 }
 
 const ANTHROPIC_LLM_HINT = "LLM_API_KEY";
 
-/** Claude / Mimo Anthropic Messages (engine=claude). */
+/** Claude — Anthropic Messages API via custom gateway. */
 export function missingHarnessAnthropicLlmEnv(): string[] {
   const missing: string[] = [];
   if (!resolveAnthropicApiKeyFromEnv()) missing.push(ANTHROPIC_LLM_HINT);
@@ -123,7 +123,7 @@ export function hasHarnessHermesLlmEnv(): boolean {
   return hasHarnessCustomLlmEnv() || hasHarnessAnthropicLlmEnv();
 }
 
-/** Custom LLM suite: CloudBase + LLM_* (probe / hitl / Mimo pong). Not required for test:merge. */
+/** Custom LLM suite: CloudBase + LLM_* (probe / hitl). Not required for test:merge. */
 export function assertHarnessLlmSuiteEnv(): void {
   assertHarnessCloudCreds();
   assertHarnessLlmEnv();

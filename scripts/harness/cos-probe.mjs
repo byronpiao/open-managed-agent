@@ -6,6 +6,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadEnv, assertHarnessCreds, applyHarnessCosFromHarnessFile } from "./load-env.mjs";
 import { harnessCosEnabledFromMap, readHarnessEnvMap } from "../../lib/harness-env-file.mjs";
+import { resolveHarnessByokModel } from "../../lib/harness-llm-env.mjs";
 import { COS_POST_WRITE_SETTLE_MS, postWorkspaceSnapshot } from "./cos-lib.mjs";
 
 loadEnv();
@@ -27,7 +28,7 @@ async function main() {
   const orch = getSandboxOrchestrator();
   const agentConfig = {
     name: "CosProbe",
-    model: process.env.LLM_MODEL ?? "mimo-v2.5",
+    model: resolveHarnessByokModel(),
     system: "probe",
     runtime: "harness",
     engine: "opencode",

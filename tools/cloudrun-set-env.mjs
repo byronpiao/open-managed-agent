@@ -4,6 +4,7 @@ import { resolve } from "path";
 import { createRequire } from "module";
 import { loadProjectEnv } from "../scripts/env.mjs";
 import { loadEnv as loadHarnessEnv } from "../scripts/harness/load-env.mjs";
+import { resolveHarnessByokModel } from "../lib/harness-llm-env.mjs";
 
 loadProjectEnv();
 try {
@@ -49,7 +50,7 @@ const serviceName = process.argv[2] || "magtest-v2";
 const anthropicToken =
   process.env.LLM_API_KEY?.trim() || process.env.ANTHROPIC_AUTH_TOKEN?.trim();
 const anthropicBase = process.env.ANTHROPIC_BASE_URL?.trim();
-const model = process.env.LLM_MODEL?.trim() || process.env.AGENT_MODEL?.trim() || "mimo-v2.5-pro";
+const model = process.env.AGENT_MODEL?.trim() || resolveHarnessByokModel(process.env);
 
 if (!envId) {
   console.error("Missing CLOUDBASE_ENV_ID — set in .env or export before running.");

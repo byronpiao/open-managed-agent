@@ -25,6 +25,7 @@ import {
   restoreHarnessLlmEnv,
 } from "../../scripts/harness/load-env.mjs";
 import { harnessPreflightDoneFromArgv } from "../../lib/harness-cli-flags.mjs";
+import { resolveHarnessByokModel } from "../../lib/harness-llm-env.mjs";
 import { resolveSandboxImageFromYaml } from "../../lib/resolve-harness-sandbox-image.mjs";
 
 loadEnv();
@@ -73,6 +74,7 @@ function sandboxFetch(url, init = {}) {
   return fetch(url, { ...init, dispatcher: SANDBOX_HTTP });
 }
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const e2eRuntimeCwd = resolve(repoRoot, "tests/managed-agents/e2e-runtime-cwd");
 const SKILL_FIXTURE_PATH = resolve(repoRoot, "tests/fixtures/skills/harness-e2e-demo.md");
 const E2E_PORT = 19090;
 const BASE = `http://127.0.0.1:${E2E_PORT}`;
@@ -122,7 +124,7 @@ function resolveFullAgentConfig() {
   if (!raw) {
     return {
       ...BASE_AGENT_CONFIG,
-      model: process.env.LLM_MODEL?.trim() ?? "mimo-v2.5-pro",
+      model: resolveHarnessByokModel(),
       engine: "opencode",
     };
   }
@@ -145,7 +147,7 @@ function resolveFullAgentConfig() {
     }
     return cfg;
   } catch {
-    return { ...BASE_AGENT_CONFIG, model: process.env.LLM_MODEL?.trim() ?? "mimo-v2.5-pro" };
+    return { ...BASE_AGENT_CONFIG, model: resolveHarnessByokModel() };
   }
 }
 
@@ -199,8 +201,8 @@ async function startRuntime({
     // FlexDB creds present — runtime will use FlexDB
   }
 
-  child = spawn(process.execPath, ["packages/agent-runtime/dist/index.js"], {
-    cwd: repoRoot,
+  child = spawn(process.execPath, [resolve(repoRoot, "packages/agent-runtime/dist/index.js")], {
+    cwd: e2eRuntimeCwd,
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });

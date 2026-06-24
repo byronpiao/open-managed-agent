@@ -82,6 +82,16 @@ function test(name, fn) {
   tests.push({ name, fn });
 }
 
+function withMemoryStore() {
+  const prev = { region: process.env.TCB_REGION, apiKey: process.env.CLOUDBASE_APIKEY };
+  delete process.env.TCB_REGION;
+  delete process.env.CLOUDBASE_APIKEY;
+  return () => {
+    if (prev.region !== undefined) process.env.TCB_REGION = prev.region;
+    if (prev.apiKey !== undefined) process.env.CLOUDBASE_APIKEY = prev.apiKey;
+  };
+}
+
 test("resolveRuntime defaults managed", () => {
   assert.deepEqual(resolveRuntime({ name: "x", model: "m", system: "s" }), {
     runtime: "managed",
@@ -347,6 +357,40 @@ test("parseHarnessEngineArg accepts opencode | claude | all", async () => {
   assert.ok(!harnessEnginesIncludeOpencode("claude"));
   assert.ok(harnessEnginesIncludeClaude("all"));
   assert.throws(() => parseHarnessEngineArg(["--engine", "codebuddy"]));
+});
+
+test("stripHarnessAxisArgv removes infra/engine flags for child harness spawns", async () => {
+  const { stripHarnessAxisArgv } = await import("../../lib/harness-cli-flags.mjs");
+  assert.deepEqual(
+    stripHarnessAxisArgv(["--infra", "tcbr,scf", "--engine", "opencode", "--verify-only"]),
+    ["--verify-only"],
+  );
+  assert.deepEqual(stripHarnessAxisArgv(["--infra=tcbr", "--engine=claude", "--full"]), ["--full"]);
+});
+
+test("cloudVerifyPromptsPassed tolerates cold-start prompt#1 504 when prompt#2 ok", async () => {
+  const { cloudVerifyPromptsPassed } = await import("../../scripts/harness/cloud.mjs");
+  const ok = { ok: true, has504: false };
+  const p1Cold = { ok: false, has504: true };
+  assert.ok(cloudVerifyPromptsPassed({ warmTimeout: false, p1: p1Cold, p2: ok }));
+  assert.ok(cloudVerifyPromptsPassed({ warmTimeout: false, p1: ok, p2: ok }));
+  assert.ok(!cloudVerifyPromptsPassed({ warmTimeout: true, p1: ok, p2: ok }));
+  assert.ok(!cloudVerifyPromptsPassed({ warmTimeout: false, p1: ok, p2: { ok: false, has504: false } }));
+  assert.ok(!cloudVerifyPromptsPassed({ warmTimeout: false, p1: { ok: false, has504: false }, p2: ok }));
+});
+
+test("cloud harness scf agent:create passes --type scf", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../scripts/harness/cloud.mjs", import.meta.url), "utf8");
+  assert.match(src, /--type scf --agent-runtime harness/);
+});
+
+test("resolveHarnessByokModel falls back to HARNESS_BYOK_DEFAULT_MODEL", async () => {
+  const { resolveHarnessByokModel, HARNESS_BYOK_DEFAULT_MODEL } = await import(
+    "../../lib/harness-llm-env.mjs"
+  );
+  assert.equal(resolveHarnessByokModel({}), HARNESS_BYOK_DEFAULT_MODEL);
+  assert.equal(resolveHarnessByokModel({ LLM_MODEL: "custom" }), "custom");
 });
 
 test("parseCloudCosMount and applyHarnessScenario cos axes", async () => {
@@ -1042,6 +1086,8 @@ test("buildHarnessSandboxEnv maps OpenAI env for hermes engine", () => {
 });
 
 test("harness sync event store append + hydrate round-trip", async () => {
+  const restore = withMemoryStore();
+  try {
   resetHarnessSyncEventStoreForTests();
   const store = getHarnessSyncEventStore("test-env");
   const aggregateId = "550e8400-e29b-41d4-a716-446655440000";
@@ -1107,9 +1153,12 @@ test("harness sync event store append + hydrate round-trip", async () => {
   assert.equal(replayed, 2);
   assert.ok(calls.some((c) => c.path.endsWith("/sync/replay")));
   resetHarnessSyncEventStoreForTests();
+  } finally { restore(); }
 });
 
 test("harness sync event store maxSeq and long list", async () => {
+  const restore = withMemoryStore();
+  try {
   resetHarnessSyncEventStoreForTests();
   const store = getHarnessSyncEventStore("test-env");
   const aggregateId = "agg-long-session";
@@ -1135,9 +1184,12 @@ test("harness sync event store maxSeq and long list", async () => {
   });
   assert.equal(inserted, 0);
   resetHarnessSyncEventStoreForTests();
+  } finally { restore(); }
 });
 
 test("persistOpencodeSyncForSession marks syncExportFailedAt after retries", async () => {
+  const restore = withMemoryStore();
+  try {
   const prevEnv = process.env.CLOUDBASE_ENV_ID;
   process.env.CLOUDBASE_ENV_ID = "test-env";
   resetHarnessSyncEventStoreForTests();
@@ -1185,6 +1237,7 @@ test("persistOpencodeSyncForSession marks syncExportFailedAt after retries", asy
   resetHarnessSyncEventStoreForTests();
   if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
   else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  } finally { restore(); }
 });
 
 test("warmClaudeEngineSession calls sandbox session/load", async () => {
@@ -1223,6 +1276,8 @@ test("warmClaudeEngineSession calls sandbox session/load", async () => {
 });
 
 test("markClaudeWarmOutcome updates harness_sessions.claudeWarmFailedAt", async () => {
+  const restore = withMemoryStore();
+  try {
   const prevEnv = process.env.CLOUDBASE_ENV_ID;
   process.env.CLOUDBASE_ENV_ID = "test-env";
   resetHarnessSessionStoreForTests();
@@ -1245,6 +1300,7 @@ test("markClaudeWarmOutcome updates harness_sessions.claudeWarmFailedAt", async 
   resetHarnessSessionStoreForTests();
   if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
   else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  } finally { restore(); }
 });
 
 test("probeClaudeSessionStoreAfterPrompt skips non-claude engine", async () => {
@@ -1266,6 +1322,8 @@ test("isClaudeEntryCountHigh uses fixed threshold 3000", async () => {
   assert.equal(isClaudeEntryCountHigh(3000), false);
   assert.equal(isClaudeEntryCountHigh(3001), true);
 
+  const restore = withMemoryStore();
+  try {
   const prevEnv = process.env.CLOUDBASE_ENV_ID;
   process.env.CLOUDBASE_ENV_ID = "test-env";
   resetHarnessSessionStoreForTests();
@@ -1285,9 +1343,12 @@ test("isClaudeEntryCountHigh uses fixed threshold 3000", async () => {
   resetHarnessSessionStoreForTests();
   if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
   else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  } finally { restore(); }
 });
 
 test("getHarnessStoreDiag exposes harness_sessions attention counters", async () => {
+  const restore = withMemoryStore();
+  try {
   const prevEnv = process.env.CLOUDBASE_ENV_ID;
   process.env.CLOUDBASE_ENV_ID = "test-env";
   resetHarnessSessionStoreForTests();
@@ -1309,6 +1370,7 @@ test("getHarnessStoreDiag exposes harness_sessions attention counters", async ()
   resetHarnessSessionStoreForTests();
   if (prevEnv === undefined) delete process.env.CLOUDBASE_ENV_ID;
   else process.env.CLOUDBASE_ENV_ID = prevEnv;
+  } finally { restore(); }
 });
 
 test("resolveHarnessCosConfig returns null when disabled", () => {

@@ -7,6 +7,7 @@
  */
 
 import { loadEnv, assertHarnessCreds } from "../../scripts/harness/load-env.mjs";
+import { resolveHarnessByokModel } from "../../lib/harness-llm-env.mjs";
 loadEnv();
 
 import { strict as assert } from "node:assert";
@@ -27,7 +28,7 @@ function sandboxFetch(url, init = {}) {
 
 const HITL_AGENT_CONFIG = {
   name: "HarnessHitlOpencode",
-  model: process.env.LLM_MODEL?.trim() ?? "mimo-v2.5",
+  model: resolveHarnessByokModel(),
   system:
     "When the user asks you to run a shell command, you MUST use bash. " +
     "Do not refuse; run the command they ask for.",

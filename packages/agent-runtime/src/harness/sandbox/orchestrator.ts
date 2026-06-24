@@ -318,6 +318,29 @@ async function createHarnessTool(
   return toolId;
 }
 
+function isSandboxToolNameConflict(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("already exists");
+}
+
+async function createHarnessToolOrReuseExisting(
+  envId: string,
+  toolName: string,
+  cred: ResolvedCredentials,
+  sandbox: ResolvedSandboxConfig,
+  storageMounts?: Array<Record<string, unknown>>,
+): Promise<{ toolId: string; justCreated: boolean }> {
+  try {
+    const toolId = await createHarnessTool(envId, toolName, cred, sandbox, storageMounts);
+    return { toolId, justCreated: true };
+  } catch (err) {
+    if (!isSandboxToolNameConflict(err)) throw err;
+    const existing = await findToolByName(toolName, cred, envId);
+    if (!existing) throw err;
+    return { toolId: existing.toolId, justCreated: false };
+  }
+}
+
 async function syncHarnessToolConfiguration(
   toolId: string,
   cred: ResolvedCredentials,
@@ -360,7 +383,13 @@ async function ensureHarnessTool(
         message: `recreating harness tool ${toolName} with COS StorageMounts (~30s)`,
       });
       await deleteHarnessTool(existing.toolId, cred, envId);
-      const toolId = await createHarnessTool(envId, toolName, cred, sandbox, storageMounts);
+      const { toolId } = await createHarnessToolOrReuseExisting(
+        envId,
+        toolName,
+        cred,
+        sandbox,
+        storageMounts,
+      );
       return { toolId, justCreated: true };
     }
     try {
@@ -378,8 +407,14 @@ async function ensureHarnessTool(
     phase: "tool_create",
     message: `creating harness tool ${toolName} (first run, ~30s)`,
   });
-  const toolId = await createHarnessTool(envId, toolName, cred, sandbox, storageMounts);
-  return { toolId, justCreated: true };
+  const { toolId, justCreated } = await createHarnessToolOrReuseExisting(
+    envId,
+    toolName,
+    cred,
+    sandbox,
+    storageMounts,
+  );
+  return { toolId, justCreated };
 }
 
 function pickStartCustomConfiguration(env: HarnessEnvVar[]): Record<string, unknown> {

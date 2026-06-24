@@ -26,7 +26,7 @@ import {
   parseCloudCosMount,
 } from "./load-env.mjs";
 import { harnessCosEnabledFromMap, readHarnessEnvMap } from "../../lib/harness-env-file.mjs";
-import { HARNESS_PREFLIGHT_DONE_FLAG } from "../../lib/harness-cli-flags.mjs";
+import { HARNESS_PREFLIGHT_DONE_FLAG, stripHarnessAxisArgv } from "../../lib/harness-cli-flags.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
@@ -181,17 +181,43 @@ function harnessCosConfiguredInFile() {
   return harnessCosEnabledFromMap(readHarnessEnvMap());
 }
 
+function harnessChildInfraLabel(argv) {
+  const i = argv.indexOf("--infra");
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : "child";
+}
+
+function prefixHarnessChildLines(stream, prefix, out) {
+  let buf = "";
+  stream.on("data", (chunk) => {
+    buf += String(chunk);
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.length > 0) out.write(`${prefix}${line}\n`);
+    }
+  });
+  stream.on("end", () => {
+    if (buf.length > 0) out.write(`${prefix}${buf}\n`);
+  });
+}
+
 function spawnHarnessChild(argv) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [resolve(__dirname, "index.mjs"), ...argv], {
+  const label = harnessChildInfraLabel(argv);
+  const prefix = `[${label}] `;
+  const indexScript = resolve(__dirname, "index.mjs");
+  return new Promise((fulfill, reject) => {
+    const childArgv = [indexScript, ...argv];
+    const child = spawn(process.execPath, childArgv, {
       cwd: repoRoot,
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
+    prefixHarnessChildLines(child.stdout, prefix, process.stdout);
+    prefixHarnessChildLines(child.stderr, prefix, process.stderr);
     child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`harness ${argv.join(" ")} failed (exit ${code ?? 1})`));
+    child.on("close", (code, signal) => {
+      if (code === 0) fulfill();
+      else reject(new Error(`harness ${argv.join(" ")} failed (exit ${code ?? signal ?? 1})`));
     });
   });
 }
@@ -199,10 +225,11 @@ function spawnHarnessChild(argv) {
 async function runHarnessParallel(infraList, engine, extraArgs) {
   loadEnv();
   await hydrateTcbApiKeyFromCam();
+  const passthrough = stripHarnessAxisArgv(extraArgs);
   console.log(`=== harness run infra=${infraList.join(",")} engine=${engine} (parallel) ===\n`);
   await Promise.all(
     infraList.map((infra) =>
-      spawnHarnessChild(["run", "--infra", infra, "--engine", engine, ...extraArgs]),
+      spawnHarnessChild(["run", "--infra", infra, "--engine", engine, ...passthrough]),
     ),
   );
   console.log(`\n✓ infra=${infraList.join(",")} engine=${engine} all passed`);
