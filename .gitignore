@@ -31,4 +31,4 @@ agent.sandbox.yaml
 .codegraph/
 
 # Cursor — local IDE config (not shared)
-.cursor/
+.cursor/cloudapp/.env

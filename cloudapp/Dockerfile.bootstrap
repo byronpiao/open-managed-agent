@@ -1,0 +1,4 @@
+# Placeholder so CloudApp CNB enables docker (iWiki flow starts with docker build).
+# Real image comes from pull PLATFORM_BASELINE_IMAGE + tag; this layer is discarded.
+FROM alpine:3.19
+RUN echo "cloudapp-docker-bootstrap"
