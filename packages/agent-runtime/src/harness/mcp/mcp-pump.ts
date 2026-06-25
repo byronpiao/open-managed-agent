@@ -3,17 +3,17 @@
  * can reach the gateway client-tool bridge when HARNESS_RUNTIME_CALLBACK_URL is loopback.
  */
 
-import type { AgentConfig } from "../config.js";
-import { getCustomTools } from "../config.js";
+import type { AgentConfig } from "../../config.js";
+import { getCustomTools } from "../../config.js";
 import {
   isLoopbackHarnessCallback,
   SANDBOX_TRW_MCP_COMPLETE_PATH,
   SANDBOX_TRW_MCP_POLL_PATH,
-} from "./deploy.js";
+} from "../deploy.js";
 import { invokeClientToolFromSandbox } from "./client-tool-bridge.js";
-import type { HarnessSandboxHandle } from "./sandbox/orchestrator.js";
-import { isE2eStubSandboxEnabled } from "./sandbox/e2e-stub.js";
-import { harnessLog, harnessTrace } from "./logging.js";
+import type { HarnessSandboxHandle } from "../sandbox/orchestrator.js";
+import { isE2eStubSandboxEnabled } from "../sandbox/e2e-stub.js";
+import { harnessLog, harnessTrace } from "../observability/logging.js";
 
 const POLL_INTERVAL_MS = 400;
 const POLL_TIMEOUT_MS = 28_000;

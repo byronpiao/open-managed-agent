@@ -2,17 +2,17 @@
  * OpenCode serve /sync/* bridge: export events to CloudBase, replay on new sandbox.
  */
 
-import type { AgentConfig } from "../config.js";
-import { resolveRuntime } from "../config.js";
-import { DEFAULT_HARNESS_SANDBOX_CWD } from "./deploy.js";
-import { harnessLog } from "./logging.js";
-import { recordHarnessSyncExported } from "./metrics.js";
-import { isE2eStubSandboxEnabled } from "./sandbox/e2e-stub.js";
-import { getCachedSandboxHandle } from "./sandbox/orchestrator.js";
-import { getHarnessSessionStore } from "./sandbox/session-store.js";
-import type { HarnessSandboxHandle } from "./sandbox/orchestrator.js";
-import { getHarnessSyncEventStore } from "./sync-event-store.js";
-import type { HarnessSyncEventStore, OpencodeSyncEventRow } from "./sync-event-store.js";
+import type { AgentConfig } from "../../../config.js";
+import { resolveRuntime } from "../../../config.js";
+import { DEFAULT_HARNESS_SANDBOX_CWD } from "../../deploy.js";
+import { harnessLog } from "../../observability/logging.js";
+import { recordHarnessSyncExported } from "../../observability/metrics.js";
+import { isE2eStubSandboxEnabled } from "../../sandbox/e2e-stub.js";
+import { getCachedSandboxHandle } from "../../sandbox/orchestrator.js";
+import { getHarnessSessionStore } from "../../sandbox/session-store.js";
+import type { HarnessSandboxHandle } from "../../sandbox/orchestrator.js";
+import { getHarnessSyncEventStore } from "../../sync-event-store.js";
+import type { HarnessSyncEventStore, OpencodeSyncEventRow } from "../../sync-event-store.js";
 
 /** Backoff between export retries (initial attempt has no leading delay). */
 const EXPORT_RETRY_DELAYS_MS = [0, 500, 1500] as const;

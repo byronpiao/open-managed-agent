@@ -369,7 +369,7 @@ async function exportSyncForSession(sessionId) {
     "../../packages/agent-runtime/dist/harness/sync-event-store.js"
   );
   const { exportOpencodeSyncEvents } = await import(
-    "../../packages/agent-runtime/dist/harness/opencode-sync.js"
+    "../../packages/agent-runtime/dist/harness/engine/opencode/opencode-sync.js"
   );
   const { getCachedSandboxHandle } = await import(
     "../../packages/agent-runtime/dist/harness/sandbox/orchestrator.js"
@@ -846,7 +846,7 @@ async function runClaudeChecks() {
       "../../packages/agent-runtime/dist/harness/sandbox/session-store.js"
     );
     const { countHarnessClaudeSessionFootprint } = await import(
-      "../../packages/agent-runtime/dist/harness/claude-session-probe.js"
+      "../../packages/agent-runtime/dist/harness/engine/claude/claude-session-probe.js"
     );
 
     let row = null;
@@ -916,7 +916,7 @@ async function printSummary() {
   console.log(JSON.stringify(summary));
   try {
     const { recordHarnessAcceptanceOutcome } = await import(
-      "../../packages/agent-runtime/dist/harness/metrics.js"
+      "../../packages/agent-runtime/dist/harness/observability/metrics.js"
     );
     for (const r of results) {
       recordHarnessAcceptanceOutcome(r.status.toLowerCase(), r.id);

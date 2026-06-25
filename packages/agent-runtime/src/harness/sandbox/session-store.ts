@@ -6,7 +6,7 @@
 import type { HarnessEngine } from "../../config.js";
 import { resolveCamControlPlaneCredentials } from "../harness-env.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
-import { harnessTrace, harnessLog } from "../logging.js";
+import { harnessTrace, harnessLog } from "../observability/logging.js";
 
 export const HARNESS_SESSIONS_COLLECTION = "harness_sessions";
 

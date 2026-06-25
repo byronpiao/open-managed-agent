@@ -5,11 +5,11 @@
 import type { AgentConfig } from "../../config.js";
 import { resolveRuntime } from "../../config.js";
 import { buildHarnessSandboxEnv } from "../deploy.js";
-import { harnessLog } from "../logging.js";
-import { warmClaudeEngineSession } from "../claude-session-warm.js";
-import { markClaudeWarmOutcome, noteClaudeSessionEntryCount } from "../claude-session-health.js";
-import { countHarnessClaudeSessionFootprint } from "../claude-session-probe.js";
-import { hydrateOpencodeSyncEvents, persistOpencodeSyncForSession } from "../opencode-sync.js";
+import { harnessLog } from "../observability/logging.js";
+import { warmClaudeEngineSession } from "../engine/claude/claude-session-warm.js";
+import { markClaudeWarmOutcome, noteClaudeSessionEntryCount } from "../engine/claude/claude-session-health.js";
+import { countHarnessClaudeSessionFootprint } from "../engine/claude/claude-session-probe.js";
+import { hydrateOpencodeSyncEvents, persistOpencodeSyncForSession } from "../engine/opencode/opencode-sync.js";
 import { getHarnessSyncEventStore } from "../sync-event-store.js";
 import {
   createE2eStubSandboxHandle,

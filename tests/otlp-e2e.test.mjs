@@ -28,10 +28,10 @@ process.env.OTEL_EXPORTER_OTLP_ENDPOINT = `http://localhost:${OTLP_PORT}`;
 process.env.OTEL_SERVICE_NAME = "oma-otlp-e2e";
 
 const { initTelemetry, shutdownTelemetry, isTracingEnabled } = await import(
-  "./../packages/agent-runtime/dist/harness/telemetry-init.js"
+  "./../packages/agent-runtime/dist/harness/telemetry/telemetry-init.js"
 );
 const { withActiveSpan, injectOutboundTraceHeaders } = await import(
-  "./../packages/agent-runtime/dist/harness/telemetry.js"
+  "./../packages/agent-runtime/dist/harness/telemetry/telemetry.js"
 );
 
 initTelemetry();

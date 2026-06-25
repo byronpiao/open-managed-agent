@@ -46,7 +46,6 @@ import {
   hydrateOpencodeSyncEvents,
   resolveHarnessSandboxIdlePauseMs,
   resetSandboxPrewarmForTests,
-  openAiChatCompletionsUrl,
   normalizeInboundRequestId,
   parseCloudbaseTraceHeader,
   parseTraceparent,
@@ -55,6 +54,8 @@ import {
   buildHarnessOutboundCorrelationHeaders,
   TRACEPARENT_HEADER,
 } from "../../packages/agent-runtime/dist/harness/index.js";
+// Probe functions removed from runtime barrel; import directly.
+import { openAiChatCompletionsUrl } from "../../packages/agent-runtime/dist/harness/llm-probe.js";
 import {
   normalizeAgentRuntime,
   applyHarnessRuntimeEnv,
@@ -71,7 +72,6 @@ import {
   buildCosMountOptions,
   buildCosStorageMounts,
   cosObjectKeyForSubPath,
-  harnessCosToolNameForEnv,
   resolveHarnessCosConfig,
 } from "../../packages/agent-runtime/dist/harness/sandbox/cos-mount.js";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
@@ -1244,7 +1244,7 @@ test("persistOpencodeSyncForSession marks syncExportFailedAt after retries", asy
 
 test("warmClaudeEngineSession calls sandbox session/load", async () => {
   const { warmClaudeEngineSession } = await import(
-    "../../packages/agent-runtime/dist/harness/claude-session-warm.js"
+    "../../packages/agent-runtime/dist/harness/engine/claude/claude-session-warm.js"
   );
   const calls = [];
   const handle = {
@@ -1285,7 +1285,7 @@ test("markClaudeWarmOutcome updates harness_sessions.claudeWarmFailedAt", async 
   resetHarnessSessionStoreForTests();
 
   const { markClaudeWarmOutcome } = await import(
-    "../../packages/agent-runtime/dist/harness/claude-session-health.js"
+    "../../packages/agent-runtime/dist/harness/engine/claude/claude-session-health.js"
   );
   const sessionStore = getHarnessSessionStore("test-env");
   const acpSessionId = "acp-claude-warm";
@@ -1307,7 +1307,7 @@ test("markClaudeWarmOutcome updates harness_sessions.claudeWarmFailedAt", async 
 
 test("probeClaudeSessionStoreAfterPrompt skips non-claude engine", async () => {
   const { probeClaudeSessionStoreAfterPrompt } = await import(
-    "../../packages/agent-runtime/dist/harness/claude-session-health.js"
+    "../../packages/agent-runtime/dist/harness/engine/claude/claude-session-health.js"
   );
   const result = await probeClaudeSessionStoreAfterPrompt({
     acpSessionId: "acp-1",
@@ -1319,7 +1319,7 @@ test("probeClaudeSessionStoreAfterPrompt skips non-claude engine", async () => {
 
 test("isClaudeEntryCountHigh uses fixed threshold 3000", async () => {
   const { isClaudeEntryCountHigh, CLAUDE_SESSION_ENTRY_WARN_THRESHOLD, noteClaudeSessionEntryCount } =
-    await import("../../packages/agent-runtime/dist/harness/claude-session-health.js");
+    await import("../../packages/agent-runtime/dist/harness/engine/claude/claude-session-health.js");
   assert.equal(CLAUDE_SESSION_ENTRY_WARN_THRESHOLD, 3000);
   assert.equal(isClaudeEntryCountHigh(3000), false);
   assert.equal(isClaudeEntryCountHigh(3001), true);
@@ -1678,7 +1678,7 @@ test("ACP OPTIONS preflight allows browser credentials (chat-playground)", async
 
 test("telemetry init noop when env unset", async () => {
   const { initTelemetry, isTracingEnabled, getTelemetrySummary, shutdownTelemetry } =
-    await import("../../packages/agent-runtime/dist/harness/telemetry-init.js");
+    await import("../../packages/agent-runtime/dist/harness/telemetry/telemetry-init.js");
   const prevOtlp = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   const prevTraces = process.env.OTEL_TRACES_EXPORTER;
   const prevMetrics = process.env.OTEL_METRICS_EXPORTER;
@@ -1699,7 +1699,7 @@ test("telemetry init noop when env unset", async () => {
 
 test("telemetry init otlp when traces_exporter=otlp", async () => {
   const { initTelemetry, isTracingEnabled, getTelemetrySummary, shutdownTelemetry } =
-    await import("../../packages/agent-runtime/dist/harness/telemetry-init.js");
+    await import("../../packages/agent-runtime/dist/harness/telemetry/telemetry-init.js");
   const prevTraces = process.env.OTEL_TRACES_EXPORTER;
   process.env.OTEL_TRACES_EXPORTER = "otlp";
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318";
@@ -1718,9 +1718,9 @@ test("telemetry init otlp when traces_exporter=otlp", async () => {
 
 test("withActiveSpan creates span and injects traceparent", async () => {
   const { initTelemetry, shutdownTelemetry } =
-    await import("../../packages/agent-runtime/dist/harness/telemetry-init.js");
+    await import("../../packages/agent-runtime/dist/harness/telemetry/telemetry-init.js");
   const { withActiveSpan, injectOutboundTraceHeaders } =
-    await import("../../packages/agent-runtime/dist/harness/telemetry.js");
+    await import("../../packages/agent-runtime/dist/harness/telemetry/telemetry.js");
   const prevTraces = process.env.OTEL_TRACES_EXPORTER;
   process.env.OTEL_TRACES_EXPORTER = "otlp";
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318";
@@ -1747,7 +1747,7 @@ test("withActiveSpan creates span and injects traceparent", async () => {
 
 test("withActiveSpan is noop when tracing disabled", async () => {
   const { withActiveSpan } =
-    await import("../../packages/agent-runtime/dist/harness/telemetry.js");
+    await import("../../packages/agent-runtime/dist/harness/telemetry/telemetry.js");
   const result = await withActiveSpan("test.noop", {}, async (span) => {
     assert.equal(span, undefined);
     return "no-trace";
@@ -1757,7 +1757,7 @@ test("withActiveSpan is noop when tracing disabled", async () => {
 
 test("managed ACP telemetry import is noop-safe", async () => {
   const { withActiveSpan } =
-    await import("../../packages/agent-runtime/dist/harness/telemetry.js");
+    await import("../../packages/agent-runtime/dist/harness/telemetry/telemetry.js");
   // Simulate managed session span — no OTEL env, must not throw
   const result = await withActiveSpan(
     "managed.session.new",

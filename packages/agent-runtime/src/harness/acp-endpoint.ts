@@ -10,12 +10,12 @@ import {
   buildHarnessAcpMcpServers,
   DEFAULT_HARNESS_SANDBOX_CWD,
 } from "./deploy.js";
-import { startSandboxMcpPump } from "./mcp-pump.js";
+import { startSandboxMcpPump } from "./mcp/mcp-pump.js";
 import {
   deliverClientToolResult,
   registerActivePrompt,
   unregisterActivePrompt,
-} from "./client-tool-bridge.js";
+} from "./mcp/client-tool-bridge.js";
 import {
   isAcpUuid,
   rpcError,
@@ -45,14 +45,14 @@ import {
   type HarnessSessionRecord,
 } from "./sandbox/session-store.js";
 import { isScfServerless } from "./harness-env.js";
-import { harnessLog, runWithHarnessRequestContext } from "./logging.js";
-import { recordHarnessPermissionFrames, recordHarnessPromptDuration } from "./metrics.js";
+import { harnessLog, runWithHarnessRequestContext } from "./observability/logging.js";
+import { recordHarnessPermissionFrames, recordHarnessPromptDuration } from "./observability/metrics.js";
 import {
   persistOpencodeSyncForSession,
   snapshotWorkspaceIfAvailable,
-} from "./opencode-sync.js";
-import { probeClaudeSessionStoreAfterPrompt } from "./claude-session-health.js";
-import { withActiveSpan } from "./telemetry.js";
+} from "./engine/opencode/opencode-sync.js";
+import { probeClaudeSessionStoreAfterPrompt } from "./engine/claude/claude-session-health.js";
+import { withActiveSpan } from "./telemetry/telemetry.js";
 
 const abortControllers = new Map<string, AbortController>();
 

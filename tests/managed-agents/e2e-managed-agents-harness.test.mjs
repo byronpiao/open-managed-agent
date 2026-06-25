@@ -17,13 +17,13 @@ import {
 const { resetManagedAgentsStoreForTests } = await import(
   join(
     dirname(fileURLToPath(import.meta.url)),
-    "../../packages/agent-runtime/dist/harness/managed-agents/store/managed-agents-store-factory.js",
+    "../../packages/agent-runtime/dist/harness/managed-agents-protocol/store/managed-agents-store-factory.js",
   )
 );
 const { setManagedAgentsDeploymentConfig, resetManagedAgentsDeploymentConfigForTests } =
-  await import("../../packages/agent-runtime/dist/harness/managed-agents/deployment-config.js");
+  await import("../../packages/agent-runtime/dist/harness/managed-agents-protocol/deployment-config.js");
 const { mergeManagedAgentsAgentConfig } = await import(
-  "../../packages/agent-runtime/dist/harness/managed-agents/resolve-session-agent-config.js",
+  "../../packages/agent-runtime/dist/harness/managed-agents-protocol/resolve-session-agent-config.js",
 );
 const { resetHarnessSessionStoreForTests } = await import(
   join(

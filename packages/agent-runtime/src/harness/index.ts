@@ -25,8 +25,8 @@ export {
 } from "./deploy.js";
 
 export { mountHarnessAcpEndpoint } from "./acp-endpoint.js";
-export { mountHarnessMcpGateway } from "./mcp-gateway.js";
-export { startSandboxMcpPump, shouldRunSandboxMcpPump } from "./mcp-pump.js";
+export { mountHarnessMcpGateway } from "./mcp/mcp-gateway.js";
+export { startSandboxMcpPump, shouldRunSandboxMcpPump } from "./mcp/mcp-pump.js";
 
 export {
   deliverClientToolResult,
@@ -34,7 +34,7 @@ export {
   registerActivePrompt,
   unregisterActivePrompt,
   resetClientToolBridgeForTests,
-} from "./client-tool-bridge.js";
+} from "./mcp/client-tool-bridge.js";
 
 export {
   initHarnessLogging,
@@ -53,7 +53,7 @@ export {
   normalizeInboundRequestId,
   buildHarnessOutboundCorrelationHeaders,
   TRACEPARENT_HEADER,
-} from "./logging.js";
+} from "./observability/logging.js";
 
 export {
   recordHarnessAcquireDuration,
@@ -61,9 +61,9 @@ export {
   recordHarnessPermissionFrames,
   recordHarnessSyncExported,
   recordHarnessAcceptanceOutcome,
-} from "./metrics.js";
+} from "./observability/metrics.js";
 
-export { getTelemetrySummary, getMetricsExportMode, getTracesExportMode } from "./telemetry-init.js";
+export { getTelemetrySummary, getMetricsExportMode, getTracesExportMode } from "./telemetry/telemetry-init.js";
 
 export {
   HARNESS_SYNC_EVENTS_COLLECTION,
@@ -88,33 +88,14 @@ export {
 } from "./harness-env.js";
 
 export {
-  anthropicMessagesUrl,
-  assertHarnessAnthropicLlmReachable,
-  assertHarnessOpenAiLlmReachable,
-  assertHarnessPlatformLlmReachable,
-  classifyPlatformProbeFailure,
-  formatClaudePlatformProbeFailureGuide,
-  formatPlatformProbeFailureGuide,
-  isPlatformQuotaExceeded,
-  openAiChatCompletionsUrl,
-  probeCloudBasePlatformAnthropicLlm,
-  probeCloudBasePlatformLlm,
-  probeHarnessAnthropicLlm,
-  probeHarnessAnthropicLlmSandboxCompat,
-  probeHarnessOpenAiLlm,
-  type HarnessLlmProbeResult,
-  type PlatformProbeFailureKind,
-} from "./llm-probe.js";
-
-export {
   markClaudeWarmOutcome,
   probeClaudeSessionStoreAfterPrompt,
-} from "./claude-session-health.js";
-export { warmClaudeEngineSession } from "./claude-session-warm.js";
+} from "./engine/claude/claude-session-health.js";
+export { warmClaudeEngineSession } from "./engine/claude/claude-session-warm.js";
 export {
   countHarnessClaudeSessionEntries,
   countHarnessClaudeSessionFootprint,
-} from "./claude-session-probe.js";
+} from "./engine/claude/claude-session-probe.js";
 
 export {
   OPENCODE_SYNC_DIRECTORY,
@@ -125,7 +106,7 @@ export {
   fetchOpencodeSyncHistory,
   replayOpencodeSyncEvents,
   snapshotWorkspaceIfAvailable,
-} from "./opencode-sync.js";
+} from "./engine/opencode/opencode-sync.js";
 
 export {
   resolveHarnessSandboxIdlePauseMs,

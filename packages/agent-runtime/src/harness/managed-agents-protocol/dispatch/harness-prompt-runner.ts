@@ -7,16 +7,16 @@ import {
   buildHarnessAcpMcpServers,
   DEFAULT_HARNESS_SANDBOX_CWD,
 } from "../../deploy.js";
-import { startSandboxMcpPump } from "../../mcp-pump.js";
+import { startSandboxMcpPump } from "../../mcp/mcp-pump.js";
 import {
   deliverClientToolResult,
   getPendingToolUseIdForSession,
   registerActivePrompt,
   unregisterActivePrompt,
-} from "../../client-tool-bridge.js";
-import { harnessLog } from "../../logging.js";
-import { persistOpencodeSyncForSession } from "../../opencode-sync.js";
-import { probeClaudeSessionStoreAfterPrompt } from "../../claude-session-health.js";
+} from "../../mcp/client-tool-bridge.js";
+import { harnessLog } from "../../observability/logging.js";
+import { persistOpencodeSyncForSession } from "../../engine/opencode/opencode-sync.js";
+import { probeClaudeSessionStoreAfterPrompt } from "../../engine/claude/claude-session-health.js";
 import {
   ensureEngineSessionOnSandbox,
   ensureSandboxForSession,

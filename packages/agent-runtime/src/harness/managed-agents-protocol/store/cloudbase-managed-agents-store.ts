@@ -4,7 +4,7 @@
  */
 
 import { resolveCamControlPlaneCredentials } from "../../harness-env.js";
-import { harnessTrace } from "../../logging.js";
+import { harnessTrace } from "../../observability/logging.js";
 import { projectDriverEventToCma } from "../vendor/projections-cma.js";
 import type { DriverEventInput } from "../vendor/driver-event-types.js";
 import { createCmaMemoryStore, CmaMemoryStore } from "../vendor/cma-memory-store.js";

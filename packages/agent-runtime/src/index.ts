@@ -118,7 +118,7 @@ async function main() {
           ...getSandboxPrewarmStats(),
         },
       };
-      const { getTelemetrySummary } = await import("./harness/telemetry-init.js");
+      const { getTelemetrySummary } = await import("./harness/telemetry/telemetry-init.js");
       payload.telemetry = getTelemetrySummary();
       const wantDiag = req.query.diag === "1" || req.query.verbose === "1";
       if (wantDiag) {
@@ -136,7 +136,7 @@ async function main() {
 
   mountAcpEndpoint(app, config);
   if (runtime === "harness") {
-    const { mountManagedAgentsEndpoint } = await import("./harness/managed-agents/managed-agents-endpoint.js");
+    const { mountManagedAgentsEndpoint } = await import("./harness/managed-agents-protocol/managed-agents-endpoint.js");
     mountManagedAgentsEndpoint(app, config);
   }
   if (runtime === "harness") {

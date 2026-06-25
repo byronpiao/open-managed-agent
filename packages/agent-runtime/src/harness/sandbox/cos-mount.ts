@@ -4,7 +4,6 @@
  */
 
 import COS from "cos-nodejs-sdk-v5";
-import { resolveHarnessToolName } from "../../config.js";
 import { assertHarnessCosEnv, requireEnv } from "../harness-env.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 
@@ -28,11 +27,6 @@ function truthyEnv(name: string): boolean {
 
 function stripLeadingSlash(p: string): string {
   return p.replace(/^\/+/, "");
-}
-
-/** @deprecated prefer resolveHarnessToolName(envId) from config.js */
-export function harnessCosToolNameForEnv(envId: string): string {
-  return resolveHarnessToolName(envId);
 }
 
 export function resolveHarnessCosConfig(args?: {

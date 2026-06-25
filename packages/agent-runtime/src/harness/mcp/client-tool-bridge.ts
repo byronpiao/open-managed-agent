@@ -2,7 +2,7 @@
  * Bridges sandbox managed-agent-client MCP tools/call → ACP tool_use_request on active prompt SSE.
  */
 
-import { harnessTrace, harnessLog } from "./logging.js";
+import { harnessTrace, harnessLog } from "../observability/logging.js";
 
 export interface PendingClientTool {
   acpSessionId: string;
