@@ -254,5 +254,5 @@ export function toKernelAgentConfig(
       opts.customToolDefs && opts.customToolDefs.length > 0
         ? opts.customToolDefs
         : undefined,
-  };
+  } as any;
 }
