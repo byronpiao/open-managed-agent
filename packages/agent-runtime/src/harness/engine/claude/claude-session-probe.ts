@@ -2,7 +2,7 @@
  * Read-only probe for harness_claude_session_entries (e2e / debug).
  */
 
-import { resolveCamControlPlaneCredentials } from "./harness-env.js";
+import { resolveCamControlPlaneCredentials } from "../../harness-env.js";
 
 const PREFIX = "harness_claude_";
 

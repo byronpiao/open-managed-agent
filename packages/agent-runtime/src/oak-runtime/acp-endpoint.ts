@@ -48,7 +48,7 @@ import {
   type ApprovalOutcome,
   type StopReason,
 } from "./kernel-adapter.js";
-import { withActiveSpan } from "../harness/telemetry.js";
+import { withActiveSpan } from "../harness/telemetry/telemetry.js";
 import {
   rpcResult,
   rpcError,

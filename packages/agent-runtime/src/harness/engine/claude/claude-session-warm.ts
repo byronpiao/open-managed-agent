@@ -2,12 +2,12 @@
  * After AGS re-acquire, warm claude-agent-acp in-memory session via session/load (SDK resume + store load).
  */
 
-import type { AgentConfig } from "../config.js";
-import { resolveRuntime } from "../config.js";
-import { buildHarnessAcpMcpServers, DEFAULT_HARNESS_SANDBOX_CWD } from "./deploy.js";
-import { harnessLog } from "./logging.js";
-import type { HarnessSandboxHandle } from "./sandbox/orchestrator.js";
-import { getSandboxOrchestrator } from "./sandbox/orchestrator.js";
+import type { AgentConfig } from "../../../config.js";
+import { resolveRuntime } from "../../../config.js";
+import { buildHarnessAcpMcpServers, DEFAULT_HARNESS_SANDBOX_CWD } from "../../deploy.js";
+import { harnessLog } from "../../observability/logging.js";
+import type { HarnessSandboxHandle } from "../../sandbox/orchestrator.js";
+import { getSandboxOrchestrator } from "../../sandbox/orchestrator.js";
 
 function harnessCallbackBase(): string {
   const fromUrl = process.env.CLOUDBASE_SERVER_URL?.trim();

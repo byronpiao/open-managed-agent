@@ -6,12 +6,12 @@ import type { Request, Response } from "express";
 import {
   buildManagedAgentClientTools,
   customToolsToMcpToolSchemas,
-} from "./deploy.js";
-import type { AgentConfig } from "../config.js";
+} from "../deploy.js";
+import type { AgentConfig } from "../../config.js";
 import { invokeClientToolFromSandbox } from "./client-tool-bridge.js";
-import { rpcError, rpcResult } from "../acp-shared.js";
-import { harnessLog } from "./logging.js";
-import { withActiveSpan } from "./telemetry.js";
+import { rpcError, rpcResult } from "../../acp-shared.js";
+import { harnessLog } from "../observability/logging.js";
+import { withActiveSpan } from "../telemetry/telemetry.js";
 
 export function mountHarnessMcpGateway(app: import("express").Express, config: AgentConfig) {
   const handler = async (req: Request, res: Response) => {

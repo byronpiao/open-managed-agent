@@ -7,7 +7,7 @@ import {
   getMcpToolsets,
   resolveBuiltinTools,
   type AgentConfig,
-} from "../config.js";
+} from "../../../config.js";
 
 /** Built-in agent_toolset names → opencode permission keys. */
 const BUILTIN_TO_OPENCODE: Record<string, string> = {

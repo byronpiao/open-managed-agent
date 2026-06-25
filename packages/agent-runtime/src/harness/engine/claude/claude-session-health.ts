@@ -2,12 +2,12 @@
  * Claude SessionStore ops probes — mirror opencode syncExportFailedAt observability.
  */
 
-import type { AgentConfig } from "../config.js";
-import { resolveRuntime } from "../config.js";
-import { isE2eStubSandboxEnabled } from "./sandbox/e2e-stub.js";
+import type { AgentConfig } from "../../../config.js";
+import { resolveRuntime } from "../../../config.js";
+import { isE2eStubSandboxEnabled } from "../../sandbox/e2e-stub.js";
 import { countHarnessClaudeSessionFootprint } from "./claude-session-probe.js";
-import { harnessLog } from "./logging.js";
-import { getHarnessSessionStore } from "./sandbox/session-store.js";
+import { harnessLog } from "../../observability/logging.js";
+import { getHarnessSessionStore } from "../../sandbox/session-store.js";
 
 const PROBE_DELAY_MS = 1500;
 

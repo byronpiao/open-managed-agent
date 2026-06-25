@@ -17,10 +17,10 @@ import {
   openAiCompatBaseUrlForHarness,
   stripOpenAiV1Suffix,
 } from "./llm-providers.js";
-import { buildHarnessOpencodePermission } from "./opencode-permissions.js";
+import { buildHarnessOpencodePermission } from "./engine/opencode/opencode-permissions.js";
 import { mergeHarnessInstanceEnv, sandboxEnvToHarnessVars } from "./sandbox/sandbox-env.js";
 
-export { buildHarnessOpencodePermission } from "./opencode-permissions.js";
+export { buildHarnessOpencodePermission } from "./engine/opencode/opencode-permissions.js";
 
 export const MANAGED_AGENT_CLIENT_MCP_SERVER = "managed-agent-client";
 

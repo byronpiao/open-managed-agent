@@ -3,7 +3,7 @@
  */
 
 import { resolveCamControlPlaneCredentials } from "./harness-env.js";
-import { harnessLog, harnessTrace } from "./logging.js";
+import { harnessLog, harnessTrace } from "./observability/logging.js";
 
 export const HARNESS_SYNC_EVENTS_COLLECTION = "harness_sync_events";
 

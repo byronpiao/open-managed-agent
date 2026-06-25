@@ -29,7 +29,7 @@ export async function measureOpencodeSyncFootprint(envId, engineSessionId) {
 
 export async function measureClaudeSessionFootprint(engineSessionId) {
   const { countHarnessClaudeSessionFootprint } = await import(
-    "../../packages/agent-runtime/dist/harness/claude-session-probe.js"
+    "../../packages/agent-runtime/dist/harness/engine/claude/claude-session-probe.js"
   );
   const footprint = await countHarnessClaudeSessionFootprint(engineSessionId);
   return {
@@ -60,7 +60,7 @@ export async function waitForOpencodeSyncEvents(envId, acpSessionId, engineSessi
     "../../packages/agent-runtime/dist/harness/sync-event-store.js"
   );
   const { exportOpencodeSyncEvents } = await import(
-    "../../packages/agent-runtime/dist/harness/opencode-sync.js"
+    "../../packages/agent-runtime/dist/harness/engine/opencode/opencode-sync.js"
   );
   const { getCachedSandboxHandle } = await import(
     "../../packages/agent-runtime/dist/harness/sandbox/orchestrator.js"
@@ -86,7 +86,7 @@ export async function waitForOpencodeSyncEvents(envId, acpSessionId, engineSessi
 
 export async function waitForClaudeSessionEntries(engineSessionId, minRows = 1, maxAttempts = 36) {
   const { countHarnessClaudeSessionEntries } = await import(
-    "../../packages/agent-runtime/dist/harness/claude-session-probe.js"
+    "../../packages/agent-runtime/dist/harness/engine/claude/claude-session-probe.js"
   );
   for (let i = 0; i < maxAttempts; i++) {
     const n = await countHarnessClaudeSessionEntries(engineSessionId);

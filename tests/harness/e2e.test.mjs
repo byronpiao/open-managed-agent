@@ -627,7 +627,7 @@ async function testSyncPersistence() {
   assert.ok(row?.engineSessionId, "expected engineSessionId after first prompt");
 
   const { exportOpencodeSyncEvents } = await import(
-    "../../packages/agent-runtime/dist/harness/opencode-sync.js"
+    "../../packages/agent-runtime/dist/harness/engine/opencode/opencode-sync.js"
   );
   const { getCachedSandboxHandle } = await import(
     "../../packages/agent-runtime/dist/harness/sandbox/orchestrator.js"
@@ -805,7 +805,7 @@ async function testClaudeSessionPersistence() {
     "../../packages/agent-runtime/dist/harness/sandbox/session-store.js"
   );
   const { countHarnessClaudeSessionEntries } = await import(
-    "../../packages/agent-runtime/dist/harness/claude-session-probe.js"
+    "../../packages/agent-runtime/dist/harness/engine/claude/claude-session-probe.js"
   );
 
   let row = null;

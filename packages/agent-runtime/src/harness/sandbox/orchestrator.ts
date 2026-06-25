@@ -19,9 +19,9 @@ import {
 } from "../harness-env.js";
 import { fetchGatewayAccessToken } from "../tcb-gateway-token.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
-import { harnessTrace, harnessLog, harnessOutboundCorrelationHeaders } from "../logging.js";
-import { injectOutboundTraceHeaders, withActiveSpan } from "../telemetry.js";
-import { recordHarnessAcquireDuration } from "../metrics.js";
+import { harnessTrace, harnessLog, harnessOutboundCorrelationHeaders } from "../observability/logging.js";
+import { injectOutboundTraceHeaders, withActiveSpan } from "../telemetry/telemetry.js";
+import { recordHarnessAcquireDuration } from "../observability/metrics.js";
 import {
   buildCosMountOptions,
   buildCosStorageMounts,
