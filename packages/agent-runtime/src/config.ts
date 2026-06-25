@@ -135,8 +135,6 @@ export interface AgentConfig {
   metadata?: Record<string, string>;
   /** Sandbox feature. Managed: `enabled` toggle. Harness: full placement config. */
   sandbox?: SandboxConfig;
-  /** Enable streaming output (OAK kernel). Default false. */
-  stream?: boolean;
   // Storage
   sessions_collection?: string; // NoSQL collection name for sessions, default: "acp_sessions"
 }
