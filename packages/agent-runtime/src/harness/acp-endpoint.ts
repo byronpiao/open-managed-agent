@@ -52,6 +52,7 @@ import {
   snapshotWorkspaceIfAvailable,
 } from "./opencode-sync.js";
 import { probeClaudeSessionStoreAfterPrompt } from "./claude-session-health.js";
+import { withActiveSpan } from "./telemetry.js";
 
 const abortControllers = new Map<string, AbortController>();
 
@@ -666,7 +667,11 @@ async function handleSessionPrompt(
     // permission_decision is not handled locally — forward to sandbox engine ACP.
 
     const sandboxWaitStart = Date.now();
-    const { handle, record } = await ensureSandboxForSession(config, sessionId);
+    const { handle, record } = await withActiveSpan(
+      "harness.prompt.sandbox_wait",
+      { acpSessionId: sessionId, engine: config.engine ?? "opencode" },
+      async () => ensureSandboxForSession(config, sessionId),
+    );
     sandboxWaitMs = Date.now() - sandboxWaitStart;
     if (!record) {
       res.json(rpcError(id, -32602, `Session not found: ${sessionId}`));
@@ -681,18 +686,23 @@ async function handleSessionPrompt(
     );
     const forwardParams = { ...params, sessionId: engineSessionId };
 
-    const upstream = await forwardAcpToSandbox({
-      handle,
-      config,
-      method: "session/prompt",
-      params: forwardParams,
-      id,
-      acpSessionId: sessionId,
-      signal: abortController.signal,
-    });
-
     const forwardStartedAt = Date.now();
-    await pipeSandboxSseToClient(upstream, res, id, sessionId, store, config);
+    await withActiveSpan(
+      "harness.prompt.acp_forward",
+      { acpSessionId: sessionId, engine: config.engine ?? "opencode" },
+      async () => {
+        const upstream = await forwardAcpToSandbox({
+          handle,
+          config,
+          method: "session/prompt",
+          params: forwardParams,
+          id,
+          acpSessionId: sessionId,
+          signal: abortController.signal,
+        });
+        await pipeSandboxSseToClient(upstream, res, id, sessionId, store, config);
+      },
+    );
     harnessLog({ lane: "acp", operation: "session.prompt", acpSessionId: sessionId }).emit({
       status: "ok",
       sandboxWaitMs,
