@@ -1,5 +1,12 @@
 # 平台维护 — 发布新版本
 
+## 前置条件
+
+首次使用需申请 GitHub Container Registry 推送权限：
+https://github.com/realalexandreai/open-managed-agent/pkgs/container/oma-agent-runtime
+
+在 Package Settings → Manage Actions access 添加仓库角色。
+
 ## 发布流程
 
 ```bash
@@ -11,12 +18,9 @@
 
 ## 镜像地址
 
+发布时自动推送两个版本：
 - TCBR（云托管）：`ghcr.io/realalexandreai/oma-agent-runtime:<tag>`
 - SCF（云函数）：`ghcr.io/realalexandreai/oma-agent-runtime:scf-<tag>`
-
-## 用户使用
-
-用户默认使用 TCBR 版本。如需 SCF，在 `.env` 中将 `BASELINE_TAG` 改为 `scf-` 前缀的值。
 
 ## Env 表（sync.sh 顶部常量）
 

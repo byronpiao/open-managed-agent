@@ -15,9 +15,10 @@ tcb login && tcb env use <环境ID>
 ./sync.sh
 ```
 
-约 3 分钟后打印镜像地址：
+约 3 分钟后打印两个镜像地址：
 ```
-ccr.ccs.tencentyun.com/open-managed-agent/oma-agent-runtime:oma-agent-runtime-001
+云托管:  ccr.ccs.tencentyun.com/open-managed-agent/oma-agent-runtime:oma-agent-runtime-001
+云函数:  ccr.ccs.tencentyun.com/open-managed-agent/oma-agent-runtime:scf-oma-agent-runtime-001
 ```
 
 ## 自定义

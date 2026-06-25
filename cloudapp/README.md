@@ -6,13 +6,13 @@
 ## 架构
 
 ```
- 用户              CloudApp               CNB 构建机              用户 TCR
- .env              sync.sh                bootstrap-docker
- 零配置 ──→      ① zip 上传              pull-baseline (GHCR)
-                  ② CreateCloudApp ──→   login-and-push ────→ 镜像就位
-                                         
- 平台              ghcr.io/realalexandreai/oma-agent-runtime
- publish.sh ──→   (公开仓库，免鉴权)
+  用户              CloudApp               CNB 构建机              用户 TCR
+  .env              sync.sh                bootstrap-docker
+  零配置 ──→      ① zip 上传              pull-tcbr + push-tcbr ──→ oma-agent-runtime (云托管)
+                   ② CreateCloudApp ──→   pull-scf  + push-scf  ──→ oma-agent-runtime (云函数)
+                                          
+  平台              ghcr.io/realalexandreai/oma-agent-runtime
+  publish.sh ──→   :tag + :scf-tag (公开仓库，免鉴权)
 ```
 
 ## 文件

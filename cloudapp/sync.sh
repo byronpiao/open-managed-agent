@@ -14,7 +14,7 @@ CONFIG="${CLOUDAPP_SYNC_ENV:-${SCRIPT_DIR}/.env}"
 
 TCB_ENV_ID="lowcode-8gtybv2a87db84a3"
 TCR_REGISTRY="ccr.ccs.tencentyun.com"
-BASELINE_TAG="260625-1714"
+BASELINE_TAG="260625-1807"
 BASELINE_GHCR="ghcr.io/realalexandreai/oma-agent-runtime:<BASELINE_TAG>"
 BASELINE_SOURCE="${BASELINE_SOURCE:-ghcr}"
 
@@ -48,15 +48,23 @@ tcb_api() {
 
 build_body() {
   local ts="$1"
+  local scf_image="${BASELINE_GHCR//<BASELINE_TAG>/scf-${BASELINE_TAG}}"
   jq -nc --arg e "$TCB_ENV_ID" --arg s "$TCR_IMAGE_NAME" --arg t "$ts" \
-    --arg b "$BASELINE_IMAGE" --arg r "$TCR_REGISTRY" --arg n "$TCR_NAMESPACE" \
+    --arg b "$BASELINE_IMAGE" --arg scf "$scf_image" \
+    --arg r "$TCR_REGISTRY" --arg n "$TCR_NAMESPACE" \
     --arg u "$TCR_USERNAME" --arg p "$TCR_PASSWORD" --arg x "$BOOTSTRAP_CMD" \
     '{
       EnvId:$e,ServiceName:$s,DeployType:"custom",BuildType:"zip",
       Source:{Type:"zip",CosTimestamp:$t,CosSuffix:".zip"},
-      Env:[{Key:"BASELINE_IMAGE",Value:$b},{Key:"TCR_REGISTRY",Value:$r},{Key:"TCR_NAMESPACE",Value:$n},{Key:"CCR_USERNAME",Value:$u}],
+      Env:[{Key:"BASELINE_IMAGE",Value:$b},{Key:"SCF_BASELINE_IMAGE",Value:$scf},{Key:"TCR_REGISTRY",Value:$r},{Key:"TCR_NAMESPACE",Value:$n},{Key:"CCR_USERNAME",Value:$u}],
       Secrets:([{Name:"CCR_PASSWORD",Value:$p}]|map(select(.Value!=""))),
-      CustomSteps:[{Name:"bootstrap-docker",Command:$x},{Name:"pull-baseline",Command:"bash ./pull-baseline.sh"},{Name:"login-and-push",Command:"bash ./tcr-sts-login.sh"}]
+      CustomSteps:[
+        {Name:"bootstrap-docker",Command:$x},
+        {Name:"pull-tcbr",Command:"bash ./pull-baseline.sh"},
+        {Name:"push-tcbr",Command:"bash ./tcr-sts-login.sh"},
+        {Name:"pull-scf",Command:"BASELINE_IMAGE=$SCF_BASELINE_IMAGE CLOUDBASE_VERSION_NAME=scf-${CLOUDBASE_VERSION_NAME} bash ./pull-baseline.sh"},
+        {Name:"push-scf",Command:"BASELINE_IMAGE=$SCF_BASELINE_IMAGE CLOUDBASE_VERSION_NAME=scf-${CLOUDBASE_VERSION_NAME} bash ./tcr-sts-login.sh"}
+      ]
     }'
 }
 
@@ -95,4 +103,6 @@ done
 
 echo "$DATA" | jq -r '.Steps[]? | "  \(.Name)  \(.Status)  \(.Duration // "")"'
 echo ""
-echo "✓ 同步完成  ${TCR_REGISTRY}/${TCR_NAMESPACE}/${TCR_IMAGE_NAME}:${VER}"
+echo "✓ 同步完成"
+echo "  云托管:  ${TCR_REGISTRY}/${TCR_NAMESPACE}/${TCR_IMAGE_NAME}:${VER}"
+echo "  云函数:  ${TCR_REGISTRY}/${TCR_NAMESPACE}/${TCR_IMAGE_NAME}:scf-${VER}"
