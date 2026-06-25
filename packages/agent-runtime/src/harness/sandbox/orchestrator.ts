@@ -772,7 +772,14 @@ export class AgsStatefulSandboxOrchestrator {
 
     try {
       wl.milestone("tool.ensure");
-      const ensured = await ensureHarnessTool(args.envId, cred, sandbox, cos, onProgress);
+      const ensured = await withActiveSpan(
+        "harness.acquire.tool_ensure",
+        { envId: args.envId, engine: args.engine },
+        async () => {
+          const result = await ensureHarnessTool(args.envId, cred, sandbox, cos, onProgress);
+          return result;
+        },
+      );
       toolId = ensured.toolId;
       wl.set({
         toolId,
@@ -803,31 +810,48 @@ export class AgsStatefulSandboxOrchestrator {
       }
 
       onProgress({ phase: "instance_start", message: "starting sandbox instance..." });
-      instanceId = await startInstanceWithRetry({
-        toolId,
-        cred,
-        envId: args.envId,
-        instanceEnv,
-        cos,
-        sandbox,
-        onProgress,
-      });
-      wl.set({ instanceId });
+      instanceId = await withActiveSpan(
+        "harness.acquire.instance_start",
+        { envId: args.envId, engine: args.engine },
+        async () => {
+          const id = await startInstanceWithRetry({
+            toolId,
+            cred,
+            envId: args.envId,
+            instanceEnv,
+            cos,
+            sandbox,
+            onProgress,
+          });
+          wl.set({ instanceId: id });
 
-      wl.milestone("token.acquire");
-      accessToken = await acquireInstanceToken(instanceId, cred, args.envId, sandbox);
-      headers = buildDataPlaneHeaders({
-        apiKey: cred.apiKey,
-        instanceId,
-        port: TRW_SERVICE_PORT,
-        accessToken,
-      });
+          wl.milestone("token.acquire");
+          accessToken = await acquireInstanceToken(id, cred, args.envId, sandbox);
+          headers = buildDataPlaneHeaders({
+            apiKey: cred.apiKey,
+            instanceId: id,
+            port: TRW_SERVICE_PORT,
+            accessToken,
+          });
 
-      wl.phase("health.wait");
-      await waitForReady({ baseUrl, headers, onProgress });
+          wl.phase("health.wait");
+          await waitForReady({ baseUrl, headers, onProgress });
+          return id;
+        },
+      );
 
       wl.phase("harness.init");
-      await this.trwWorkspaceInit(baseUrl, headers, instanceEnv, wl);
+      await withActiveSpan(
+        "harness.acquire.workspace_init",
+        { envId: args.envId, engine: args.engine },
+        async (span) => {
+          if (span) {
+            span.setAttribute("instance_id", instanceId);
+            span.setAttribute("tool_id", toolId);
+          }
+          await this.trwWorkspaceInit(baseUrl, headers, instanceEnv, wl);
+        },
+      );
 
       const durationMs = Date.now() - startedAt;
       wl.emit({ status: "ok", durationMs });
