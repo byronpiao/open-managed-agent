@@ -71,7 +71,6 @@ import {
   buildCosMountOptions,
   buildCosStorageMounts,
   cosObjectKeyForSubPath,
-  harnessCosToolNameForEnv,
   resolveHarnessCosConfig,
 } from "../../packages/agent-runtime/dist/harness/sandbox/cos-mount.js";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";

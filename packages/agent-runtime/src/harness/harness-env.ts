@@ -24,11 +24,6 @@ export function resolveHarnessSandboxImage(agentImage?: string | null): string {
   return HARNESS_PUBLIC_MAGENT_IMAGE;
 }
 
-/** @deprecated use sandbox.auth in agent.yaml — default token; `none` for local harness only. */
-export function resolveHarnessSandboxAuthMode(): "TOKEN" | "NONE" {
-  return "TOKEN";
-}
-
 /** CreateSandboxTool RoleArn — 必须显式配置，禁止写死测试 UIN。 */
 export function resolveHarnessToolRoleArn(): string {
   return requireEnv(

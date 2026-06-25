@@ -30,11 +30,6 @@ function stripLeadingSlash(p: string): string {
   return p.replace(/^\/+/, "");
 }
 
-/** @deprecated prefer resolveHarnessToolName(envId) from config.js */
-export function harnessCosToolNameForEnv(envId: string): string {
-  return resolveHarnessToolName(envId);
-}
-
 export function resolveHarnessCosConfig(args?: {
   subPathOverride?: string;
   acpSessionId?: string;
