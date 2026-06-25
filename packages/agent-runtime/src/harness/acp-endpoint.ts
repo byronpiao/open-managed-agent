@@ -884,10 +884,18 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
           return res.json(rpcResult(id, await handleSessionNew(params, agentConfig)));
 
         case "session/list":
-          return res.json(rpcResult(id, await handleSessionList(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "harness.session.list",
+            { },
+            async () => handleSessionList(params, agentConfig),
+          )));
 
         case "session/status":
-          return res.json(rpcResult(id, await handleSessionStatus(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "harness.session.status",
+            { sessionId: String((params as Record<string,unknown>).sessionId ?? "") },
+            async () => handleSessionStatus(params, agentConfig),
+          )));
 
         case "session/load":
           sseDelegated = Boolean(params.replay);
@@ -905,7 +913,11 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
           return res.json(rpcResult(id, { ok: true }));
 
         case "session/delete":
-          return res.json(rpcResult(id, await handleSessionDelete(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "harness.session.delete",
+            { sessionId: String((params as Record<string,unknown>).sessionId ?? "") },
+            async () => handleSessionDelete(params, agentConfig),
+          )));
 
         default:
           if (isNotification) return res.status(200).end();
