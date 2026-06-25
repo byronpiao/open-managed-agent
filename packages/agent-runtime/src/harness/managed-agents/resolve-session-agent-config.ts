@@ -6,7 +6,7 @@ import {
   resolveRuntime,
   type AgentConfig,
   type HarnessEngine,
-} from "../config.js";
+} from "../../config.js";
 import type {
   CmaAgentRecord,
   CmaEnvironmentRecord,

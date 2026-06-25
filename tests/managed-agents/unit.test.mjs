@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
-const runtimeDist = join(root, "packages/agent-runtime/dist/managed-agents/index.js");
+const runtimeDist = join(root, "packages/agent-runtime/dist/harness/managed-agents/index.js");
 
 
 const {
@@ -144,7 +144,7 @@ const missingBeta = await handler(
 assert.equal(missingBeta.status, 400);
 
 const harnessPromptRunnerSrc = readFileSync(
-  join(root, "packages/agent-runtime/dist/managed-agents/dispatch/harness-prompt-runner.js"),
+  join(root, "packages/agent-runtime/dist/harness/managed-agents/dispatch/harness-prompt-runner.js"),
   "utf8",
 );
 assert.ok(

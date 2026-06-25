@@ -20,7 +20,7 @@ import {
   pumpEvents,
   makeClientSideToolDefinition,
   outcomeToDecision,
-} from "../packages/agent-runtime/dist/kernel-adapter.js";
+} from "../packages/agent-runtime/dist/oak-runtime/kernel-adapter.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

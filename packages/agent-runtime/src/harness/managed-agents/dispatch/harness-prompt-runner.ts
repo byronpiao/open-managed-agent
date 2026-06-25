@@ -2,29 +2,29 @@
  * Run harness ACP session/prompt for Managed Agents input.start — Layer A + Layer B hooks.
  */
 
-import type { AgentConfig } from "../../config.js";
+import type { AgentConfig } from "../../../config.js";
 import {
   buildHarnessAcpMcpServers,
   DEFAULT_HARNESS_SANDBOX_CWD,
-} from "../../harness/deploy.js";
-import { startSandboxMcpPump } from "../../harness/mcp-pump.js";
+} from "../../deploy.js";
+import { startSandboxMcpPump } from "../../mcp-pump.js";
 import {
   deliverClientToolResult,
   getPendingToolUseIdForSession,
   registerActivePrompt,
   unregisterActivePrompt,
-} from "../../harness/client-tool-bridge.js";
-import { harnessLog } from "../../harness/logging.js";
-import { persistOpencodeSyncForSession } from "../../harness/opencode-sync.js";
-import { probeClaudeSessionStoreAfterPrompt } from "../../harness/claude-session-health.js";
+} from "../../client-tool-bridge.js";
+import { harnessLog } from "../../logging.js";
+import { persistOpencodeSyncForSession } from "../../opencode-sync.js";
+import { probeClaudeSessionStoreAfterPrompt } from "../../claude-session-health.js";
 import {
   ensureEngineSessionOnSandbox,
   ensureSandboxForSession,
   forwardAcpToSandbox,
-} from "../../harness/acp-endpoint.js";
-import { getCachedSandboxHandle } from "../../harness/sandbox/orchestrator.js";
-import { getHarnessSessionStore } from "../../harness/sandbox/session-store.js";
-import { touchSandboxActivity } from "../../harness/sandbox/sandbox-prewarm.js";
+} from "../../acp-endpoint.js";
+import { getCachedSandboxHandle } from "../../sandbox/orchestrator.js";
+import { getHarnessSessionStore } from "../../sandbox/session-store.js";
+import { touchSandboxActivity } from "../../sandbox/sandbox-prewarm.js";
 import type { CmaStore } from "../vendor/cma-store-types.js";
 import type {
   InputStartCommand,

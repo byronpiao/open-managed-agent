@@ -4,9 +4,9 @@
  */
 
 import express, { type Express, type Request as ExpressRequest, type Response } from "express";
-import type { AgentConfig } from "../config.js";
-import { harnessLog } from "../harness/logging.js";
-import { deleteHarnessAcpSession } from "../harness/acp-endpoint.js";
+import type { AgentConfig } from "../../config.js";
+import { harnessLog } from "../logging.js";
+import { deleteHarnessAcpSession } from "../acp-endpoint.js";
 import {
   CMA_DEFAULT_BETA_HEADER_NAME,
   CMA_DEFAULT_BETA_HEADER_VALUE,
@@ -75,18 +75,24 @@ async function webResponseToExpress(webRes: globalThis.Response, res: Response):
   await pump();
 }
 
+// In SCF (behind tcloudbasegateway), the gateway already sets CORS headers;
+// duplicating them causes browsers to reject "multiple values".
+const isBehindGateway = !!process.env.TENCENTCLOUD_RUNENV;
+
 function corsHandler(req: ExpressRequest, res: Response, next: () => void) {
-  const origin = req.headers.origin as string | undefined;
-  if (origin) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Vary", "Origin");
+  if (!isBehindGateway) {
+    const origin = req.headers.origin as string | undefined;
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Vary", "Origin");
+    }
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      `Content-Type, Authorization, ${CMA_DEFAULT_BETA_HEADER_NAME}, X-CloudBase-Env-Id`,
+    );
   }
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    `Content-Type, Authorization, ${CMA_DEFAULT_BETA_HEADER_NAME}, X-CloudBase-Env-Id`,
-  );
   if (req.method === "OPTIONS") {
     res.status(204).end();
     return;

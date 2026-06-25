@@ -21,7 +21,7 @@ import express from "express";
 import cors from "cors";
 import { mountAcpEndpoint } from "./acp-endpoint.js";
 import { loadAgentConfig, resolveRuntime, resolveSkills } from "./config.js";
-import { getKernelAgent, getStoreDiag } from "./kernel-adapter.js";
+import { getKernelAgent, getStoreDiag } from "./oak-runtime/kernel-adapter.js";
 
 const port = Number(process.env.PORT ?? 9000);
 
@@ -78,12 +78,16 @@ async function main() {
   // Reflect request Origin + allow credentials so browser ACP clients (e.g. chat-playground
   // with fetch credentials: "include") pass OPTIONS preflight. Bare cors() answers * without
   // Allow-Credentials, which browsers reject before POST /acp runs route-level CORS.
-  app.use(
-    cors({
-      origin: true,
-      credentials: true,
-    }),
-  );
+  // Skip in SCF — tcloudbasegateway already sets CORS headers; duplicating causes
+  // browsers to reject "multiple values".
+  if (!process.env.TENCENTCLOUD_RUNENV) {
+    app.use(
+      cors({
+        origin: true,
+        credentials: true,
+      }),
+    );
+  }
   app.get("/healthz", async (req, res) => {
     const base = {
       ok: true,
@@ -132,7 +136,7 @@ async function main() {
 
   mountAcpEndpoint(app, config);
   if (runtime === "harness") {
-    const { mountManagedAgentsEndpoint } = await import("./managed-agents/managed-agents-endpoint.js");
+    const { mountManagedAgentsEndpoint } = await import("./harness/managed-agents/managed-agents-endpoint.js");
     mountManagedAgentsEndpoint(app, config);
   }
   if (runtime === "harness") {

@@ -821,18 +821,23 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
 }
 
 export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) {
+  // In SCF (behind tcloudbasegateway), the gateway already sets CORS headers;
+  // duplicating them causes browsers to reject "multiple values".
+  const isBehindGateway = !!process.env.TENCENTCLOUD_RUNENV;
   const corsHandler = (req: Request, res: Response, next: () => void) => {
-    const origin = req.headers.origin as string | undefined;
-    if (origin) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Access-Control-Allow-Credentials", "true");
-      res.setHeader("Vary", "Origin");
+    if (!isBehindGateway) {
+      const origin = req.headers.origin as string | undefined;
+      if (origin) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+        res.setHeader("Vary", "Origin");
+      }
+      res.setHeader("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-Task-Id, X-Tenant-Id, X-Request-Id, X-Cloudbase-Trace, x-cloudbase-trace",
+      );
     }
-    res.setHeader("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, X-Task-Id, X-Tenant-Id, X-Request-Id, X-Cloudbase-Trace, x-cloudbase-trace",
-    );
     if (req.method === "OPTIONS") {
       res.status(204).end();
       return;

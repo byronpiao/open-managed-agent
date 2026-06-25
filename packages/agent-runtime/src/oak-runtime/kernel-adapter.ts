@@ -1,6 +1,6 @@
 /**
  * Kernel adapter — bridges open-agent-kernel's Session/SessionEvent to the
- * ACP wire protocol used by `acp-endpoint.ts`.
+ * ACP wire protocol used by `./acp-endpoint.ts`.
  *
  * Stop-and-resume model (no reverse-RPC, no in-memory pending state):
  *
@@ -34,8 +34,9 @@ import {
   type ToolDefinition,
 } from "@cloudbase/open-agent-kernel";
 
-import { toKernelAgentConfig, getCustomTools } from "./config.js";
-import type { AgentConfig } from "./config.js";
+import { toKernelAgentConfig } from "./config.js";
+import { getCustomTools } from "../config.js";
+import type { AgentConfig } from "../config.js";
 
 // ── Singletons ───────────────────────────────────────────────────────────────
 
@@ -125,6 +126,7 @@ let _lastSyncRegister:
 export async function syncRegisterSession(
   sessionId: string,
   userId: string,
+  title?: string,
 ): Promise<boolean> {
   const ts = Date.now();
   if (!_sessionStore?.registerSession) {
@@ -140,7 +142,7 @@ export async function syncRegisterSession(
   // The store's mapProjectKey() returns the fixed value regardless. Passing ""
   // is intentional and avoids re-reading env vars.
   try {
-    await _sessionStore.registerSession({ projectKey: "", sessionId, userId });
+    await _sessionStore.registerSession({ projectKey: "", sessionId, userId, title });
     _lastSyncRegister = { sessionId, ok: true, ts };
     return true;
   } catch (err) {
@@ -410,17 +412,27 @@ export async function pumpEvents(
       case "session_idle": {
         if (e.reason === "completed") return { stopReason: "end_turn" };
         if (e.reason === "aborted") return { stopReason: "cancelled" };
-        if (e.reason === "error") return { stopReason: "error" };
-        // 'requires_action' — the approval / tool_use_required branches
-        // above already returned. Reaching here would be a kernel ordering
-        // anomaly; treat as cancelled.
+        if (e.reason === "error") {
+          const detail = `Kernel session_idle error (event=${JSON.stringify(e).slice(0, 500)})`;
+          ctx.sse.write({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: ctx.acpSessionId,
+              update: {
+                sessionUpdate: "log",
+                level: "error",
+                message: detail,
+                timestamp: Date.now(),
+              },
+            },
+          });
+          return { stopReason: "error" };
+        }
         return { stopReason: "cancelled" };
       }
 
       case "error": {
-        // Surface as much context as possible — Claude Agent SDK errors often
-        // bury the actual cause (failed spawn, missing binary, network) in
-        // .cause / .stack. Forward the full picture so the client can see it.
         const err = e.error as Error & { cause?: unknown };
         const causeText =
           err?.cause instanceof Error
@@ -431,8 +443,6 @@ export async function pumpEvents(
                 : JSON.stringify(err.cause).slice(0, 500)
               : undefined;
         const detail = [err?.message, causeText, err?.stack].filter(Boolean).join("\n");
-        // Also dump to container stdout so cloudrun instance logs capture it.
-        console.error("[ACP] kernel error event:", detail);
         ctx.sse.write({
           jsonrpc: "2.0",
           method: "session/update",
@@ -487,24 +497,16 @@ function buildApprovalOptions(
 // ── SSE sink helpers (used by acp-endpoint) ─────────────────────────────────
 
 export function makeSseSink(res: Response): SseSink {
-  // Buffer all SSE frames in memory and flush them all at once when the
-  // response ends. SCF web-function gateway buffers the HTTP response and
-  // only delivers the last `res.write()` to the client — so streaming
-  // individual frames would silently drop every frame except the last one.
-  // By collecting first and flushing in one `res.end()` call we ensure the
-  // gateway sees a complete, well-formed SSE body.
-  const frames: string[] = [];
+  // Stream each frame straight to the client as it arrives. SCF web-function
+  // gateway delivers intermediate `res.write()` chunks (verified), so true
+  // token-by-token streaming works without buffering the whole turn.
   return {
     write: (frame) => {
-      frames.push(`data: ${JSON.stringify(frame)}\n\n`);
+      res.write(`data: ${JSON.stringify(frame)}\n\n`);
+      (res as Response & { flush?: () => void }).flush?.();
     },
-    getAll: () => frames.join(""),
-    flush: () => {
-      if (frames.length > 0) {
-        res.write(frames.join(""));
-        frames.length = 0;
-      }
-    },
+    getAll: () => "",
+    flush: () => {},
   };
 }
 
