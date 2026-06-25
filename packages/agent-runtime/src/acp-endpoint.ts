@@ -50,6 +50,7 @@ import {
   type ApprovalOutcome,
   type StopReason,
 } from "./kernel-adapter.js";
+import { withActiveSpan } from "./harness/telemetry.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -526,17 +527,33 @@ function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
           return res.json(rpcResult(id, handleInitialize(params, agentConfig)));
 
         case "session/new":
-          return res.json(rpcResult(id, await handleSessionNew(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "managed.session.new",
+            { },
+            async () => handleSessionNew(params, agentConfig),
+          )));
 
         case "session/list":
-          return res.json(rpcResult(id, await handleSessionList(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "managed.session.list",
+            {},
+            async () => handleSessionList(params, agentConfig),
+          )));
 
         case "session/load":
-          await handleSessionLoad(params, res, id, agentConfig);
+          await withActiveSpan(
+            "managed.session.load",
+            { sessionId: String((params as Record<string,unknown>).sessionId ?? "") },
+            async () => { await handleSessionLoad(params, res, id, agentConfig); },
+          );
           return;
 
         case "session/prompt":
-          await handleSessionPrompt(params, res, id, agentConfig);
+          await withActiveSpan(
+            "managed.session.prompt",
+            { sessionId: String((params as Record<string,unknown>).sessionId ?? "") },
+            async () => { await handleSessionPrompt(params, res, id, agentConfig); },
+          );
           return;
 
         case "session/cancel":
@@ -545,7 +562,11 @@ function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
           return res.json(rpcResult(id, { ok: true }));
 
         case "session/delete":
-          return res.json(rpcResult(id, await handleSessionDelete(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "managed.session.delete",
+            { sessionId: String((params as Record<string,unknown>).sessionId ?? "") },
+            async () => handleSessionDelete(params, agentConfig),
+          )));
 
         case "session/resume":
           return res.json(rpcResult(id, await handleSessionResume(params, agentConfig)));

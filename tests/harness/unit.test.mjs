@@ -1755,6 +1755,25 @@ test("withActiveSpan is noop when tracing disabled", async () => {
   assert.equal(result, "no-trace");
 });
 
+test("managed ACP telemetry import is noop-safe", async () => {
+  const { withActiveSpan } =
+    await import("../../packages/agent-runtime/dist/harness/telemetry.js");
+  // Simulate managed session span — no OTEL env, must not throw
+  const result = await withActiveSpan(
+    "managed.session.new",
+    { envId: "test" },
+    async () => "created",
+  );
+  assert.equal(result, "created");
+  // Managed prompt span with SSE-like async
+  const result2 = await withActiveSpan(
+    "managed.session.prompt",
+    { sessionId: "s1" },
+    async () => "pong",
+  );
+  assert.equal(result2, "pong");
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try {
