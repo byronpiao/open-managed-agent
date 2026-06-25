@@ -42,7 +42,6 @@ WORKDIR /app
 # the agent user so npm has full write access and any post-install scripts
 # can complete cleanly.
 COPY package*.json ./
-COPY vendor ./vendor
 
 RUN npm install --omit=dev --no-audit --no-fund \
         --os=linux --cpu=x64 --include=optional --force \
