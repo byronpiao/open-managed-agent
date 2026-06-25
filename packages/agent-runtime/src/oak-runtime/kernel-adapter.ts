@@ -1,23 +1,27 @@
 /**
- * Kernel adapter — bridges open-agent-kernel's Session/SessionEvent to the
- * ACP wire protocol used by `./acp-endpoint.ts`.
+ * Kernel adapter — bridges open-agent-kernel's AcpSessionUpdate stream to
+ * the ACP wire protocol used by `./acp-endpoint.ts`.
+ *
+ * Since kernel v0.1.0-beta.8, session.send() / respondApproval() /
+ * respondToolUse() all return `AsyncIterable<AcpSessionUpdate>` — the kernel's
+ * built-in AcpStreamAdapter already translates Claude SDK messages into
+ * standard-aligned ACP session/update shapes. This module is now a thin layer
+ * that:
+ *
+ *   1. Wraps each AcpSessionUpdate in a JSON-RPC `session/update` SSE frame.
+ *   2. Watches for stop-and-resume triggers (request_permission / ask_user)
+ *      and breaks out of the stream so the SSE ends with the right stopReason.
  *
  * Stop-and-resume model (no reverse-RPC, no in-memory pending state):
  *
- *   1. agent.yaml `type: custom` tools have no server-side implementation, so
- *      they are CLIENT-SIDE. When the model invokes one, the runtime emits an
- *      SSE `tool_call` frame, then ends the turn with stopReason='tool_use'
- *      and a `pendingToolUse` payload telling the client what to execute.
+ *   1. When the kernel emits `request_permission`, the turn is paused. The
+ *      client resumes by POSTing a fresh `session/prompt` with a
+ *      `permission_decision` block → `session.respondApproval()`.
  *
- *   2. Client executes the tool locally and resumes by POSTing a fresh
- *      `session/prompt` whose prompt[] starts with a `tool_result` block.
- *      The server calls `session.send({ type: 'tool_result', ... })` — the
- *      kernel resumes the same conversation from its persisted transcript.
+ *   2. When the kernel emits `ask_user` (AskUserQuestion), the turn is paused.
+ *      The client resumes with a `tool_result` block → `session.respondToolUse()`.
  *
- *   3. Permission requests follow the same pattern: SSE `permission_request`
- *      frame + stopReason='awaiting_permission' + `pendingPermission` payload;
- *      client resumes with a `permission_decision` block which we route to
- *      `session.respondApproval(...)`.
+ *   3. `agent_phase: idle` signals turn completion (end_turn).
  *
  * No service-side state is held between requests. The same conversation can
  * resume on a different runtime instance (kernel session store is the SoR).
@@ -28,9 +32,10 @@ import { z } from "zod";
 import {
   createAgent,
   type Agent as KernelAgent,
+  type AcpSessionUpdate,
   type ApprovalDecision,
+  type PermissionOption,
   type Session as KernelSession,
-  type SessionEvent,
   type ToolDefinition,
 } from "@cloudbase/open-agent-kernel";
 
@@ -101,16 +106,6 @@ let _lastSyncRegister:
   | { sessionId: string; ok: boolean; error?: string; ts: number }
   | null = null;
 
-/**
- * Block on writing the session index row (oak_sessions) for the given
- * sessionId. Idempotent per the driver: where().limit(1).get() then update
- * OR add. Safe to call after every kernel startSession to close the race
- * against instance recycling on serverless.
- *
- * Returns false (and logs) when no store is configured or the store doesn't
- * implement registerSession — the caller should treat this as "best-effort,
- * not guaranteed visible in session/list yet".
- */
 /**
  * Block on writing the session index row (oak_sessions) for the given
  * sessionId. Idempotent per the driver: where().limit(1).get() then update
@@ -226,7 +221,18 @@ export function outcomeToDecision(outcome: ApprovalOutcome): ApprovalDecision {
   if (outcome.outcome === "cancelled") {
     return { kind: "deny", reason: "User cancelled", interrupt: true };
   }
+  // optionId values match the kernel's buildPermissionOptions():
+  //   "allow" → allow once, "allow_always" → allow session,
+  //   "reject" → deny once
   switch (outcome.optionId) {
+    case "allow":
+      return { kind: "allow", scope: "once" };
+    case "allow_always":
+      return { kind: "allow", scope: "session" };
+    case "reject":
+      return { kind: "deny", scope: "once", reason: "User rejected" };
+    // Legacy optionId values (hyphenated) from older clients — kept for
+    // backward compat during the transition period.
     case "allow-once":
       return { kind: "allow", scope: "once" };
     case "allow-always":
@@ -271,12 +277,7 @@ export interface PendingPermission {
   toolUseId: string;
   toolName: string;
   args: unknown;
-  options: ApprovalOption[];
-  hints?: {
-    displayName?: string;
-    description?: string;
-    suggestedScopes?: Array<"once" | "session" | "forever">;
-  };
+  options: PermissionOption[];
 }
 
 export interface PumpResult {
@@ -286,212 +287,67 @@ export interface PumpResult {
 }
 
 /**
- * Pump kernel events into ACP SSE frames. Returns the final stopReason and,
- * when the turn was paused for an external action, a pendingToolUse or
- * pendingPermission payload describing what the client must do to resume.
+ * Pump kernel AcpSessionUpdate stream into ACP SSE frames.
+ *
+ * Each update is wrapped in a JSON-RPC `session/update` envelope and written
+ * to the SSE sink. The function watches for stop-and-resume triggers
+ * (request_permission / ask_user) and breaks out of the loop so the caller
+ * can end the SSE stream with the appropriate stopReason.
+ *
+ * Returns the final stopReason and, when the turn was paused for an external
+ * action, a pendingToolUse or pendingPermission payload describing what the
+ * client must do to resume.
  */
 export async function pumpEvents(
-  events: AsyncIterable<SessionEvent>,
-  _session: KernelSession,
+  events: AsyncIterable<AcpSessionUpdate>,
   ctx: StreamCtx,
 ): Promise<PumpResult> {
-  for await (const e of events) {
-    switch (e.type) {
-      case "message_delta": {
-        ctx.sse.write({
-          jsonrpc: "2.0",
-          method: "session/update",
-          params: {
-            sessionId: ctx.acpSessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: e.text },
-            },
-          },
-        });
-        break;
-      }
+  for await (const update of events) {
+    // 1. Wrap in JSON-RPC session/update envelope and passthrough to SSE client.
+    ctx.sse.write({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: ctx.acpSessionId,
+        update,
+      },
+    });
 
-      case "tool_call": {
-        ctx.sse.write({
-          jsonrpc: "2.0",
-          method: "session/update",
-          params: {
-            sessionId: ctx.acpSessionId,
-            update: {
-              sessionUpdate: "tool_call",
-              toolCallId: e.toolUseId,
-              title: e.toolName,
-              kind: "function",
-              status: "in_progress",
-              rawInput: e.input,
-            },
-          },
-        });
-        break;
-      }
+    // 2. Stop-and-resume: HITL permission request → end turn, wait for
+    //    client to resume with a permission_decision block.
+    if (update.sessionUpdate === "request_permission") {
+      return {
+        stopReason: "awaiting_permission",
+        pendingPermission: {
+          toolUseId: update.toolCall.toolCallId,
+          toolName: update.toolCall.title ?? "unknown",
+          args: update.toolCall.rawInput,
+          options: update.options,
+        },
+      };
+    }
 
-      case "tool_result": {
-        ctx.sse.write({
-          jsonrpc: "2.0",
-          method: "session/update",
-          params: {
-            sessionId: ctx.acpSessionId,
-            update: {
-              sessionUpdate: "tool_call_update",
-              toolCallId: e.toolUseId,
-              status: e.isError ? "failed" : "completed",
-              result: typeof e.output === "string" ? e.output : JSON.stringify(e.output),
-            },
-          },
-        });
-        break;
-      }
+    // 3. Stop-and-resume: AskUserQuestion → end turn, wait for client to
+    //    resume with a tool_result block carrying the user's answer.
+    if (update.sessionUpdate === "ask_user") {
+      return {
+        stopReason: "tool_use",
+        pendingToolUse: {
+          toolUseId: update.toolCallId,
+          toolName: "AskUserQuestion",
+          input: update.questions,
+        },
+      };
+    }
 
-      case "tool_approval_required": {
-        // Surface as a permission_request session update; the turn ends here.
-        // The client decides and resumes by POSTing a fresh session/prompt
-        // with a permission_decision block — see acp-endpoint.handleSessionPrompt.
-        const options = buildApprovalOptions(e.hints?.suggestedScopes);
-        ctx.sse.write({
-          jsonrpc: "2.0",
-          method: "session/update",
-          params: {
-            sessionId: ctx.acpSessionId,
-            update: {
-              sessionUpdate: "permission_request",
-              toolCallId: e.toolUseId,
-              toolName: e.toolName,
-              args: e.input,
-              options,
-              hints: e.hints,
-            },
-          },
-        });
-        return {
-          stopReason: "awaiting_permission",
-          pendingPermission: {
-            toolUseId: e.toolUseId,
-            toolName: e.toolName,
-            args: e.input,
-            options,
-            hints: e.hints,
-          },
-        };
-      }
-
-      case "tool_use_required": {
-        // PR #7.1 client-side tool flow. Kernel's PreToolUse hook denied
-        // a custom tool with the client-tool sentinel; turn ends and the
-        // host (this runtime → SDK consumer) must execute the tool.
-        // We push a hint frame so the SSE consumer sees it inline, then
-        // end the turn with stopReason='tool_use' + pendingToolUse.
-        ctx.sse.write({
-          jsonrpc: "2.0",
-          method: "session/update",
-          params: {
-            sessionId: ctx.acpSessionId,
-            update: {
-              sessionUpdate: "tool_use_request",
-              toolCallId: e.toolUseId,
-              toolName: e.toolName,
-              input: e.input,
-            },
-          },
-        });
-        return {
-          stopReason: "tool_use",
-          pendingToolUse: {
-            toolUseId: e.toolUseId,
-            toolName: e.toolName,
-            input: e.input,
-          },
-        };
-      }
-
-      case "session_idle": {
-        if (e.reason === "completed") return { stopReason: "end_turn" };
-        if (e.reason === "aborted") return { stopReason: "cancelled" };
-        if (e.reason === "error") {
-          const detail = `Kernel session_idle error (event=${JSON.stringify(e).slice(0, 500)})`;
-          ctx.sse.write({
-            jsonrpc: "2.0",
-            method: "session/update",
-            params: {
-              sessionId: ctx.acpSessionId,
-              update: {
-                sessionUpdate: "log",
-                level: "error",
-                message: detail,
-                timestamp: Date.now(),
-              },
-            },
-          });
-          return { stopReason: "error" };
-        }
-        return { stopReason: "cancelled" };
-      }
-
-      case "error": {
-        const err = e.error as Error & { cause?: unknown };
-        const causeText =
-          err?.cause instanceof Error
-            ? `${err.cause.name}: ${err.cause.message}`
-            : err?.cause
-              ? typeof err.cause === "string"
-                ? err.cause
-                : JSON.stringify(err.cause).slice(0, 500)
-              : undefined;
-        const detail = [err?.message, causeText, err?.stack].filter(Boolean).join("\n");
-        ctx.sse.write({
-          jsonrpc: "2.0",
-          method: "session/update",
-          params: {
-            sessionId: ctx.acpSessionId,
-            update: {
-              sessionUpdate: "log",
-              level: "error",
-              message: detail,
-              timestamp: Date.now(),
-            },
-          },
-        });
-        return { stopReason: "error" };
-      }
-
-      // 'message_complete' / 'handoff' — not surfaced to ACP
-      default:
-        break;
+    // 4. Turn completion: agent_phase idle signals the kernel finished.
+    if (update.sessionUpdate === "agent_phase" && update.phase === "idle") {
+      return { stopReason: "end_turn" };
     }
   }
+
+  // Stream ended without an explicit idle signal — treat as end_turn.
   return { stopReason: "end_turn" };
-}
-
-export interface ApprovalOption {
-  optionId: string;
-  name: string;
-  kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
-}
-
-function buildApprovalOptions(
-  scopes?: Array<"once" | "session" | "forever">,
-): ApprovalOption[] {
-  const out: ApprovalOption[] = [];
-  const s = scopes ?? ["once", "session"];
-  if (s.includes("once")) {
-    out.push({ optionId: "allow-once", name: "本次允许", kind: "allow_once" });
-    out.push({ optionId: "reject-once", name: "本次拒绝", kind: "reject_once" });
-  }
-  if (s.includes("session")) {
-    out.push({ optionId: "allow-always", name: "本会话内总是允许", kind: "allow_always" });
-    out.push({ optionId: "reject-always", name: "本会话内总是拒绝", kind: "reject_always" });
-  }
-  if (out.length === 0) {
-    // safety fallback
-    out.push({ optionId: "allow-once", name: "Allow once", kind: "allow_once" });
-    out.push({ optionId: "reject-once", name: "Reject", kind: "reject_once" });
-  }
-  return out;
 }
 
 // ── SSE sink helpers (used by acp-endpoint) ─────────────────────────────────
@@ -515,9 +371,9 @@ export function makeSseSink(res: Response): SseSink {
 // All `type: custom` tools in agent.yaml are client-side: they have no
 // server-side implementation. The kernel's PreToolUse hook (PR #7.1) detects
 // these by name and intercepts the call before execute() runs:
-//   - turn 1: hook denies with the client-tool sentinel → SDK emits a
-//     synthetic tool_result(is_error) with the sentinel; event-translator
-//     swallows it and yields `tool_use_required` instead. execute() never runs.
+//   - turn 1: hook denies with the client-tool sentinel → AcpStreamAdapter
+//     yields a `request_permission` update; agent-runtime ends the turn with
+//     stopReason='awaiting_permission'. execute() never runs.
 //   - turn 2 (after session.respondToolUse): hook allows + injects the host
 //     result via updatedInput.__oak_client_tool_result__; the wrapped MCP
 //     stub recognises the magic key and returns the result directly.

@@ -19,16 +19,18 @@
  *   session/list              List sessions
  *   session/load              Load session (replay=true → SSE history_page)
  *   session/prompt            SSE: agent_message_chunk / tool_call(_update)
- *                             May embed reverse JSON-RPC `session/request_permission`
+ *                             May pause with stopReason='awaiting_permission'
+ *                             (request_permission session/update) or
+ *                             stopReason='tool_use' (ask_user session/update)
  *   session/cancel            Notification: abort the in-flight prompt
  *   session/delete            Idempotent delete (ACP spec extension)
  *
  * Reverse RPC (agent → client) — HITL:
- *   session/request_permission   Sent inside the SSE stream as a JSON-RPC
- *                                request. Client replies with a JSON-RPC
- *                                `result` whose body is `{ outcome: { outcome:
- *                                'selected', optionId } | { outcome: 'cancelled' } }`,
- *                                POSTed back to the same /acp URL.
+ *   request_permission            Sent inside the SSE stream as a JSON-RPC
+ *                                 session/update notification. Client resumes
+ *                                 by POSTing a fresh session/prompt with a
+ *                                 permission_decision block whose decision
+ *                                 field carries the selected optionId.
  */
 
 import type { Express, Request, Response } from "express";
@@ -397,7 +399,7 @@ async function handleSessionPrompt(
       events = session.send(userText);
     }
 
-    const result = await pumpEvents(events, session, {
+    const result = await pumpEvents(events, {
       sse,
       rpcId: id,
       acpSessionId: sessionId,
