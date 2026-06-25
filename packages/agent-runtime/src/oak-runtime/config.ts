@@ -184,21 +184,19 @@ export function toKernelAgentConfig(
       : undefined;
 
   // ── Sandbox ─────────────────────────────────────────────────────────────
-  // Sandbox is a first-class feature, controlled by config.sandbox.enabled.
-  // Default: disabled. User opts in via yaml:
-  //   sandbox:
-  //     enabled: true
-  // Prerequisites: CLOUDBASE_APIKEY must be present (AGS sandbox requires it).
-  // If sandbox.enabled=true but no CLOUDBASE_APIKEY, sandbox is silently disabled
-  // with a warning — avoids a crash at prompt time.
+  // agent-runtime 部署形态下 sandbox 永远启用,provider 由 yaml sandbox.enabled 决定:
+  //   - sandbox.enabled=true  → provider: 'ags-stateful'(AGS 远程沙箱 + TRW HTTP 数据面)
+  //   - sandbox.enabled 未设  → provider: 'local'(宿主进程本地 FS + SDK 内置工具)
+  //
+  // local provider 模式下,kernel 自动:
+  //   - 开放 SDK 内置工具(Bash/Read/Write/Edit/Glob/Grep,直接操作 cwd)
+  //   - 在 send 边界做 cwd tar.gz 单包持久化到 COS(send-start pull / send-end push)
+  // 不再需要 localTools / workspacePersist 顶层 flag —— 都由 provider 语义驱动。
+  //
+  // 注:本地 cwd 持久化的 COS 操作走 CAM 签名,需要 TCB_SECRET_ID/KEY;
+  // 只有 CLOUDBASE_APIKEY 时 kernel 会 graceful degrade(不持久,但不报错)。
+  // ags-stateful 路径仍需 CLOUDBASE_APIKEY —— oak 会在缺 key 时抛 InvalidConfigError。
   const sandboxRequested = config.sandbox?.enabled === true;
-  if (sandboxRequested && !hasApiKey) {
-    console.warn(
-      "[Config] sandbox.enabled=true but CLOUDBASE_APIKEY is not set — " +
-        "AGS sandbox requires a CloudBase API key. Disabling sandbox.",
-    );
-  }
-  const sandboxEnabled = sandboxRequested && hasApiKey;
 
   return {
     envId,
@@ -215,30 +213,17 @@ export function toKernelAgentConfig(
     cwd: "/tmp/workspace",
     credentials: effectiveCredentials ?? undefined,
     mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-    sandbox: sandboxEnabled
-      ? {
-          enabled: true,
-          scope: "session",
-          cloudbaseTools: false,
-          ...(sandboxCapabilities ? { capabilities: sandboxCapabilities } : {}),
-        }
-      : undefined,
-    // 无沙箱时开放 claude 内置本地工具(Bash/Read/Write/...),让 agent 开箱即有文件能力。
-    // claude 在 kernel 宿主进程运行,本地工具直接操作宿主机 FS —— 仅适用于本部署的
-    // 单租户/已隔离假设(SCF/TCBR 每个 agent 独立容器、cwd=/tmp/workspace 已 chown)。
-    // 启用沙箱时本字段对 kernel 是 no-op(沙箱通过 mcp__sandbox__* 提供工具)。
-    ...(sandboxEnabled ? {} : { localTools: true as const }),
+    sandbox: {
+      enabled: true,
+      provider: sandboxRequested ? "ags-stateful" : "local",
+      scope: "session" as const,
+      cloudbaseTools: false,
+      ...(sandboxCapabilities ? { capabilities: sandboxCapabilities } : {}),
+    },
     // 流式输出:显式开启(includePartialMessages)。kernel 把 SDK 增量 stream_event
     // 翻译成 message_delta(逐字 chunk),pumpEvents 转成 agent_message_chunk SSE frame。
     // 注:SCF web-function 网关全缓冲到 res.end(),前端要等整轮才收到(非实时)。
     stream: true,
-    // 无沙箱时持久化 cwd 到 COS(per-session tar.gz),让"写文件后跨实例可读"成立 ——
-    // 请求打在不同实例上时,新实例在 send-start 从 COS 拉回 cwd.tar.gz 解包。
-    // COS key:oak-workspaces/<userId>/<sessionId>/cwd.tar.gz。
-    // 前提:CAM credentials(TCB_SECRET_ID/KEY)必须存在 —— COS 操作走 CAM 签名,
-    // 只有 CLOUDBASE_APIKEY 时 kernel 会 graceful degrade(不持久,但不报错)。
-    // 启用沙箱时本字段对 kernel 是 no-op(沙箱 snapshot 负责容器 cwd)。
-    ...(sandboxEnabled ? {} : { workspacePersist: "auto" as const }),
     permissions: requireApproval ? { requireApproval } : undefined,
     // Session isolation key (projectKey). envId only selects WHICH FlexDB to
     // connect to (via credentials); it must NOT be the isolation key, otherwise
