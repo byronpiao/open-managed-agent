@@ -878,10 +878,18 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
     try {
       switch (method) {
         case "initialize":
-          return res.json(rpcResult(id, handleInitialize(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "harness.initialize",
+            { },
+            async () => handleInitialize(params, agentConfig),
+          )));
 
         case "session/new":
-          return res.json(rpcResult(id, await handleSessionNew(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "harness.session.new",
+            { },
+            async () => handleSessionNew(params, agentConfig),
+          )));
 
         case "session/list":
           return res.json(rpcResult(id, await withActiveSpan(
@@ -908,7 +916,11 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
           return;
 
         case "session/cancel":
-          await handleSessionCancel(params, agentConfig);
+          await withActiveSpan(
+            "harness.session.cancel",
+            { },
+            async () => { await handleSessionCancel(params, agentConfig); },
+          );
           if (isNotification) return res.status(204).end();
           return res.json(rpcResult(id, { ok: true }));
 

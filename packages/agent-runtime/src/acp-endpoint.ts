@@ -524,7 +524,11 @@ function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
     try {
       switch (method) {
         case "initialize":
-          return res.json(rpcResult(id, handleInitialize(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "managed.initialize",
+            { },
+            async () => handleInitialize(params, agentConfig),
+          )));
 
         case "session/new":
           return res.json(rpcResult(id, await withActiveSpan(
@@ -557,7 +561,11 @@ function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
           return;
 
         case "session/cancel":
-          await handleSessionCancel(params);
+          await withActiveSpan(
+            "managed.session.cancel",
+            { },
+            async () => { await handleSessionCancel(params); },
+          );
           if (isNotification) return res.status(204).end();
           return res.json(rpcResult(id, { ok: true }));
 
@@ -569,7 +577,11 @@ function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
           )));
 
         case "session/resume":
-          return res.json(rpcResult(id, await handleSessionResume(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "managed.session.resume",
+            { sessionId: String((params as Record<string,unknown>).sessionId ?? "") },
+            async () => handleSessionResume(params, agentConfig),
+          )));
 
         default:
           if (isNotification) return res.status(200).end();
