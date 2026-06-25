@@ -1,8 +1,4 @@
 /**
- * CLI-side LLM preflight probes (scripts + tests only — NOT used at runtime).
- * Kept here for compilation convenience (shares LLM provider types from llm-providers.ts).
- * Not re-exported from harness/index.ts — import directly from llm-probe.js if needed.
- *
  * Preflight probe for OpenAI-compatible LLM (custom BYOK gateways).
  * Runs on the host before AGS acquire — catches 401 / quota without sandbox cost.
  */

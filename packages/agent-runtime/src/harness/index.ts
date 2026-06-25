@@ -88,25 +88,6 @@ export {
 } from "./harness-env.js";
 
 export {
-  anthropicMessagesUrl,
-  assertHarnessAnthropicLlmReachable,
-  assertHarnessOpenAiLlmReachable,
-  assertHarnessPlatformLlmReachable,
-  classifyPlatformProbeFailure,
-  formatClaudePlatformProbeFailureGuide,
-  formatPlatformProbeFailureGuide,
-  isPlatformQuotaExceeded,
-  openAiChatCompletionsUrl,
-  probeCloudBasePlatformAnthropicLlm,
-  probeCloudBasePlatformLlm,
-  probeHarnessAnthropicLlm,
-  probeHarnessAnthropicLlmSandboxCompat,
-  probeHarnessOpenAiLlm,
-  type HarnessLlmProbeResult,
-  type PlatformProbeFailureKind,
-} from "./llm-probe.js";
-
-export {
   markClaudeWarmOutcome,
   probeClaudeSessionStoreAfterPrompt,
 } from "./claude-session-health.js";

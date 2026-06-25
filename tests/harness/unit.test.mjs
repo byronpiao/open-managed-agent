@@ -46,7 +46,6 @@ import {
   hydrateOpencodeSyncEvents,
   resolveHarnessSandboxIdlePauseMs,
   resetSandboxPrewarmForTests,
-  openAiChatCompletionsUrl,
   normalizeInboundRequestId,
   parseCloudbaseTraceHeader,
   parseTraceparent,
@@ -55,6 +54,8 @@ import {
   buildHarnessOutboundCorrelationHeaders,
   TRACEPARENT_HEADER,
 } from "../../packages/agent-runtime/dist/harness/index.js";
+// Probe functions removed from runtime barrel; import directly.
+import { openAiChatCompletionsUrl } from "../../packages/agent-runtime/dist/harness/llm-probe.js";
 import {
   normalizeAgentRuntime,
   applyHarnessRuntimeEnv,
