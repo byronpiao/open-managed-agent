@@ -4,7 +4,6 @@
  */
 
 import COS from "cos-nodejs-sdk-v5";
-import { resolveHarnessToolName } from "../../config.js";
 import { assertHarnessCosEnv, requireEnv } from "../harness-env.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 
