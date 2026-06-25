@@ -78,12 +78,16 @@ async function main() {
   // Reflect request Origin + allow credentials so browser ACP clients (e.g. chat-playground
   // with fetch credentials: "include") pass OPTIONS preflight. Bare cors() answers * without
   // Allow-Credentials, which browsers reject before POST /acp runs route-level CORS.
-  app.use(
-    cors({
-      origin: true,
-      credentials: true,
-    }),
-  );
+  // Skip in SCF — tcloudbasegateway already sets CORS headers; duplicating causes
+  // browsers to reject "multiple values".
+  if (!process.env.TENCENTCLOUD_RUNENV) {
+    app.use(
+      cors({
+        origin: true,
+        credentials: true,
+      }),
+    );
+  }
   app.get("/healthz", async (req, res) => {
     const base = {
       ok: true,

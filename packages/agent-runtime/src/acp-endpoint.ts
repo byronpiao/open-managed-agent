@@ -60,6 +60,36 @@ function isUuid(s: string): boolean {
   return UUID_RE.test(s);
 }
 
+/** Decode JWT payload from Authorization header (no signature verification —
+ *  the gateway already validated). Returns null if missing/malformed. */
+function parseJwtPayload(req: Request): Record<string, unknown> | null {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return null;
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
+    if (!token) return null;
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve userId from JWT (sub → user_id → administrator_id), fallback to provided default. */
+function resolveUserId(req: Request, fallback: string): string {
+  const payload = parseJwtPayload(req);
+  if (payload) {
+    const fromJwt =
+      (payload.sub as string) ??
+      (payload.user_id as string) ??
+      (payload.administrator_id as string) ??
+      undefined;
+    if (fromJwt) return fromJwt;
+  }
+  return fallback;
+}
+
 const abortControllers = new Map<string, AbortController>();
 
 // ── JSON-RPC helpers ─────────────────────────────────────────────────────────
@@ -84,12 +114,12 @@ function sseStart(res: Response) {
 
 function sseWrite(res: Response, payload: unknown) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  (res as Response & { flush?: () => void }).flush?.();
 }
 
 function sseDone(res: Response, sse?: { getAll?: () => string }) {
-  // SCF web-function: only res.end() content reaches the client.
-  // All intermediate res.write() are dropped by the gateway.
-  // Deliver the entire SSE body — buffered frames + [DONE] — in one call.
+  // Frames are streamed live via the sink; close the stream with [DONE].
+  // getAll() is retained for legacy callers but normally returns "".
   const all = sse?.getAll?.() ?? "";
   res.end(`${all}data: [DONE]\n\n`);
 }
@@ -188,12 +218,13 @@ function handleInitialize(_params: Record<string, unknown>, config: AgentConfig)
   };
 }
 
-async function handleSessionNew(params: Record<string, unknown>, config: AgentConfig) {
+async function handleSessionNew(params: Record<string, unknown>, config: AgentConfig, req: Request) {
   const reqSessionId =
     (params.conversationId as string | undefined) ??
     (params.sessionId as string | undefined);
   const meta = (params.meta as Record<string, unknown> | undefined) ?? {};
-  const userId = (meta.userId as string | undefined) ?? "anonymous";
+  const title = (meta.title as string | undefined) ?? undefined;
+  const userId = resolveUserId(req, (meta.userId as string | undefined) ?? "anonymous");
 
   const agent = getKernelAgent(config);
 
@@ -215,14 +246,14 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
     const existing = await agent.sessions.get(reqSessionId);
     if (existing) return { sessionId: reqSessionId, hasHistory: true };
     await getOrCreateKernelSession(config, reqSessionId, { userId, isNew: true });
-    await syncRegisterSession(reqSessionId, userId);
+    await syncRegisterSession(reqSessionId, userId, title);
     return { sessionId: reqSessionId, hasHistory: false };
   }
 
   // No id supplied — let kernel generate a UUID.
   const session = await agent.startSession({ userId });
   registerKernelSession(session.id, session);
-  await syncRegisterSession(session.id, userId);
+  await syncRegisterSession(session.id, userId, title);
   return { sessionId: session.id, hasHistory: false };
 }
 
@@ -368,14 +399,14 @@ async function handleSessionPrompt(
         res.json(rpcError(id, -32602, "tool_result block requires tool_use_id"));
         return true;
       }
-      // PR #7.1: protocol-pure path. The kernel's PreToolUse hook stashed
-      // a pending entry when the model first called the client-side tool;
-      // we now feed the real result back via session.respondToolUse(). The
-      // kernel resumes the SDK with a prompt that tells the model to retry
-      // the call; the hook then ALLOWs and injects the result via
-      // updatedInput, so the SDK records a clean (non-error) tool_result
-      // in the transcript with the new tool_use_id. No duplicate
-      // tool_result blocks, no fake "user message" wrapping.
+      // Client-side tool resume. The kernel's PreToolUse hook stashed a pending
+      // entry when the model first called the client-side tool; we now feed the
+      // real result back via session.respondToolUse(). The kernel resumes the SDK
+      // with a prompt that tells the model to retry the call; the hook then
+      // ALLOWs and the wrapped MCP stub reads the result from the kernel's
+      // ClientToolStore, so the SDK records a clean (non-error) tool_result in
+      // the transcript with the new tool_use_id. No duplicate tool_result
+      // blocks, no fake "user message" wrapping.
       const output =
         typeof toolResultBlock.content === "string"
           ? toolResultBlock.content
@@ -412,7 +443,6 @@ async function handleSessionPrompt(
     });
     let stopReason: StopReason = result.stopReason;
     if (abortController.signal.aborted) stopReason = "cancelled";
-    // Write result through sse sink so it's included in the buffered body.
     sse.write(rpcResult(id, {
       stopReason,
       ...(result.pendingToolUse ? { pendingToolUse: result.pendingToolUse } : {}),
@@ -478,18 +508,24 @@ function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   app.use("/v1/aibot/bots", expressLib.json({ limit: "10mb" }));
 
   // CORS — let chat-playground (cross-origin) talk to us.
+  // In SCF (behind tcloudbasegateway), the gateway already sets CORS headers;
+  // duplicating them causes browsers to reject "multiple values". Only set
+  // Origin/Credentials locally; always handle OPTIONS preflight.
+  const isBehindGateway = !!process.env.TENCENTCLOUD_RUNENV;
   const corsHandler = (req: Request, res: Response, next: () => void) => {
-    const origin = req.headers.origin as string | undefined;
-    if (origin) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Access-Control-Allow-Credentials", "true");
-      res.setHeader("Vary", "Origin");
+    if (!isBehindGateway) {
+      const origin = req.headers.origin as string | undefined;
+      if (origin) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+        res.setHeader("Vary", "Origin");
+      }
+      res.setHeader("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-Task-Id, X-Tenant-Id",
+      );
     }
-    res.setHeader("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, X-Task-Id, X-Tenant-Id",
-    );
     if (req.method === "OPTIONS") {
       res.status(204).end();
       return;
@@ -526,7 +562,7 @@ function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
           return res.json(rpcResult(id, handleInitialize(params, agentConfig)));
 
         case "session/new":
-          return res.json(rpcResult(id, await handleSessionNew(params, agentConfig)));
+          return res.json(rpcResult(id, await handleSessionNew(params, agentConfig, req)));
 
         case "session/list":
           return res.json(rpcResult(id, await handleSessionList(params, agentConfig)));

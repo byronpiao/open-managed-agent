@@ -566,9 +566,32 @@ export function toKernelAgentConfig(
           ...(sandboxCapabilities ? { capabilities: sandboxCapabilities } : {}),
         }
       : undefined,
+    // 无沙箱时开放 claude 内置本地工具(Bash/Read/Write/...),让 agent 开箱即有文件能力。
+    // claude 在 kernel 宿主进程运行,本地工具直接操作宿主机 FS —— 仅适用于本部署的
+    // 单租户/已隔离假设(SCF/TCBR 每个 agent 独立容器、cwd=/tmp/workspace 已 chown)。
+    // 启用沙箱时本字段对 kernel 是 no-op(沙箱通过 mcp__sandbox__* 提供工具)。
+    ...(sandboxEnabled ? {} : { localTools: true as const }),
+    // 流式输出:显式开启(includePartialMessages)。kernel 把 SDK 增量 stream_event
+    // 翻译成 message_delta(逐字 chunk),pumpEvents 转成 agent_message_chunk SSE frame。
+    // 注:SCF web-function 网关全缓冲到 res.end(),前端要等整轮才收到(非实时)。
+    stream: true,
+    // 无沙箱时持久化 cwd 到 COS(per-session tar.gz),让"写文件后跨实例可读"成立 ——
+    // 请求打在不同实例上时,新实例在 send-start 从 COS 拉回 cwd.tar.gz 解包。
+    // COS key:oak-workspaces/<userId>/<sessionId>/cwd.tar.gz。
+    // 前提:CAM credentials(TCB_SECRET_ID/KEY)必须存在 —— COS 操作走 CAM 签名,
+    // 只有 CLOUDBASE_APIKEY 时 kernel 会 graceful degrade(不持久,但不报错)。
+    // 启用沙箱时本字段对 kernel 是 no-op(沙箱 snapshot 负责容器 cwd)。
+    ...(sandboxEnabled ? {} : { workspacePersist: "auto" as const }),
     permissions: requireApproval ? { requireApproval } : undefined,
+    // Session isolation key (projectKey). envId only selects WHICH FlexDB to
+    // connect to (via credentials); it must NOT be the isolation key, otherwise
+    // every agent in the same env shares one session pool. We scope by the
+    // agent's own name so each agent only sees its own sessions.
+    // Trade-offs (accepted): name is not guaranteed unique within an env, so
+    // same-named agents share sessions; renaming an agent orphans old sessions;
+    // existing sessions stored under projectKey=envId become invisible.
     session: effectiveCredentials
-      ? { enabled: true, projectKey: envId }
+      ? { enabled: true, projectKey: config.name }
       : undefined,
     tools:
       opts.customToolDefs && opts.customToolDefs.length > 0

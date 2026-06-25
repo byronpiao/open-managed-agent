@@ -125,6 +125,7 @@ let _lastSyncRegister:
 export async function syncRegisterSession(
   sessionId: string,
   userId: string,
+  title?: string,
 ): Promise<boolean> {
   const ts = Date.now();
   if (!_sessionStore?.registerSession) {
@@ -140,7 +141,7 @@ export async function syncRegisterSession(
   // The store's mapProjectKey() returns the fixed value regardless. Passing ""
   // is intentional and avoids re-reading env vars.
   try {
-    await _sessionStore.registerSession({ projectKey: "", sessionId, userId });
+    await _sessionStore.registerSession({ projectKey: "", sessionId, userId, title });
     _lastSyncRegister = { sessionId, ok: true, ts };
     return true;
   } catch (err) {
@@ -379,7 +380,7 @@ export async function pumpEvents(
       }
 
       case "tool_use_required": {
-        // PR #7.1 client-side tool flow. Kernel's PreToolUse hook denied
+        // Client-side tool flow. Kernel's PreToolUse hook denied
         // a custom tool with the client-tool sentinel; turn ends and the
         // host (this runtime → SDK consumer) must execute the tool.
         // We push a hint frame so the SSE consumer sees it inline, then
@@ -410,17 +411,27 @@ export async function pumpEvents(
       case "session_idle": {
         if (e.reason === "completed") return { stopReason: "end_turn" };
         if (e.reason === "aborted") return { stopReason: "cancelled" };
-        if (e.reason === "error") return { stopReason: "error" };
-        // 'requires_action' — the approval / tool_use_required branches
-        // above already returned. Reaching here would be a kernel ordering
-        // anomaly; treat as cancelled.
+        if (e.reason === "error") {
+          const detail = `Kernel session_idle error (event=${JSON.stringify(e).slice(0, 500)})`;
+          ctx.sse.write({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: ctx.acpSessionId,
+              update: {
+                sessionUpdate: "log",
+                level: "error",
+                message: detail,
+                timestamp: Date.now(),
+              },
+            },
+          });
+          return { stopReason: "error" };
+        }
         return { stopReason: "cancelled" };
       }
 
       case "error": {
-        // Surface as much context as possible — Claude Agent SDK errors often
-        // bury the actual cause (failed spawn, missing binary, network) in
-        // .cause / .stack. Forward the full picture so the client can see it.
         const err = e.error as Error & { cause?: unknown };
         const causeText =
           err?.cause instanceof Error
@@ -431,8 +442,6 @@ export async function pumpEvents(
                 : JSON.stringify(err.cause).slice(0, 500)
               : undefined;
         const detail = [err?.message, causeText, err?.stack].filter(Boolean).join("\n");
-        // Also dump to container stdout so cloudrun instance logs capture it.
-        console.error("[ACP] kernel error event:", detail);
         ctx.sse.write({
           jsonrpc: "2.0",
           method: "session/update",
@@ -487,43 +496,36 @@ function buildApprovalOptions(
 // ── SSE sink helpers (used by acp-endpoint) ─────────────────────────────────
 
 export function makeSseSink(res: Response): SseSink {
-  // Buffer all SSE frames in memory and flush them all at once when the
-  // response ends. SCF web-function gateway buffers the HTTP response and
-  // only delivers the last `res.write()` to the client — so streaming
-  // individual frames would silently drop every frame except the last one.
-  // By collecting first and flushing in one `res.end()` call we ensure the
-  // gateway sees a complete, well-formed SSE body.
-  const frames: string[] = [];
+  // Stream each frame straight to the client as it arrives. SCF web-function
+  // gateway delivers intermediate `res.write()` chunks (verified), so true
+  // token-by-token streaming works without buffering the whole turn.
   return {
     write: (frame) => {
-      frames.push(`data: ${JSON.stringify(frame)}\n\n`);
+      res.write(`data: ${JSON.stringify(frame)}\n\n`);
+      (res as Response & { flush?: () => void }).flush?.();
     },
-    getAll: () => frames.join(""),
-    flush: () => {
-      if (frames.length > 0) {
-        res.write(frames.join(""));
-        frames.length = 0;
-      }
-    },
+    getAll: () => "",
+    flush: () => {},
   };
 }
 
 // ── Client-side tool definition ──────────────────────────────────────────────
 //
 // All `type: custom` tools in agent.yaml are client-side: they have no
-// server-side implementation. The kernel's PreToolUse hook (PR #7.1) detects
-// these by name and intercepts the call before execute() runs:
+// server-side implementation. The kernel's PreToolUse hook detects these by
+// name and intercepts the call before execute() runs:
 //   - turn 1: hook denies with the client-tool sentinel → SDK emits a
 //     synthetic tool_result(is_error) with the sentinel; event-translator
 //     swallows it and yields `tool_use_required` instead. execute() never runs.
-//   - turn 2 (after session.respondToolUse): hook allows + injects the host
-//     result via updatedInput.__oak_client_tool_result__; the wrapped MCP
-//     stub recognises the magic key and returns the result directly.
+//   - turn 2 (after session.respondToolUse): hook allows + the wrapped MCP
+//     stub reads the host result from the kernel's ClientToolStore (default
+//     InMemoryClientToolStore when AgentConfig.toolStore is not passed; pass
+//     CloudBaseClientToolStore for cross-node resume in multi-instance deploys).
 //
 // The execute() body below is therefore only a defensive fallback for the
-// case where the hook isn't wired (kernel without PR #7.1, or misconfigured
-// runtime). It returns a clear error string instead of throwing, so the
-// model gets a useful failure message rather than an unhandled exception.
+// case where the hook isn't wired (misconfigured runtime or kernel without
+// the client-tool flow). It returns a clear error string instead of throwing,
+// so the model gets a useful failure message rather than an unhandled exception.
 
 export function makeClientSideToolDefinition(
   tool: { name: string; description: string; input_schema: Record<string, unknown> },
@@ -541,7 +543,7 @@ export function makeClientSideToolDefinition(
         `[oak-runtime] Tool '${tool.name}' is declared as client-side in agent.yaml ` +
         `but the kernel's PreToolUse hook did not intercept it before execute() ran. ` +
         `This indicates a runtime / kernel version mismatch. Please ensure the kernel ` +
-        `vendor bundle includes PR #7.1 (client-side tool flow).`
+        `supports the client-side tool flow (PreToolUse hook + ClientToolStore).`
       );
     },
   };
