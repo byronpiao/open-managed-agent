@@ -184,9 +184,10 @@ export function toKernelAgentConfig(
       : undefined;
 
   // ── Sandbox ─────────────────────────────────────────────────────────────
-  // agent-runtime 部署形态下 sandbox 永远启用,provider 由 yaml sandbox.enabled 决定:
-  //   - sandbox.enabled=true  → provider: 'ags-stateful'(AGS 远程沙箱 + TRW HTTP 数据面)
-  //   - sandbox.enabled 未设  → provider: 'local'(宿主进程本地 FS + SDK 内置工具)
+  // agent-runtime 部署形态下 sandbox 永远启用,provider 由 yaml sandbox.provider 决定
+  // (向后兼容:未设时从 sandbox.enabled 推断):
+  //   - provider: 'ags-stateful' 或 sandbox.enabled=true → AGS 远程沙箱 + TRW HTTP 数据面
+  //   - provider: 'local' 或 sandbox.enabled 未设        → 宿主进程本地 FS + SDK 内置工具
   //
   // local provider 模式下,kernel 自动:
   //   - 开放 SDK 内置工具(Bash/Read/Write/Edit/Glob/Grep,直接操作 cwd)
@@ -196,7 +197,8 @@ export function toKernelAgentConfig(
   // 注:本地 cwd 持久化的 COS 操作走 CAM 签名,需要 TCB_SECRET_ID/KEY;
   // 只有 CLOUDBASE_APIKEY 时 kernel 会 graceful degrade(不持久,但不报错)。
   // ags-stateful 路径仍需 CLOUDBASE_APIKEY —— oak 会在缺 key 时抛 InvalidConfigError。
-  const sandboxRequested = config.sandbox?.enabled === true;
+  const sandboxProvider = config.sandbox?.provider
+    ?? (config.sandbox?.enabled === true ? "ags-stateful" : "local");
 
   return {
     envId,
@@ -215,7 +217,8 @@ export function toKernelAgentConfig(
     mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
     sandbox: {
       enabled: true,
-      provider: sandboxRequested ? "ags-stateful" : "local",
+      // @ts-expect-error oak beta.7 types only accept 'ags-stateful'; beta.8 will add 'local' provider
+      provider: sandboxProvider,
       scope: "session" as const,
       cloudbaseTools: false,
       ...(sandboxCapabilities ? { capabilities: sandboxCapabilities } : {}),

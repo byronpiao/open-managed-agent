@@ -95,13 +95,21 @@ export type DataPlaneEngineSlug =
   | "hermes";
 
 /**
- * Sandbox configuration — top-level feature toggle shared by managed and harness.
+ * Sandbox configuration — shared by managed (OAK) and harness runtimes.
  *
- * Managed mode: `enabled: true` activates AGS sandbox (bash/file tools).
- * Harness mode: `infra`/`resources`/`image`/`timeout`/`env` control placement.
+ * OAK mode: `provider` selects the backend; `enabled` is legacy inference fallback.
+ * Harness mode: `infra`/`resources`/`image`/`timeout`/`env` control AGS placement.
  */
+export type SandboxProvider = "ags-stateful" | "local";
+
 export interface SandboxConfig {
-  /** Enable AGS sandbox for managed agents (provides bash/file tools). Default: false. */
+  /** OAK sandbox backend. Overrides `enabled`-based inference.
+   *  - `ags-stateful`: remote AGS cloud sandbox (requires CLOUDBASE_APIKEY)
+   *  - `local`: host process runs SDK built-in tools against cwd (no sandbox)
+   *  Default when unset: `ags-stateful` if `enabled=true`, else `local`. */
+  provider?: SandboxProvider;
+  /** Legacy OAK toggle: `true` → ags-stateful, else → local. Ignored when `provider` is set.
+   *  Harness: unused (harness uses `infra`). */
   enabled?: boolean;
   /**
    * Harness-only: sandbox placement (infra, resources, image, timeout, env).
