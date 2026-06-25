@@ -11,6 +11,7 @@ import type { AgentConfig } from "../config.js";
 import { invokeClientToolFromSandbox } from "./client-tool-bridge.js";
 import { rpcError, rpcResult } from "../acp-shared.js";
 import { harnessLog } from "./logging.js";
+import { withActiveSpan } from "./telemetry.js";
 
 export function mountHarnessMcpGateway(app: import("express").Express, config: AgentConfig) {
   const handler = async (req: Request, res: Response) => {
@@ -67,11 +68,16 @@ export function mountHarnessMcpGateway(app: import("express").Express, config: A
           mcpLog.phase("mcp.call");
           const startedAt = Date.now();
           try {
-            const out = await invokeClientToolFromSandbox({
-              acpSessionId: sessionId,
-              toolName: name,
-              input: toolArgs,
-            });
+            const out = await withActiveSpan(
+              `bridge.${name}`,
+              { acpSessionId: sessionId, tool: name },
+              async () =>
+                invokeClientToolFromSandbox({
+                  acpSessionId: sessionId,
+                  toolName: name,
+                  input: toolArgs,
+                }),
+            );
             mcpLog.emit({ status: "ok", durationMs: Date.now() - startedAt });
             return res.json(
               rpcResult(id, {

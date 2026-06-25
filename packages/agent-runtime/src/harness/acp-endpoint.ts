@@ -600,20 +600,26 @@ async function handleSessionLoad(
   });
   // HTTP hydrate in ensureSandbox already replays sync events; ACP replay again can hang opencode.
   const acpReplay = Boolean(params.replay) && syncHydrated === 0;
-  const upstream = await forwardAcpToSandbox({
-    handle,
-    config,
-    method: "session/load",
-    params: {
-      sessionId: engineSessionId,
-      replay: acpReplay,
-      cwd: DEFAULT_HARNESS_SANDBOX_CWD,
-      mcpServers,
+  await withActiveSpan(
+    "harness.load.replay",
+    { acpSessionId: sessionId, engine: config.engine ?? "opencode" },
+    async () => {
+      const upstream = await forwardAcpToSandbox({
+        handle,
+        config,
+        method: "session/load",
+        params: {
+          sessionId: engineSessionId,
+          replay: acpReplay,
+          cwd: DEFAULT_HARNESS_SANDBOX_CWD,
+          mcpServers,
+        },
+        id,
+        acpSessionId: sessionId,
+      });
+      await pipeSandboxSseToClient(upstream, res, id, sessionId, store, config);
     },
-    id,
-    acpSessionId: sessionId,
-  });
-  await pipeSandboxSseToClient(upstream, res, id, sessionId, store, config);
+  );
   return true;
 }
 
