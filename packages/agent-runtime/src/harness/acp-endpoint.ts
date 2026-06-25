@@ -52,6 +52,7 @@ import {
   snapshotWorkspaceIfAvailable,
 } from "./opencode-sync.js";
 import { probeClaudeSessionStoreAfterPrompt } from "./claude-session-health.js";
+import { withActiveSpan } from "./telemetry.js";
 
 const abortControllers = new Map<string, AbortController>();
 
@@ -599,20 +600,26 @@ async function handleSessionLoad(
   });
   // HTTP hydrate in ensureSandbox already replays sync events; ACP replay again can hang opencode.
   const acpReplay = Boolean(params.replay) && syncHydrated === 0;
-  const upstream = await forwardAcpToSandbox({
-    handle,
-    config,
-    method: "session/load",
-    params: {
-      sessionId: engineSessionId,
-      replay: acpReplay,
-      cwd: DEFAULT_HARNESS_SANDBOX_CWD,
-      mcpServers,
+  await withActiveSpan(
+    "harness.load.replay",
+    { acpSessionId: sessionId, engine: config.engine ?? "opencode" },
+    async () => {
+      const upstream = await forwardAcpToSandbox({
+        handle,
+        config,
+        method: "session/load",
+        params: {
+          sessionId: engineSessionId,
+          replay: acpReplay,
+          cwd: DEFAULT_HARNESS_SANDBOX_CWD,
+          mcpServers,
+        },
+        id,
+        acpSessionId: sessionId,
+      });
+      await pipeSandboxSseToClient(upstream, res, id, sessionId, store, config);
     },
-    id,
-    acpSessionId: sessionId,
-  });
-  await pipeSandboxSseToClient(upstream, res, id, sessionId, store, config);
+  );
   return true;
 }
 
@@ -666,7 +673,11 @@ async function handleSessionPrompt(
     // permission_decision is not handled locally — forward to sandbox engine ACP.
 
     const sandboxWaitStart = Date.now();
-    const { handle, record } = await ensureSandboxForSession(config, sessionId);
+    const { handle, record } = await withActiveSpan(
+      "harness.prompt.sandbox_wait",
+      { acpSessionId: sessionId, engine: config.engine ?? "opencode" },
+      async () => ensureSandboxForSession(config, sessionId),
+    );
     sandboxWaitMs = Date.now() - sandboxWaitStart;
     if (!record) {
       res.json(rpcError(id, -32602, `Session not found: ${sessionId}`));
@@ -681,18 +692,23 @@ async function handleSessionPrompt(
     );
     const forwardParams = { ...params, sessionId: engineSessionId };
 
-    const upstream = await forwardAcpToSandbox({
-      handle,
-      config,
-      method: "session/prompt",
-      params: forwardParams,
-      id,
-      acpSessionId: sessionId,
-      signal: abortController.signal,
-    });
-
     const forwardStartedAt = Date.now();
-    await pipeSandboxSseToClient(upstream, res, id, sessionId, store, config);
+    await withActiveSpan(
+      "harness.prompt.acp_forward",
+      { acpSessionId: sessionId, engine: config.engine ?? "opencode" },
+      async () => {
+        const upstream = await forwardAcpToSandbox({
+          handle,
+          config,
+          method: "session/prompt",
+          params: forwardParams,
+          id,
+          acpSessionId: sessionId,
+          signal: abortController.signal,
+        });
+        await pipeSandboxSseToClient(upstream, res, id, sessionId, store, config);
+      },
+    );
     harnessLog({ lane: "acp", operation: "session.prompt", acpSessionId: sessionId }).emit({
       status: "ok",
       sandboxWaitMs,
@@ -867,16 +883,32 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
     try {
       switch (method) {
         case "initialize":
-          return res.json(rpcResult(id, handleInitialize(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "harness.initialize",
+            { },
+            async () => handleInitialize(params, agentConfig),
+          )));
 
         case "session/new":
-          return res.json(rpcResult(id, await handleSessionNew(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "harness.session.new",
+            { },
+            async () => handleSessionNew(params, agentConfig),
+          )));
 
         case "session/list":
-          return res.json(rpcResult(id, await handleSessionList(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "harness.session.list",
+            { },
+            async () => handleSessionList(params, agentConfig),
+          )));
 
         case "session/status":
-          return res.json(rpcResult(id, await handleSessionStatus(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "harness.session.status",
+            { sessionId: String((params as Record<string,unknown>).sessionId ?? "") },
+            async () => handleSessionStatus(params, agentConfig),
+          )));
 
         case "session/load":
           sseDelegated = Boolean(params.replay);
@@ -889,12 +921,20 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
           return;
 
         case "session/cancel":
-          await handleSessionCancel(params, agentConfig);
+          await withActiveSpan(
+            "harness.session.cancel",
+            { },
+            async () => { await handleSessionCancel(params, agentConfig); },
+          );
           if (isNotification) return res.status(204).end();
           return res.json(rpcResult(id, { ok: true }));
 
         case "session/delete":
-          return res.json(rpcResult(id, await handleSessionDelete(params, agentConfig)));
+          return res.json(rpcResult(id, await withActiveSpan(
+            "harness.session.delete",
+            { sessionId: String((params as Record<string,unknown>).sessionId ?? "") },
+            async () => handleSessionDelete(params, agentConfig),
+          )));
 
         default:
           if (isNotification) return res.status(200).end();

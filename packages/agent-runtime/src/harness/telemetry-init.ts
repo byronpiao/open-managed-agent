@@ -164,7 +164,10 @@ export async function scrapePrometheusMetricsText(): Promise<string | null> {
 }
 
 export async function shutdownTelemetry(): Promise<void> {
-  await Promise.all([meterProvider?.shutdown(), tracerProvider?.shutdown()]);
+  await Promise.all([
+    meterProvider?.shutdown().catch(() => {}),
+    tracerProvider?.shutdown().catch(() => {}),
+  ]);
   meterProvider = undefined;
   tracerProvider = undefined;
   prometheusExporter = undefined;

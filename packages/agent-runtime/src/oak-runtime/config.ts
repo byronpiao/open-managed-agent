@@ -254,5 +254,9 @@ export function toKernelAgentConfig(
       opts.customToolDefs && opts.customToolDefs.length > 0
         ? opts.customToolDefs
         : undefined,
-  };
+  // TODO: remove `as any` when @cloudbase/open-agent-kernel publishes a version
+  // (>=0.1.0-beta.7) that includes `stream` in its AgentConfig type.
+  // The field is already accepted by the kernel at runtime (npm link tested locally),
+  // only the published type definition is lagging.
+  } as any;
 }

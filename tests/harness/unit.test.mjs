@@ -1676,6 +1676,104 @@ test("ACP OPTIONS preflight allows browser credentials (chat-playground)", async
   }
 });
 
+test("telemetry init noop when env unset", async () => {
+  const { initTelemetry, isTracingEnabled, getTelemetrySummary, shutdownTelemetry } =
+    await import("../../packages/agent-runtime/dist/harness/telemetry-init.js");
+  const prevOtlp = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  const prevTraces = process.env.OTEL_TRACES_EXPORTER;
+  const prevMetrics = process.env.OTEL_METRICS_EXPORTER;
+  delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  delete process.env.OTEL_TRACES_EXPORTER;
+  delete process.env.OTEL_METRICS_EXPORTER;
+  try {
+    initTelemetry();
+    assert.equal(isTracingEnabled(), false);
+    assert.deepEqual(getTelemetrySummary(), { metrics: "noop", traces: "noop" });
+    await shutdownTelemetry();
+  } finally {
+    if (prevOtlp !== undefined) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = prevOtlp;
+    if (prevTraces !== undefined) process.env.OTEL_TRACES_EXPORTER = prevTraces;
+    if (prevMetrics !== undefined) process.env.OTEL_METRICS_EXPORTER = prevMetrics;
+  }
+});
+
+test("telemetry init otlp when traces_exporter=otlp", async () => {
+  const { initTelemetry, isTracingEnabled, getTelemetrySummary, shutdownTelemetry } =
+    await import("../../packages/agent-runtime/dist/harness/telemetry-init.js");
+  const prevTraces = process.env.OTEL_TRACES_EXPORTER;
+  process.env.OTEL_TRACES_EXPORTER = "otlp";
+  process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318";
+  try {
+    initTelemetry();
+    assert.equal(isTracingEnabled(), true);
+    assert.equal(getTelemetrySummary().traces, "otlp");
+    await shutdownTelemetry();
+    assert.equal(isTracingEnabled(), false);
+  } finally {
+    if (prevTraces !== undefined) process.env.OTEL_TRACES_EXPORTER = prevTraces;
+    else delete process.env.OTEL_TRACES_EXPORTER;
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  }
+});
+
+test("withActiveSpan creates span and injects traceparent", async () => {
+  const { initTelemetry, shutdownTelemetry } =
+    await import("../../packages/agent-runtime/dist/harness/telemetry-init.js");
+  const { withActiveSpan, injectOutboundTraceHeaders } =
+    await import("../../packages/agent-runtime/dist/harness/telemetry.js");
+  const prevTraces = process.env.OTEL_TRACES_EXPORTER;
+  process.env.OTEL_TRACES_EXPORTER = "otlp";
+  process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318";
+  try {
+    initTelemetry();
+    let spanActive = false;
+    let outHeaders = {};
+    const result = await withActiveSpan("test.acquire", { envId: "t", engine: "opencode" }, async (span) => {
+      spanActive = !!span;
+      injectOutboundTraceHeaders(outHeaders);
+      return "ok";
+    });
+    assert.ok(spanActive);
+    assert.equal(result, "ok");
+    assert.ok(outHeaders.traceparent);
+    assert.match(outHeaders.traceparent, /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+  } finally {
+    await shutdownTelemetry();
+    if (prevTraces !== undefined) process.env.OTEL_TRACES_EXPORTER = prevTraces;
+    else delete process.env.OTEL_TRACES_EXPORTER;
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  }
+});
+
+test("withActiveSpan is noop when tracing disabled", async () => {
+  const { withActiveSpan } =
+    await import("../../packages/agent-runtime/dist/harness/telemetry.js");
+  const result = await withActiveSpan("test.noop", {}, async (span) => {
+    assert.equal(span, undefined);
+    return "no-trace";
+  });
+  assert.equal(result, "no-trace");
+});
+
+test("managed ACP telemetry import is noop-safe", async () => {
+  const { withActiveSpan } =
+    await import("../../packages/agent-runtime/dist/harness/telemetry.js");
+  // Simulate managed session span — no OTEL env, must not throw
+  const result = await withActiveSpan(
+    "managed.session.new",
+    { envId: "test" },
+    async () => "created",
+  );
+  assert.equal(result, "created");
+  // Managed prompt span with SSE-like async
+  const result2 = await withActiveSpan(
+    "managed.session.prompt",
+    { sessionId: "s1" },
+    async () => "pong",
+  );
+  assert.equal(result2, "pong");
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try {

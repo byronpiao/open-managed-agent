@@ -38,7 +38,7 @@
     "build": "npm run build --workspaces",
     "build:sdk": "npm run build --workspace=packages/sdk",
     "build:runtime": "npm run build --workspace=packages/agent-runtime",
-    "test": "npm run build && node tests/stop-and-resume.test.mjs && node tests/harness/unit.test.mjs && node tests/managed-agents/unit.test.mjs && node tests/managed-agents/e2e-managed-agents-harness.test.mjs",
+    "test": "npm run build && node tests/stop-and-resume.test.mjs && node tests/harness/unit.test.mjs && node tests/managed-agents/unit.test.mjs && node tests/otlp-e2e.test.mjs && node tests/managed-agents/e2e-managed-agents-harness.test.mjs",
     "test:merge": "OAK_USE_MEMORY_STORE=1 npm test && npm run harness -- run --infra local --engine opencode",
     "dev:harness": "node scripts/dev-harness.mjs",
     "harness": "npm run build:runtime && node scripts/harness/index.mjs",
