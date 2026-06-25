@@ -17,7 +17,7 @@ tcb login && tcb env use <环境ID>
 
 约 3 分钟后打印镜像地址：
 ```
-ccr.ccs.tencentyun.com/tcb-sandbox/oma-agent-runtime:oma-agent-runtime-001
+ccr.ccs.tencentyun.com/open-managed-agent/oma-agent-runtime:oma-agent-runtime-001
 ```
 
 ## 自定义
@@ -28,7 +28,7 @@ cp .env.example .env
 
 | 字段 | 说明 |
 |------|------|
-| `TCR_NAMESPACE` | 留空则自动创建 `tcb-sandbox` |
+| `TCR_NAMESPACE` | 留空则自动创建 `open-managed-agent` |
 | `TCR_USERNAME` | 留空自动开通 |
 | `TCR_PASSWORD` | 已注册用户填写 |
 | `TCR_IMAGE_NAME` | 默认 `oma-agent-runtime` |

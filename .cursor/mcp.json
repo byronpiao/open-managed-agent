@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "cocoindex-code": {
+      "type": "stdio",
+      "command": "cocoindex-code",
+      "args": [],
+      "env": {
+        "COCOINDEX_CODE_HOST_CWD": "${workspaceFolder}"
+      }
+    }
+  }
+}

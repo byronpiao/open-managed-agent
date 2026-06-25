@@ -7,7 +7,7 @@
 set -euo pipefail
 
 : "${TCR_REGISTRY:?}"
-TCR_NAMESPACE="${TCR_NAMESPACE:-tcb-sandbox}"
+TCR_NAMESPACE="${TCR_NAMESPACE:-open-managed-agent}"
 : "${CLOUDBASE_SERVICE_NAME:?}"
 : "${CLOUDBASE_VERSION_NAME:?}"
 
@@ -90,7 +90,7 @@ else
   : "${P:?无法确定登录密码}"
 
   # 自动创建命名空间（如果 .env 没填则用 tcb-<envId>）
-  NS_CREATE="${TCR_NAMESPACE:-tcb-sandbox}"
+  NS_CREATE="${TCR_NAMESPACE:-open-managed-agent}"
   echo "[login] ensure namespace: ${NS_CREATE}"
   NSPAYLOAD='{"Namespace":"'"${NS_CREATE}"'"}'
   NSHP=$(printf '%s' "$NSPAYLOAD" | openssl dgst -sha256 -hex | awk '{print $NF}')

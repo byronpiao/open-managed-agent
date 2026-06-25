@@ -6,7 +6,7 @@
 set -euo pipefail
 
 : "${TCR_REGISTRY:?}"
-TCR_NAMESPACE="${TCR_NAMESPACE:-tcb-sandbox}"
+TCR_NAMESPACE="${TCR_NAMESPACE:-open-managed-agent}"
 : "${CLOUDBASE_SERVICE_NAME:?}"
 : "${CLOUDBASE_VERSION_NAME:?}"
 : "${BASELINE_IMAGE:?}"

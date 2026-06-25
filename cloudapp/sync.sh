@@ -28,7 +28,7 @@ BASELINE_IMAGE="${BASELINE_GHCR//<BASELINE_TAG>/$BASELINE_TAG}"
 COS_URL=""
 
 TCR_MODE="${TCR_MODE:-personal}"
-TCR_NAMESPACE="${TCR_NAMESPACE:-tcb-sandbox}"
+TCR_NAMESPACE="${TCR_NAMESPACE:-open-managed-agent}"
 TCR_USERNAME="${TCR_USERNAME:-}"
 TCR_PASSWORD="${TCR_PASSWORD:-}"
 TCR_IMAGE_NAME="${TCR_IMAGE_NAME:-oma-agent-runtime}"
@@ -37,7 +37,7 @@ POLL="${CLOUDAPP_POLL_INTERVAL_SEC:-5}"
 TMO="${CLOUDAPP_POLL_TIMEOUT_SEC:-1800}"
 
 echo "=== CloudApp：OMA Agent Runtime ($([ "$TCR_MODE" = "personal" ] && echo '个人版 CCR' || echo '企业版 TCR')) ==="
-echo "  目标: ${TCR_REGISTRY}/${TCR_NAMESPACE:-tcb-sandbox}/${TCR_IMAGE_NAME}"
+echo "  目标: ${TCR_REGISTRY}/${TCR_NAMESPACE:-open-managed-agent}/${TCR_IMAGE_NAME}"
 echo "  源:   GitHub Packages  (${BASELINE_IMAGE})"
 
 tcb_api() {
