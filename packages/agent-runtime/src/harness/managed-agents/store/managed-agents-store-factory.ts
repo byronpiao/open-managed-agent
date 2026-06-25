@@ -1,5 +1,5 @@
-import { resolveCamControlPlaneCredentials } from "../../harness/harness-env.js";
-import { getHarnessSessionStore } from "../../harness/sandbox/session-store.js";
+import { resolveCamControlPlaneCredentials } from "../../harness-env.js";
+import { getHarnessSessionStore } from "../../sandbox/session-store.js";
 import { getManagedAgentsDeploymentConfig } from "../deployment-config.js";
 import { resolveHarnessEngineForMaSession } from "../resolve-session-agent-config.js";
 import { createCmaMemoryStore } from "../vendor/cma-memory-store.js";

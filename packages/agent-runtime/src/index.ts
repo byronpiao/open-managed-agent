@@ -21,7 +21,7 @@ import express from "express";
 import cors from "cors";
 import { mountAcpEndpoint } from "./acp-endpoint.js";
 import { loadAgentConfig, resolveRuntime, resolveSkills } from "./config.js";
-import { getKernelAgent, getStoreDiag } from "./kernel-adapter.js";
+import { getKernelAgent, getStoreDiag } from "./oak-runtime/kernel-adapter.js";
 
 const port = Number(process.env.PORT ?? 9000);
 
@@ -136,7 +136,7 @@ async function main() {
 
   mountAcpEndpoint(app, config);
   if (runtime === "harness") {
-    const { mountManagedAgentsEndpoint } = await import("./managed-agents/managed-agents-endpoint.js");
+    const { mountManagedAgentsEndpoint } = await import("./harness/managed-agents/managed-agents-endpoint.js");
     mountManagedAgentsEndpoint(app, config);
   }
   if (runtime === "harness") {

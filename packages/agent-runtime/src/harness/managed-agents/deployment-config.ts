@@ -1,4 +1,4 @@
-import type { AgentConfig } from "../config.js";
+import type { AgentConfig } from "../../config.js";
 
 let deploymentConfig: AgentConfig | null = null;
 

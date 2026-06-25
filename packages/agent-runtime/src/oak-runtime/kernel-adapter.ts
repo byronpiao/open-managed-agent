@@ -1,6 +1,6 @@
 /**
  * Kernel adapter — bridges open-agent-kernel's Session/SessionEvent to the
- * ACP wire protocol used by `acp-endpoint.ts`.
+ * ACP wire protocol used by `./acp-endpoint.ts`.
  *
  * Stop-and-resume model (no reverse-RPC, no in-memory pending state):
  *
@@ -34,8 +34,9 @@ import {
   type ToolDefinition,
 } from "@cloudbase/open-agent-kernel";
 
-import { toKernelAgentConfig, getCustomTools } from "./config.js";
-import type { AgentConfig } from "./config.js";
+import { toKernelAgentConfig } from "./config.js";
+import { getCustomTools } from "../config.js";
+import type { AgentConfig } from "../config.js";
 
 // ── Singletons ───────────────────────────────────────────────────────────────
 
@@ -380,7 +381,7 @@ export async function pumpEvents(
       }
 
       case "tool_use_required": {
-        // Client-side tool flow. Kernel's PreToolUse hook denied
+        // PR #7.1 client-side tool flow. Kernel's PreToolUse hook denied
         // a custom tool with the client-tool sentinel; turn ends and the
         // host (this runtime → SDK consumer) must execute the tool.
         // We push a hint frame so the SSE consumer sees it inline, then
@@ -512,20 +513,19 @@ export function makeSseSink(res: Response): SseSink {
 // ── Client-side tool definition ──────────────────────────────────────────────
 //
 // All `type: custom` tools in agent.yaml are client-side: they have no
-// server-side implementation. The kernel's PreToolUse hook detects these by
-// name and intercepts the call before execute() runs:
+// server-side implementation. The kernel's PreToolUse hook (PR #7.1) detects
+// these by name and intercepts the call before execute() runs:
 //   - turn 1: hook denies with the client-tool sentinel → SDK emits a
 //     synthetic tool_result(is_error) with the sentinel; event-translator
 //     swallows it and yields `tool_use_required` instead. execute() never runs.
-//   - turn 2 (after session.respondToolUse): hook allows + the wrapped MCP
-//     stub reads the host result from the kernel's ClientToolStore (default
-//     InMemoryClientToolStore when AgentConfig.toolStore is not passed; pass
-//     CloudBaseClientToolStore for cross-node resume in multi-instance deploys).
+//   - turn 2 (after session.respondToolUse): hook allows + injects the host
+//     result via updatedInput.__oak_client_tool_result__; the wrapped MCP
+//     stub recognises the magic key and returns the result directly.
 //
 // The execute() body below is therefore only a defensive fallback for the
-// case where the hook isn't wired (misconfigured runtime or kernel without
-// the client-tool flow). It returns a clear error string instead of throwing,
-// so the model gets a useful failure message rather than an unhandled exception.
+// case where the hook isn't wired (kernel without PR #7.1, or misconfigured
+// runtime). It returns a clear error string instead of throwing, so the
+// model gets a useful failure message rather than an unhandled exception.
 
 export function makeClientSideToolDefinition(
   tool: { name: string; description: string; input_schema: Record<string, unknown> },
@@ -543,7 +543,7 @@ export function makeClientSideToolDefinition(
         `[oak-runtime] Tool '${tool.name}' is declared as client-side in agent.yaml ` +
         `but the kernel's PreToolUse hook did not intercept it before execute() ran. ` +
         `This indicates a runtime / kernel version mismatch. Please ensure the kernel ` +
-        `supports the client-side tool flow (PreToolUse hook + ClientToolStore).`
+        `vendor bundle includes PR #7.1 (client-side tool flow).`
       );
     },
   };

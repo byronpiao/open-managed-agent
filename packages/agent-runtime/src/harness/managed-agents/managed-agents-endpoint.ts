@@ -4,9 +4,9 @@
  */
 
 import express, { type Express, type Request as ExpressRequest, type Response } from "express";
-import type { AgentConfig } from "../config.js";
-import { harnessLog } from "../harness/logging.js";
-import { deleteHarnessAcpSession } from "../harness/acp-endpoint.js";
+import type { AgentConfig } from "../../config.js";
+import { harnessLog } from "../logging.js";
+import { deleteHarnessAcpSession } from "../acp-endpoint.js";
 import {
   CMA_DEFAULT_BETA_HEADER_NAME,
   CMA_DEFAULT_BETA_HEADER_VALUE,

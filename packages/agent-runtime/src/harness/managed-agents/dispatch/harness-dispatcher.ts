@@ -1,5 +1,5 @@
-import type { AgentConfig } from "../../config.js";
-import { deleteHarnessAcpSession } from "../../harness/acp-endpoint.js";
+import type { AgentConfig } from "../../../config.js";
+import { deleteHarnessAcpSession } from "../../acp-endpoint.js";
 import type { CmaHttpDriverCommandDispatchInput } from "../vendor/cma-http.js";
 import type { CmaStore } from "../vendor/cma-store-types.js";
 import type { RuntimeCommandResult } from "../vendor/runtime-command-types.js";
