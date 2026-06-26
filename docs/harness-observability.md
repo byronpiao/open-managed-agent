@@ -116,7 +116,7 @@ cat /var/log/trw/*.jsonl | jq 'select(.request_id=="my-req-001")'
 | `OTEL_METRICS_EXPORTER` | `otlp` / `prometheus` / `otlp,prometheus` / `none` |
 | `OTEL_TRACES_EXPORTER` | 须显式 `otlp` 才开启 trace |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector 基址（如 `http://collector:4318`） |
-| `OTEL_SERVICE_NAME` | 默认 `oma-harness` |
+| `OTEL_SERVICE_NAME` | 默认 `open-managed-agent-harness` |
 
 已有埋点（noop 直到开启）：`harness.acquire.duration_ms`、`harness.prompt.duration_ms` 等。
 
