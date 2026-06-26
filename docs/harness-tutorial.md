@@ -15,7 +15,7 @@
 
 | 步骤 | 文档 | 何时读 |
 |------|------|--------|
-| 1 选型 | [用户故事](./harness-user-story.md) | 不确定用 CLI 还是 HTTP API |
+| 1 快速开始 | 本文 §1 | — |
 | 2 动手（本文） | 下文 **快速开始** | 第一次部署 |
 | 3 凭证 | [凭证说明](./harness-credentials.md) | 部署前自检失败、或首次在本环境使用沙箱 |
 | 4 按引擎 | [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md) | 换引擎或换模型 |
@@ -378,7 +378,6 @@ magent agent:update -f ./agent.harness.yaml -a "$CLOUDBASE_AGENT_ID"
 ## 相关文档
 
 - [README · 沙箱内 Agent](../README.md#沙箱内-agent)
-- [用户故事 · 选型](./harness-user-story.md)
 - [凭证说明](./harness-credentials.md)
 - [可观测性](./harness-observability.md)
 - [OpenCode](./harness-opencode.md) · [Claude Code](./harness-claude-code.md)

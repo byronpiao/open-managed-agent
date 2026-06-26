@@ -5,7 +5,7 @@
 > **适用场景**：你要按官方 MA 文档或 SDK 习惯集成（`agents` / `environments` / `sessions` / SSE 事件流），而不是走 `magent run` 的 ACP 通道。  
 > **不适用**：默认托管 Agent（`runtime: managed`）— 该路径仍只有 ACP，见 [README](../README.md#快速开始)。
 
-**选型：** [Harness 用户故事](./harness-user-story.md) · 沙箱部署 [harness-tutorial.md](./harness-tutorial.md)
+**沙箱部署：** [harness-tutorial.md](./harness-tutorial.md)
 
 ---
 

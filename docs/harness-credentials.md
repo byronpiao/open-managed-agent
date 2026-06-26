@@ -176,4 +176,4 @@ SDK 连接沙箱 Agent 时务必设置 `runtime: "harness"`。示例见 [使用�
 ## 相关
 
 - [使用指南](./harness-tutorial.md)
-- [用户故事 · 选型](./harness-user-story.md)
+- [使用指南](./harness-tutorial.md)

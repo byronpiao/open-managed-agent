@@ -147,5 +147,5 @@ sandbox:
 ## 相关文档
 
 - [使用指南](./harness-tutorial.md)
-- [架构参考 · 排障](./harness-architecture.md#6-排障)（维护者）
+> 排障见 [使用指南](./harness-tutorial.md#常见问题)
 - [凭证说明](./harness-credentials.md)
