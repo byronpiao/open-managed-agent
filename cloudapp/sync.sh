@@ -26,7 +26,6 @@ need_cmd tcb jq zip curl python3
 [ -f "$CONFIG" ] && source "$CONFIG"
 
 BASELINE_IMAGE="${BASELINE_GHCR//<BASELINE_TAG>/$BASELINE_TAG}"
-COS_URL=""
 
 TCR_MODE="${TCR_MODE:-personal}"
 TCR_NAMESPACE="${TCR_NAMESPACE:-open-managed-agent}"
