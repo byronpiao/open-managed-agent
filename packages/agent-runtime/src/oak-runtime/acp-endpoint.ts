@@ -528,7 +528,7 @@ export function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) 
 
         case "session/new":
           return res.json(rpcResult(id, await withActiveSpan(
-            "managed.session.new", {}, async () => handleSessionNew(params, agentConfig, req),
+            "managed.session.new", { sessionId: String((params as Record<string,unknown>).sessionId ?? (params as Record<string,unknown>).conversationId ?? "") }, async () => handleSessionNew(params, agentConfig, req),
           )));
 
         case "session/list":
@@ -552,7 +552,7 @@ export function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) 
 
         case "session/cancel":
           await withActiveSpan(
-            "managed.session.cancel", {},
+            "managed.session.cancel", { sessionId: String((params as Record<string,unknown>).sessionId ?? "") },
             async () => { await handleSessionCancel(params); },
           );
           if (isNotification) return res.status(204).end();

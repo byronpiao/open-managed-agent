@@ -86,8 +86,18 @@ else
     U="${CCR_USERNAME:-${CLOUDBASE_UIN}}"
     P="${SECRET_CCR_PASSWORD:-${CCR_PASSWORD:-}}"
   fi
-  : "${U:?无法确定登录用户名}"
-  : "${P:?无法确定登录密码}"
+  if [ -z "$U" ] || [ -z "$P" ]; then
+    echo ""
+    echo "========================================="
+    echo "  登录失败：CCR 账号已存在，但未提供密码"
+    echo ""
+    echo "  你在 CCR 控制台设置过访问凭证，"
+    echo "  需要在 .env 中填写 TCR_UIN 和 TCR_PASSWORD"
+    echo "  cp .env.example .env"
+    echo "  详见 USAGE.md「我已用过 CCR」一节"
+    echo "========================================="
+    exit 1
+  fi
 
   # 自动创建命名空间（如果 .env 没填则用 tcb-<envId>）
   NS_CREATE="${TCR_NAMESPACE:-open-managed-agent}"

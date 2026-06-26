@@ -12,6 +12,7 @@ import { invokeClientToolFromSandbox } from "./client-tool-bridge.js";
 import { rpcError, rpcResult } from "../../acp-shared.js";
 import { harnessLog } from "../observability/logging.js";
 import { withActiveSpan } from "../telemetry/telemetry.js";
+import { recordMcpBridgeDuration } from "../observability/metrics.js";
 
 export function mountHarnessMcpGateway(app: import("express").Express, config: AgentConfig) {
   const handler = async (req: Request, res: Response) => {
@@ -68,17 +69,26 @@ export function mountHarnessMcpGateway(app: import("express").Express, config: A
           mcpLog.phase("mcp.call");
           const startedAt = Date.now();
           try {
+            const toolInputSize = JSON.stringify(toolArgs).length;
             const out = await withActiveSpan(
               `bridge.${name}`,
               { acpSessionId: sessionId, tool: name },
-              async () =>
-                invokeClientToolFromSandbox({
+              async (span) => {
+                const result = await invokeClientToolFromSandbox({
                   acpSessionId: sessionId,
                   toolName: name,
                   input: toolArgs,
-                }),
+                });
+                if (span) {
+                  span.setAttribute("tool_input_size", toolInputSize);
+                  span.setAttribute("tool_result_size", String(result.content ?? "").length);
+                }
+                return result;
+              },
             );
-            mcpLog.emit({ status: "ok", durationMs: Date.now() - startedAt });
+            const durationMs = Date.now() - startedAt;
+            recordMcpBridgeDuration(durationMs, { tool: name, status: "ok" });
+            mcpLog.emit({ status: "ok", durationMs });
             return res.json(
               rpcResult(id, {
                 content: [{ type: "text", text: String(out.content ?? "") }],
@@ -86,8 +96,10 @@ export function mountHarnessMcpGateway(app: import("express").Express, config: A
               }),
             );
           } catch (err) {
+            const durationMs = Date.now() - startedAt;
+            recordMcpBridgeDuration(durationMs, { tool: name, status: "error" });
             mcpLog.error(err);
-            mcpLog.emit({ status: "error", durationMs: Date.now() - startedAt });
+            mcpLog.emit({ status: "error", durationMs });
             throw err;
           }
         }

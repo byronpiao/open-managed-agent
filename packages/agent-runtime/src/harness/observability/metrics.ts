@@ -28,6 +28,28 @@ const acceptanceOutcome = meter.createCounter("harness.acceptance.outcome", {
   description: "Product acceptance check outcomes",
 });
 
+const sessionActive = meter.createUpDownCounter("harness.session.active", {
+  description: "Currently active harness sessions",
+});
+
+const errorTotal = meter.createCounter("harness.error.total", {
+  description: "Total errors by type",
+});
+
+const mcpBridgeDuration = meter.createHistogram("harness.mcp.bridge.duration_ms", {
+  description: "MCP bridge tool call duration",
+  unit: "ms",
+});
+
+const promptTokens = meter.createHistogram("harness.prompt.tokens", {
+  description: "Token count per prompt",
+});
+
+const dbOperationDuration = meter.createHistogram("harness.db.operation.duration_ms", {
+  description: "Database operation duration",
+  unit: "ms",
+});
+
 export function recordHarnessAcquireDuration(
   ms: number,
   attrs: { engine?: string; status?: string } = {},
@@ -52,4 +74,24 @@ export function recordHarnessSyncExported(count: number): void {
 
 export function recordHarnessAcceptanceOutcome(status: string, checkId: string): void {
   acceptanceOutcome.add(1, { status, check_id: checkId });
+}
+
+export function recordSessionActive(delta: number): void {
+  sessionActive.add(delta);
+}
+
+export function recordError(errorType: string): void {
+  errorTotal.add(1, { error_type: errorType });
+}
+
+export function recordMcpBridgeDuration(ms: number, attrs: { tool?: string; status?: string } = {}): void {
+  mcpBridgeDuration.record(Math.round(ms), attrs);
+}
+
+export function recordPromptTokens(count: number, attrs: { engine?: string; direction?: string } = {}): void {
+  promptTokens.record(count, attrs);
+}
+
+export function recordDbOperationDuration(ms: number, attrs: { collection?: string; operation?: string } = {}): void {
+  dbOperationDuration.record(Math.round(ms), attrs);
 }

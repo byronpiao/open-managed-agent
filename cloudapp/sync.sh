@@ -29,7 +29,7 @@ COS_URL=""
 
 TCR_MODE="${TCR_MODE:-personal}"
 TCR_NAMESPACE="${TCR_NAMESPACE:-open-managed-agent}"
-TCR_USERNAME="${TCR_USERNAME:-}"
+TCR_UIN="${TCR_UIN:-}"
 TCR_PASSWORD="${TCR_PASSWORD:-}"
 TCR_IMAGE_NAME="${TCR_IMAGE_NAME:-oma-agent-runtime}"
 
@@ -52,7 +52,7 @@ build_body() {
   jq -nc --arg e "$TCB_ENV_ID" --arg s "$TCR_IMAGE_NAME" --arg t "$ts" \
     --arg b "$BASELINE_IMAGE" --arg scf "$scf_image" \
     --arg r "$TCR_REGISTRY" --arg n "$TCR_NAMESPACE" \
-    --arg u "$TCR_USERNAME" --arg p "$TCR_PASSWORD" --arg x "$BOOTSTRAP_CMD" \
+    --arg u "$TCR_UIN" --arg p "$TCR_PASSWORD" --arg x "$BOOTSTRAP_CMD" \
     '{
       EnvId:$e,ServiceName:$s,DeployType:"custom",BuildType:"zip",
       Source:{Type:"zip",CosTimestamp:$t,CosSuffix:".zip"},
@@ -96,7 +96,11 @@ while true; do
   S=$(echo "$DATA" | jq -r '.Status // .VersionStatus // "UNKNOWN"')
   echo "    status=${S}"
   [ "$S" = "SUCCESS" ] || [ "$S" = "Success" ] || [ "$S" = "success" ] && break
-  [ "$S" = "FAILED" ] || [ "$S" = "Failed" ] || [ "$S" = "failed" ] && die "构建失败"
+  [ "$S" = "FAILED" ] || [ "$S" = "Failed" ] || [ "$S" = "failed" ] && {
+    echo "  构建失败 — 步骤详情:"
+    echo "$DATA" | jq -r '.Steps[]? | "    \(.Name): \(.Status)  \(.Duration // "")"'
+    die "构建失败"
+  }
   [ $(date +%s) -ge $D ] && die "超时"
   sleep "$POLL"
 done

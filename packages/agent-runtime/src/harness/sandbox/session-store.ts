@@ -4,9 +4,11 @@
  */
 
 import type { HarnessEngine } from "../../config.js";
-import { resolveCamControlPlaneCredentials } from "../harness-env.js";
+import { resolveCloudBaseCredentials as resolveCloudBaseCredentialsFromFlexdb, type CloudBaseCredentials } from "../flexdb-client.js";
 import { generateHarnessSecretMasterKey } from "../session-secrets.js";
 import { harnessTrace, harnessLog } from "../observability/logging.js";
+import { withActiveSpan } from "../telemetry/telemetry.js";
+import { recordDbOperationDuration } from "../observability/metrics.js";
 
 export const HARNESS_SESSIONS_COLLECTION = "harness_sessions";
 
@@ -225,14 +227,6 @@ class InMemoryHarnessSessionStore implements HarnessSessionStore {
   }
 }
 
-interface CloudBaseCredentials {
-  envId: string;
-  secretId?: string;
-  secretKey?: string;
-  sessionToken?: string;
-  region?: string;
-}
-
 function recordFromCloudBaseDoc(doc: Record<string, unknown>): HarnessSessionRecord {
   const { _id: _ignoredId, projectKey: _ignoredPk, ...rest } = doc;
   return rest as unknown as HarnessSessionRecord;
@@ -302,9 +296,13 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
       updatedAt: now,
     };
     const collection = await this.col();
-    await collection.doc(args.acpSessionId).set({
-      ...row,
-      projectKey: this.projectKey,
+    await withActiveSpan("db.sessions.write", { collection: "harness_sessions", operation: "create" }, async () => {
+      const startedAt = Date.now();
+      await collection.doc(args.acpSessionId).set({
+        ...row,
+        projectKey: this.projectKey,
+      });
+      recordDbOperationDuration(Date.now() - startedAt, { collection: "harness_sessions", operation: "create" });
     });
     harnessLog({
       lane: "session_store",
@@ -317,11 +315,16 @@ class CloudBaseHarnessSessionStore implements HarnessSessionStore {
   }
 
   async get(acpSessionId: string): Promise<HarnessSessionRecord | null> {
-    const collection = await this.col();
-    const res = await collection.doc(acpSessionId).get();
-    const doc = res.data?.[0] as Record<string, unknown> | undefined;
-    if (!doc) return null;
-    return recordFromCloudBaseDoc(doc);
+    return withActiveSpan("db.sessions.read", { collection: "harness_sessions", operation: "get" }, async (span) => {
+      const startedAt = Date.now();
+      const collection = await this.col();
+      const res = await collection.doc(acpSessionId).get();
+      const doc = res.data?.[0] as Record<string, unknown> | undefined;
+      recordDbOperationDuration(Date.now() - startedAt, { collection: "harness_sessions", operation: "get" });
+      if (span) span.setAttribute("found", !!doc);
+      if (!doc) return null;
+      return recordFromCloudBaseDoc(doc);
+    });
   }
 
   async list(args: { limit?: number }): Promise<HarnessSessionRecord[]> {
@@ -499,20 +502,7 @@ interface CloudBaseDocRef {
 }
 
 function resolveCloudBaseCredentials(envId: string): CloudBaseCredentials | null {
-  const cam = resolveCamControlPlaneCredentials();
-  const secretId = cam.secretId;
-  const secretKey = cam.secretKey;
-  const sessionToken = cam.sessionToken;
-  const region = process.env.TCB_REGION?.trim();
-  if (secretId && secretKey && region) {
-    return { envId, secretId, secretKey, sessionToken, region };
-  }
-  // No CAM credentials — but CLOUDBASE_APIKEY allows FlexDB via Bearer auth.
-  // The @cloudbase/node-sdk picks it up from env; no secretId/secretKey needed.
-  if (process.env.CLOUDBASE_APIKEY?.trim()) {
-    return { envId };
-  }
-  return null;
+  return resolveCloudBaseCredentialsFromFlexdb(envId);
 }
 
 let _store: HarnessSessionStore | null = null;
