@@ -3,7 +3,7 @@
 ## 前置条件
 
 首次使用需申请 GitHub Container Registry 推送权限：
-https://github.com/realalexandreai/open-managed-agent/pkgs/container/oma-agent-runtime
+https://github.com/realalexandreai/open-managed-agent/pkgs/container/open-managed-agent
 
 在 Package Settings → Manage Actions access 添加仓库角色。
 
@@ -19,8 +19,8 @@ https://github.com/realalexandreai/open-managed-agent/pkgs/container/oma-agent-r
 ## 镜像地址
 
 发布时自动推送两个版本：
-- TCBR（云托管）：`ghcr.io/realalexandreai/oma-agent-runtime:<tag>`
-- SCF（云函数）：`ghcr.io/realalexandreai/oma-agent-runtime:scf-<tag>`
+- TCBR（云托管）：`ghcr.io/realalexandreai/open-managed-agent:<tag>`
+- SCF（云函数）：`ghcr.io/realalexandreai/open-managed-agent:scf-<tag>`
 
 ## Env 表（sync.sh 顶部常量）
 

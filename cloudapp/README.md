@@ -8,10 +8,10 @@
 ```
   用户              CloudApp               CNB 构建机              用户 TCR
   .env              sync.sh                bootstrap-docker
-  零配置 ──→      ① zip 上传              pull-tcbr + push-tcbr ──→ oma-agent-runtime (云托管)
-                   ② CreateCloudApp ──→   pull-scf  + push-scf  ──→ oma-agent-runtime (云函数)
+  零配置 ──→      ① zip 上传              pull-tcbr + push-tcbr ──→ open-managed-agent (云托管)
+                   ② CreateCloudApp ──→   pull-scf  + push-scf  ──→ open-managed-agent (云函数)
                                           
-  平台              ghcr.io/realalexandreai/oma-agent-runtime
+  平台              ghcr.io/realalexandreai/open-managed-agent
   publish.sh ──→   :tag + :scf-tag (公开仓库，免鉴权)
 ```
 

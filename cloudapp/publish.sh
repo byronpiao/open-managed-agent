@@ -9,23 +9,23 @@ RUNTIME_DIR="$(cd "$(dirname "$0")/../packages/agent-runtime" && pwd)"
 echo "=== OMA Agent Runtime · publish $TAG ==="
 
 # ── TCBR（云托管）────────────────────────────────────────
-echo ">>> 1. TCBR → oma-agent-runtime"
+echo ">>> 1. TCBR → open-managed-agent"
 docker --context colima build --platform linux/amd64 \
-  -f "$RUNTIME_DIR/Dockerfile" -t "${GHCR}/oma-agent-runtime:${TAG}" "$RUNTIME_DIR"
-docker --context colima push "${GHCR}/oma-agent-runtime:${TAG}"
-docker --context colima tag "${GHCR}/oma-agent-runtime:${TAG}" "${GHCR}/oma-agent-runtime:latest"
-docker --context colima push "${GHCR}/oma-agent-runtime:latest"
-echo "   ✓ ${GHCR}/oma-agent-runtime:${TAG} + latest"
+  -f "$RUNTIME_DIR/Dockerfile" -t "${GHCR}/open-managed-agent:${TAG}" "$RUNTIME_DIR"
+docker --context colima push "${GHCR}/open-managed-agent:${TAG}"
+docker --context colima tag "${GHCR}/open-managed-agent:${TAG}" "${GHCR}/open-managed-agent:latest"
+docker --context colima push "${GHCR}/open-managed-agent:latest"
+echo "   ✓ ${GHCR}/open-managed-agent:${TAG} + latest"
 
 # ── SCF（云函数）─────────────────────────────────────────
 echo ""
-echo ">>> 2. SCF → oma-agent-runtime-scf"
+echo ">>> 2. SCF → open-managed-agent-scf"
 docker --context colima build --platform linux/amd64 \
-  -f "$RUNTIME_DIR/Dockerfile.scf" -t "${GHCR}/oma-agent-runtime-scf:${TAG}" "$RUNTIME_DIR"
-docker --context colima push "${GHCR}/oma-agent-runtime-scf:${TAG}"
-docker --context colima tag "${GHCR}/oma-agent-runtime-scf:${TAG}" "${GHCR}/oma-agent-runtime-scf:latest"
-docker --context colima push "${GHCR}/oma-agent-runtime-scf:latest"
-echo "   ✓ ${GHCR}/oma-agent-runtime-scf:${TAG} + latest"
+  -f "$RUNTIME_DIR/Dockerfile.scf" -t "${GHCR}/open-managed-agent-scf:${TAG}" "$RUNTIME_DIR"
+docker --context colima push "${GHCR}/open-managed-agent-scf:${TAG}"
+docker --context colima tag "${GHCR}/open-managed-agent-scf:${TAG}" "${GHCR}/open-managed-agent-scf:latest"
+docker --context colima push "${GHCR}/open-managed-agent-scf:latest"
+echo "   ✓ ${GHCR}/open-managed-agent-scf:${TAG} + latest"
 
 # ── 更新 sync.sh ────────────────────────────────────────
 echo ""
