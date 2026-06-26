@@ -14,7 +14,7 @@ CONFIG="${CLOUDAPP_SYNC_ENV:-${SCRIPT_DIR}/.env}"
 
 TCB_ENV_ID="lowcode-8gtybv2a87db84a3"
 TCR_REGISTRY="ccr.ccs.tencentyun.com"
-BASELINE_TAG="260625-1807"
+BASELINE_TAG="latest"
 BASELINE_GHCR="ghcr.io/realalexandreai/open-managed-agent:<BASELINE_TAG>"
 BASELINE_GHCR_SCF="ghcr.io/realalexandreai/open-managed-agent-scf:<BASELINE_TAG>"
 BASELINE_SOURCE="${BASELINE_SOURCE:-ghcr}"
