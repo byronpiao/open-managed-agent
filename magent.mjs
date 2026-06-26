@@ -8,6 +8,11 @@
  * Commands:
  *   login                                     Login to CloudBase (proxied to tcb)
  *
+ *   sync-image                                同步预构建镜像到您的容器镜像服务（TCR）
+ *     --uin, -u        腾讯云账号 UIN
+ *     --password, -p   访问凭证密码
+ *     --images         镜像: sandbox,oma-tcbr,oma-scf,all
+ *
  *   agent:create   -n <name> [options]
  *   agent:list     [-e <envId>]
  *   agent:get      [-a <agent-id>]
@@ -41,6 +46,7 @@ import { registerChatCommands } from "./lib/commands/chat.mjs";
 import { registerEnvCommands } from "./lib/commands/env.mjs";
 import { registerCloudrunCommands } from "./lib/commands/cloudrun.mjs";
 import { registerInitCommand } from "./lib/commands/init.mjs";
+import { registerSyncImageCommand } from "./lib/commands/sync-image.mjs";
 
 // ── Load .env file ──────────────────────────────────────────────────────────
 const envFile = new URL(".env", import.meta.url).pathname;
@@ -72,6 +78,7 @@ registerChatCommands(program);
 registerEnvCommands(program);
 registerCloudrunCommands(program);
 registerInitCommand(program);
+registerSyncImageCommand(program);
 
 // ── Login (proxy to tcb) ────────────────────────────────────────────────────
 program
