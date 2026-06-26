@@ -16,6 +16,7 @@ TCB_ENV_ID="lowcode-8gtybv2a87db84a3"
 TCR_REGISTRY="ccr.ccs.tencentyun.com"
 BASELINE_TAG="260625-1807"
 BASELINE_GHCR="ghcr.io/realalexandreai/oma-agent-runtime:<BASELINE_TAG>"
+BASELINE_GHCR_SCF="ghcr.io/realalexandreai/oma-agent-runtime-scf:<BASELINE_TAG>"
 BASELINE_SOURCE="${BASELINE_SOURCE:-ghcr}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -48,7 +49,7 @@ tcb_api() {
 
 build_body() {
   local ts="$1"
-  local scf_image="${BASELINE_GHCR//<BASELINE_TAG>/scf-${BASELINE_TAG}}"
+  local scf_image="${BASELINE_GHCR_SCF//<BASELINE_TAG>/$BASELINE_TAG}"
   jq -nc --arg e "$TCB_ENV_ID" --arg s "$TCR_IMAGE_NAME" --arg t "$ts" \
     --arg b "$BASELINE_IMAGE" --arg scf "$scf_image" \
     --arg r "$TCR_REGISTRY" --arg n "$TCR_NAMESPACE" \
