@@ -458,7 +458,7 @@ for await (const event of stream) {
 | 事件类型                    | 说明                                     |
 |-----------------------------|------------------------------------------|
 | `agent.message`             | Agent 的文本回复（可能分多次发送）       |
-| `agent.thinking`            | Agent 内部思考过程（CoT，调试用）        |
+| `agent.thinking`            | Agent 思考过程（调试用）        |
 | `agent.tool_use`            | Agent 调用内置工具（bash、文件读写等）   |
 | `agent.tool_result`         | 工具执行结果                             |
 | `agent.custom_tool_use`     | Agent 请求调用**自定义工具**（需你处理） |
