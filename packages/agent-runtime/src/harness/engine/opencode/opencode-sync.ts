@@ -264,7 +264,26 @@ function sleep(ms: number): Promise<void> {
 /**
  * Export opencode sync events with retries; updates harness_sessions.syncExportFailedAt on failure.
  */
+/** Flight-lock: ensure only one persist per session runs at a time. */
+const flightLocks = new Map<string, Promise<{ ok: boolean; inserted?: number }>>();
+
 export async function persistOpencodeSyncForSession(args: {
+  acpSessionId: string;
+  config: AgentConfig;
+  reason: OpencodeSyncExportReason;
+}): Promise<{ ok: boolean; inserted?: number }> {
+  // Serialize concurrent exports for the same session.
+  const existing = flightLocks.get(args.acpSessionId);
+  if (existing) return existing;
+
+  const promise = persistOpencodeSyncForSessionInner(args).finally(() => {
+    flightLocks.delete(args.acpSessionId);
+  });
+  flightLocks.set(args.acpSessionId, promise);
+  return promise;
+}
+
+async function persistOpencodeSyncForSessionInner(args: {
   acpSessionId: string;
   config: AgentConfig;
   reason: OpencodeSyncExportReason;

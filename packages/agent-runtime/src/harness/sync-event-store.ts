@@ -185,17 +185,24 @@ class CloudBaseHarnessSyncEventStore implements HarnessSyncEventStore {
 
     for (const ev of candidates) {
       if (existingIds.has(ev.id)) continue;
-      await collection.doc(ev.id).set({
-        projectKey: this.projectKey,
-        acpSessionId: args.acpSessionId,
-        aggregateId: ev.aggregateId,
-        id: ev.id,
-        seq: ev.seq,
-        type: ev.type,
-        data: ev.data,
-        createdAt: now,
-      });
-      inserted++;
+      try {
+        await collection.doc(ev.id).set({
+          projectKey: this.projectKey,
+          acpSessionId: args.acpSessionId,
+          aggregateId: ev.aggregateId,
+          id: ev.id,
+          seq: ev.seq,
+          type: ev.type,
+          data: ev.data,
+          createdAt: now,
+        });
+        inserted++;
+      } catch (err) {
+        // E11000 duplicate key: race with concurrent append — already inserted, skip.
+        const message = (err as Error)?.message ?? "";
+        if (/E11000|duplicate/i.test(message)) continue;
+        throw err;
+      }
     }
     return { inserted };
   }
