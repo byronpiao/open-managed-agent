@@ -8,11 +8,6 @@
  * Commands:
  *   login                                     Login to CloudBase (proxied to tcb)
  *
- *   sync-image                                同步预构建镜像到您的容器镜像服务（TCR）
- *     --uin, -u        腾讯云账号 UIN
- *     --password, -p   访问凭证密码
- *     --images         镜像: sandbox,oma-tcbr,oma-scf,all
- *
  *   agent:create   -n <name> [options]
  *   agent:list     [-e <envId>]
  *   agent:get      [-a <agent-id>]
@@ -30,6 +25,9 @@
  *   chat           -s <session-id> -m <text>
  *   run            -a <agent-id>   -m <text>  (one-shot: create session + chat + stream)
  *   repl           -a <agent-id>              (interactive REPL)
+ *
+ *   sync-image                                同步预构建镜像到您的容器镜像服务
+ *     --images sandbox,tcbr,scf,all（默认）
  *
  *   <anything else>                           Transparently proxied to tcb CLI
  */
@@ -75,10 +73,10 @@ program
 registerAgentCommands(program);
 registerSessionCommands(program);
 registerChatCommands(program);
+registerSyncImageCommand(program);
 registerEnvCommands(program);
 registerCloudrunCommands(program);
 registerInitCommand(program);
-registerSyncImageCommand(program);
 
 // ── Login (proxy to tcb) ────────────────────────────────────────────────────
 program
