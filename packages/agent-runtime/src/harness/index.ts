@@ -61,6 +61,11 @@ export {
   recordHarnessPermissionFrames,
   recordHarnessSyncExported,
   recordHarnessAcceptanceOutcome,
+  recordSessionActive,
+  recordError,
+  recordMcpBridgeDuration,
+  recordPromptTokens,
+  recordDbOperationDuration,
 } from "./observability/metrics.js";
 
 export { getTelemetrySummary, getMetricsExportMode, getTracesExportMode } from "./telemetry/telemetry-init.js";

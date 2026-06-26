@@ -2,7 +2,7 @@
  * harness_sync_events — authoritative opencode sync event log (CloudBase or memory).
  */
 
-import { resolveCamControlPlaneCredentials } from "./harness-env.js";
+import { resolveCloudBaseCredentials as resolveCloudBaseCredentialsFromFlexdb, type CloudBaseCredentials } from "./flexdb-client.js";
 import { harnessLog, harnessTrace } from "./observability/logging.js";
 
 export const HARNESS_SYNC_EVENTS_COLLECTION = "harness_sync_events";
@@ -60,14 +60,6 @@ class InMemoryHarnessSyncEventStore implements HarnessSyncEventStore {
     const rows = await this.listEventsForAggregate(aggregateId);
     return rows.length ? rows[rows.length - 1]!.seq : 0;
   }
-}
-
-interface CloudBaseCredentials {
-  envId: string;
-  secretId?: string;
-  secretKey?: string;
-  sessionToken?: string;
-  region?: string;
 }
 
 interface CloudBaseCommand {
@@ -260,22 +252,7 @@ class CloudBaseHarnessSyncEventStore implements HarnessSyncEventStore {
 }
 
 function resolveCloudBaseCredentials(envId: string): CloudBaseCredentials | null {
-  const cam = resolveCamControlPlaneCredentials();
-  const region = process.env.TCB_REGION?.trim();
-  if (cam.secretId && cam.secretKey && region) {
-    return {
-      envId,
-      secretId: cam.secretId,
-      secretKey: cam.secretKey,
-      sessionToken: cam.sessionToken,
-      region,
-    };
-  }
-  // No CAM credentials — but CLOUDBASE_APIKEY allows FlexDB via Bearer auth.
-  if (process.env.CLOUDBASE_APIKEY?.trim()) {
-    return { envId };
-  }
-  return null;
+  return resolveCloudBaseCredentialsFromFlexdb(envId);
 }
 
 let _syncStore: HarnessSyncEventStore | null = null;

@@ -17,11 +17,12 @@ import {
 import { harnessLog } from "../../observability/logging.js";
 import { persistOpencodeSyncForSession } from "../../engine/opencode/opencode-sync.js";
 import { probeClaudeSessionStoreAfterPrompt } from "../../engine/claude/claude-session-health.js";
+import { withActiveSpan } from "../../telemetry/telemetry.js";
 import {
   ensureEngineSessionOnSandbox,
   ensureSandboxForSession,
   forwardAcpToSandbox,
-} from "../../acp-endpoint.js";
+} from "../../sandbox-ops.js";
 import { getCachedSandboxHandle } from "../../sandbox/orchestrator.js";
 import { getHarnessSessionStore } from "../../sandbox/session-store.js";
 import { touchSandboxActivity } from "../../sandbox/sandbox-prewarm.js";
@@ -200,6 +201,21 @@ export function registerManagedAgentsPermissionRequest(args: {
 }
 
 async function runSandboxPrompt(args: {
+  config: AgentConfig;
+  store: CmaStore;
+  sessionId: string;
+  prompt: Array<Record<string, unknown>>;
+  commandId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  return withActiveSpan(
+    "managed.prompt",
+    { acpSessionId: args.sessionId, engine: args.config.engine ?? "unknown" },
+    async () => runSandboxPromptInner(args),
+  );
+}
+
+async function runSandboxPromptInner(args: {
   config: AgentConfig;
   store: CmaStore;
   sessionId: string;

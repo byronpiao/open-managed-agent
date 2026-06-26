@@ -6,6 +6,7 @@ import type { AgentConfig } from "../../config.js";
 import { resolveRuntime } from "../../config.js";
 import { buildHarnessSandboxEnv } from "../deploy.js";
 import { harnessLog } from "../observability/logging.js";
+import { withActiveSpan } from "../telemetry/telemetry.js";
 import { warmClaudeEngineSession } from "../engine/claude/claude-session-warm.js";
 import { markClaudeWarmOutcome, noteClaudeSessionEntryCount } from "../engine/claude/claude-session-health.js";
 import { countHarnessClaudeSessionFootprint } from "../engine/claude/claude-session-probe.js";
@@ -160,7 +161,11 @@ export function startSandboxPrewarm(config: AgentConfig, acpSessionId: string): 
     operation: "prewarm.start",
     acpSessionId,
   });
-  const promise = bindSandboxForSession(config, acpSessionId)
+  const promise = withActiveSpan(
+    "harness.prewarm",
+    { acpSessionId, engine: config.engine ?? "unknown" },
+    async () => bindSandboxForSession(config, acpSessionId),
+  )
     .then((result) => {
       wl.emit({ status: "ok", syncHydrated: result.syncHydrated });
       return result;

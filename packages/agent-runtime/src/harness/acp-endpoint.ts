@@ -25,7 +25,6 @@ import {
   sseWrite,
 } from "../acp-shared.js";
 import {
-  getSandboxOrchestrator,
   getCachedSandboxHandle,
   dropCachedSandboxHandle,
   type HarnessSandboxHandle,
@@ -42,36 +41,27 @@ import {
 } from "./sandbox/sandbox-prewarm.js";
 import {
   getHarnessSessionStore,
-  type HarnessSessionRecord,
 } from "./sandbox/session-store.js";
 import { isScfServerless } from "./harness-env.js";
 import { harnessLog, runWithHarnessRequestContext } from "./observability/logging.js";
-import { recordHarnessPermissionFrames, recordHarnessPromptDuration } from "./observability/metrics.js";
+import { recordHarnessPermissionFrames, recordHarnessPromptDuration, recordSessionActive, recordError } from "./observability/metrics.js";
 import {
   persistOpencodeSyncForSession,
   snapshotWorkspaceIfAvailable,
 } from "./engine/opencode/opencode-sync.js";
 import { probeClaudeSessionStoreAfterPrompt } from "./engine/claude/claude-session-health.js";
 import { withActiveSpan } from "./telemetry/telemetry.js";
+import {
+  envIdFromConfig,
+  harnessCallbackBase,
+  ensureSandboxForSession,
+  forwardAcpToSandbox,
+  ensureEngineSessionOnSandbox,
+  ingestSsePayload,
+  drainAcpResponseBody,
+} from "./sandbox-ops.js";
 
 const abortControllers = new Map<string, AbortController>();
-
-function envIdFromConfig(): string {
-  const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "";
-  if (!envId) {
-    throw Object.assign(new Error("CLOUDBASE_ENV_ID is required for harness runtime"), {
-      rpcCode: -32000,
-    });
-  }
-  return envId;
-}
-
-function harnessCallbackBase(): string {
-  const fromUrl = process.env.CLOUDBASE_SERVER_URL?.trim();
-  if (fromUrl) return fromUrl.replace(/\/$/, "");
-  const port = process.env.PORT ?? 9000;
-  return `http://127.0.0.1:${port}`;
-}
 
 function handleInitialize(params: Record<string, unknown>, config: AgentConfig) {
   const { runtime, engine } = resolveRuntime(config);
@@ -93,183 +83,7 @@ function handleInitialize(params: Record<string, unknown>, config: AgentConfig) 
   };
 }
 
-export async function ensureSandboxForSession(
-  config: AgentConfig,
-  acpSessionId: string,
-): Promise<{
-  handle: HarnessSandboxHandle;
-  record: Awaited<ReturnType<ReturnType<typeof getHarnessSessionStore>["get"]>>;
-  /** Events replayed via HTTP /sync/replay on this acquire (0 if cached handle). */
-  syncHydrated: number;
-}> {
-  const envId = envIdFromConfig();
-  const store = getHarnessSessionStore(envId);
-  let record = await store.get(acpSessionId);
-  if (!record) {
-    throw Object.assign(new Error(`Session not found: ${acpSessionId}`), { rpcCode: -32602 });
-  }
 
-  let handle = getCachedSandboxHandle(acpSessionId);
-  let syncHydrated = 0;
-
-  if (!handle) {
-    await waitForSandboxPrewarm(acpSessionId);
-    handle = getCachedSandboxHandle(acpSessionId);
-  }
-
-  if (!handle) {
-    const bound = await bindSandboxForSession(config, acpSessionId);
-    syncHydrated = bound.syncHydrated;
-    handle = getCachedSandboxHandle(acpSessionId);
-    if (!handle) {
-      throw Object.assign(new Error(`Sandbox bind failed for ${acpSessionId}`), {
-        rpcCode: -32000,
-      });
-    }
-  } else {
-    await handle.resumeIfPaused();
-  }
-
-  touchSandboxActivity(acpSessionId);
-  record = (await store.get(acpSessionId)) ?? record;
-  return { handle, record, syncHydrated };
-}
-
-export async function forwardAcpToSandbox(args: {
-  handle: HarnessSandboxHandle;
-  config: AgentConfig;
-  method: string;
-  params: Record<string, unknown>;
-  id: unknown;
-  acpSessionId: string;
-  signal?: AbortSignal;
-}): Promise<globalThis.Response> {
-  const startedAt = Date.now();
-  const wl = harnessLog({
-    lane: "acp",
-    operation: "sandbox.forward",
-    acpSessionId: args.acpSessionId,
-    sandboxMethod: args.method,
-    instanceId: args.handle.instanceId,
-    toolId: args.handle.toolId,
-  });
-  const orchestrator = getSandboxOrchestrator();
-  const { engine } = resolveRuntime(args.config);
-  const path = orchestrator.acpPathForEngine(engine);
-  wl.set({ engine, acpPath: path });
-
-  const body = {
-    jsonrpc: "2.0",
-    id: args.id,
-    method: args.method,
-    params: args.params,
-  };
-
-  try {
-    const res = await args.handle.request(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-      body: JSON.stringify(body),
-      signal: args.signal,
-    });
-    wl.set({
-      httpStatus: res.status,
-      contentType: res.headers.get("content-type") ?? "",
-    });
-    wl.emit({ status: res.ok ? "ok" : "http_error", durationMs: Date.now() - startedAt });
-    return res;
-  } catch (err) {
-    wl.error(err);
-    wl.emit({ status: "error", durationMs: Date.now() - startedAt });
-    throw err;
-  }
-}
-
-async function ingestSsePayload(
-  payload: Record<string, unknown>,
-  acpSessionId: string,
-  store: ReturnType<typeof getHarnessSessionStore>,
-): Promise<void> {
-  if (payload.result && typeof payload.result === "object") {
-    const result = payload.result as Record<string, unknown>;
-    if (typeof result.sessionId === "string") {
-      await store.setEngineSessionId(acpSessionId, result.sessionId);
-    }
-  }
-}
-
-async function drainAcpResponseBody(
-  res: globalThis.Response,
-): Promise<Record<string, unknown>[]> {
-  const messages: Record<string, unknown>[] = [];
-  const contentType = res.headers.get("content-type") ?? "";
-  const text = await res.text();
-  if (contentType.includes("event-stream") || text.includes("data: ")) {
-    for (const line of text.split("\n")) {
-      let payload = line.trim();
-      if (payload.startsWith("data:")) payload = payload.slice(5).trim();
-      if (!payload || payload === "[DONE]") continue;
-      try {
-        messages.push(JSON.parse(payload) as Record<string, unknown>);
-      } catch {
-        // skip heartbeats
-      }
-    }
-    return messages;
-  }
-  if (text.trim()) {
-    try {
-      messages.push(JSON.parse(text) as Record<string, unknown>);
-    } catch {
-      // ignore non-json
-    }
-  }
-  return messages;
-}
-
-/** First prompt must create engine-side session in sandbox (gateway UUID ≠ engine session). */
-export async function ensureEngineSessionOnSandbox(
-  config: AgentConfig,
-  acpSessionId: string,
-  handle: HarnessSandboxHandle,
-  record: HarnessSessionRecord,
-  store: ReturnType<typeof getHarnessSessionStore>,
-): Promise<string> {
-  if (record.engineSessionId) return record.engineSessionId;
-
-  const mcpServers = buildHarnessAcpMcpServers({
-    config,
-    clientToolCallbackBase: harnessCallbackBase(),
-    acpSessionId,
-  });
-
-  const upstream = await forwardAcpToSandbox({
-    handle,
-    config,
-    method: "session/new",
-    params: {
-      cwd: DEFAULT_HARNESS_SANDBOX_CWD,
-      mcpServers,
-      meta: { userId: record.userId },
-    },
-    id: crypto.randomUUID(),
-    acpSessionId,
-  });
-
-  const messages = await drainAcpResponseBody(upstream);
-  for (const msg of messages) {
-    await ingestSsePayload(msg, acpSessionId, store);
-    if (msg.error) {
-      const err = msg.error as { message?: string; code?: number };
-      throw Object.assign(new Error(err.message ?? "sandbox session/new failed"), {
-        rpcCode: err.code ?? -32000,
-      });
-    }
-  }
-
-  const updated = await store.get(acpSessionId);
-  return updated?.engineSessionId ?? acpSessionId;
-}
 
 /** Live SSE flush — required for in-band client-tool bridge (tool_use_request mid-prompt). */
 function makeHarnessStreamingSseSink(res: Response) {
@@ -497,6 +311,7 @@ async function handleSessionNew(params: Record<string, unknown>, config: AgentCo
   }
 
   await store.create({ acpSessionId, userId, engine });
+  recordSessionActive(1);
   if (isScfServerless()) {
     await bindSandboxForSession(config, acpSessionId);
   } else {
@@ -648,8 +463,13 @@ async function handleSessionPrompt(
 
   const promptStartedAt = Date.now();
   let sandboxWaitMs = 0;
+  const { engine } = resolveRuntime(config);
 
   try {
+  await withActiveSpan(
+    "harness.prompt",
+    { acpSessionId: sessionId, engine: engine ?? "unknown" },
+    async (rootSpan) => {
     const promptBlocks = (params.prompt ?? []) as Array<{
       type: string;
       tool_use_id?: string;
@@ -675,7 +495,7 @@ async function handleSessionPrompt(
     const sandboxWaitStart = Date.now();
     const { handle, record } = await withActiveSpan(
       "harness.prompt.sandbox_wait",
-      { acpSessionId: sessionId, engine: config.engine ?? "opencode" },
+      { acpSessionId: sessionId, engine: engine ?? "unknown", model: String(config.model ?? "unknown") },
       async () => ensureSandboxForSession(config, sessionId),
     );
     sandboxWaitMs = Date.now() - sandboxWaitStart;
@@ -695,7 +515,7 @@ async function handleSessionPrompt(
     const forwardStartedAt = Date.now();
     await withActiveSpan(
       "harness.prompt.acp_forward",
-      { acpSessionId: sessionId, engine: config.engine ?? "opencode" },
+      { acpSessionId: sessionId, engine: engine ?? "unknown", model: String(config.model ?? "unknown") },
       async () => {
         const upstream = await forwardAcpToSandbox({
           handle,
@@ -709,19 +529,27 @@ async function handleSessionPrompt(
         await pipeSandboxSseToClient(upstream, res, id, sessionId, store, config);
       },
     );
+    const totalMs = Date.now() - promptStartedAt;
+    if (rootSpan) {
+      rootSpan.setAttribute("duration_ms", totalMs);
+      rootSpan.setAttribute("sandbox_wait_ms", sandboxWaitMs);
+    }
     harnessLog({ lane: "acp", operation: "session.prompt", acpSessionId: sessionId }).emit({
       status: "ok",
       sandboxWaitMs,
       sandboxForwardMs: Date.now() - forwardStartedAt,
-      totalMs: Date.now() - promptStartedAt,
+      totalMs,
     });
+    },
+  );
   } catch (err) {
+    const totalMs = Date.now() - promptStartedAt;
     const wl = harnessLog({ lane: "acp", operation: "session.prompt", acpSessionId: sessionId });
     wl.error(err);
     wl.emit({
       status: "error",
       sandboxWaitMs,
-      totalMs: Date.now() - promptStartedAt,
+      totalMs,
     });
     if (!res.headersSent) {
       res.json(
@@ -815,6 +643,7 @@ async function handleSessionDelete(params: Record<string, unknown>, config: Agen
 
   await store.clearInstanceBinding(sessionId);
   await store.setStatus(sessionId, "ended");
+  recordSessionActive(-1);
   clearSandboxPrewarmState(sessionId);
   dropCachedSandboxHandle(sessionId);
   return { sessionId, deleted: true };
@@ -885,21 +714,21 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
         case "initialize":
           return res.json(rpcResult(id, await withActiveSpan(
             "harness.initialize",
-            { },
+            { engine: resolveRuntime(agentConfig).engine ?? "unknown", runtime: resolveRuntime(agentConfig).runtime ?? "unknown" },
             async () => handleInitialize(params, agentConfig),
           )));
 
         case "session/new":
           return res.json(rpcResult(id, await withActiveSpan(
             "harness.session.new",
-            { },
+            { acpSessionId: String((params as Record<string,unknown>).sessionId ?? (params as Record<string,unknown>).conversationId ?? "") },
             async () => handleSessionNew(params, agentConfig),
           )));
 
         case "session/list":
           return res.json(rpcResult(id, await withActiveSpan(
             "harness.session.list",
-            { },
+            { engine: resolveRuntime(agentConfig).engine ?? "unknown" },
             async () => handleSessionList(params, agentConfig),
           )));
 
@@ -923,7 +752,7 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
         case "session/cancel":
           await withActiveSpan(
             "harness.session.cancel",
-            { },
+            { acpSessionId: String((params as Record<string,unknown>).sessionId ?? "") },
             async () => { await handleSessionCancel(params, agentConfig); },
           );
           if (isNotification) return res.status(204).end();
@@ -942,6 +771,7 @@ export function mountHarnessAcpEndpoint(app: Express, agentConfig: AgentConfig) 
       }
     } catch (err) {
       rpcOutcome = "error";
+      recordError(method);
       rpcLog.error(err);
       if (!res.headersSent) {
         const code = (err as { rpcCode?: number })?.rpcCode ?? -32000;
