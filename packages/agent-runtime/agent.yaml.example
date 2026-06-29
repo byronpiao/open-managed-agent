@@ -21,7 +21,7 @@ runtime: managed          # default — 托管运行时（网关 OAK loop）
 # Tools configuration
 # Supported types: agent_toolset, custom, mcp_toolset
 tools:
-  # Built-in agent toolset (bash, read_file, write_file, list_files)
+  # Built-in agent toolset (bash, read, write, edit, glob, grep)
   - type: agent_toolset
     default_config:
       enabled: true

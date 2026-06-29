@@ -9,12 +9,18 @@ import {
   type AgentConfig,
 } from "../../../config.js";
 
-/** Built-in agent_toolset names → opencode permission keys. */
+/**
+ * Built-in tool names (真实名) → opencode permission keys.
+ * opencode 把 6 个工具合并成 4 个 permission key：write+edit→edit, glob+grep→glob。
+ * @see https://opencode.ai/docs/permissions/
+ */
 const BUILTIN_TO_OPENCODE: Record<string, string> = {
   bash: "bash",
-  read_file: "read",
-  write_file: "edit",
-  list_files: "glob",
+  read: "read",
+  write: "edit",
+  edit: "edit",
+  glob: "glob",
+  grep: "glob",
 };
 
 export type OpencodePermissionValue = string | Record<string, string>;

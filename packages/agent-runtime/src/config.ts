@@ -247,11 +247,21 @@ export function buildHarnessInstanceEnv(
 
 // ── Built-in tool names ───────────────────────────────────────────────────────
 
+/**
+ * 内置工具名 — 直接用真实工具名（和 remote sandbox 暴露的一致），
+ * 不再有 read_file/write_file/list_files 抽象层。
+ *
+ *   - local (claude_code preset)：SDK 用首字母大写（Bash/Read/...），
+ *     oak-runtime/config.ts 派生审批名时做大小写转换
+ *   - remote (ags-stateful)：mcp__sandbox__<name> 前缀，名字本身一致
+ */
 export const BUILTIN_TOOL_NAMES = [
   "bash",
-  "read_file",
-  "write_file",
-  "list_files",
+  "read",
+  "write",
+  "edit",
+  "glob",
+  "grep",
 ] as const;
 
 export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];

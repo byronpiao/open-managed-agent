@@ -17,7 +17,7 @@ import {
   type ToolDefinition,
 } from "@cloudbase/open-agent-kernel";
 
-import type { AgentConfig, ModelSpec } from "../config.js";
+import { getCustomTools, type AgentConfig, ModelSpec } from "../config.js";
 import { resolveBuiltinTools, getMcpToolsets } from "../config.js";
 
 const nodeRequire = createRequire(import.meta.url);
@@ -115,12 +115,29 @@ export function toKernelAgentConfig(
     }
   }
 
+  // sandbox provider 决定内置工具的命名空间，必须在派生审批名之前算出。
+  //   - 'local'        → SDK 内置工具(裸名 Bash/Read/...，claude_code preset)
+  //   - 'ags-stateful' → 沙箱工具重定向(mcp__sandbox__bash 等)
+  const sandboxProvider =
+    config.sandbox?.provider ??
+    (config.sandbox?.enabled === true ? "ags-stateful" : "local");
+
   // ── requireApproval rule ────────────────────────────────────────────────
+  // 统一从 tools 配置派生(agent_toolset.permission_policy + mcp_toolset)。
+  // BUILTIN_TOOL_NAMES 已是真实工具名(bash/read/write/edit/glob/grep)，
+  // 按 provider 做纯命名空间转换(1:1)：
+  //   - local  → 首字母大写(Bash/Read/...，匹配 SDK claude_code preset)
+  //   - remote → mcp__sandbox__<name>(小写，匹配 TRW sandbox MCP)
+  const isLocalProvider = sandboxProvider === "local";
   const approvalNames: string[] = [];
   const builtinPolicies = resolveBuiltinTools(config);
   for (const [name, policy] of builtinPolicies) {
     if (policy.enabled && policy.permissionPolicy.type === "always_ask") {
-      approvalNames.push(`mcp__sandbox__${name}`);
+      approvalNames.push(
+        isLocalProvider
+          ? name.charAt(0).toUpperCase() + name.slice(1)
+          : `mcp__sandbox__${name}`,
+      );
     }
   }
   for (const t of getMcpToolsets(config)) {
@@ -133,8 +150,17 @@ export function toKernelAgentConfig(
       }
     }
   }
-  const requireApproval: RequireApprovalRule | undefined =
-    approvalNames.length > 0 ? approvalNames : undefined;
+
+  // Also include client-side custom tools — they need the permission store
+  // for the request_permission → permission_decision resume path.
+  const customToolNames = getCustomTools(config).map((t) => t.name);
+
+  // 去重合并：policy 派生 + 客户端自定义工具。
+  const allApprovalNames = Array.from(
+    new Set([...approvalNames, ...customToolNames]),
+  );
+  const effectiveRequireApproval: RequireApprovalRule | undefined =
+    allApprovalNames.length > 0 ? allApprovalNames : undefined;
 
   // ── Credentials ─────────────────────────────────────────────────────────
   // Resolve from env vars or tcb login cache; pass to kernel declaratively.
@@ -151,10 +177,10 @@ export function toKernelAgentConfig(
   // empty.
   const credentials = resolveCloudBaseCredentials(envId);
   const hasApiKey = !!process.env.CLOUDBASE_APIKEY;
-  // When no CAM credentials but CLOUDBASE_APIKEY is available, pass minimal
-  // credentials (empty secretId/secretKey) so the kernel creates
-  // CloudBaseSessionStore. The @cloudbase/node-sdk picks up CLOUDBASE_APIKEY
-  // from the env when secretId/secretKey are not passed to init().
+  // CloudBaseDbDriver (session/permission/client-tool store) accepts
+  // empty secretId/secretKey — @cloudbase/node-sdk picks up CLOUDBASE_APIKEY
+  // from env for Bearer auth. COS store also exchanges API key for temp CAM.
+  // So CLOUDBASE_APIKEY alone is sufficient for all CloudBase features.
   const effectiveCredentials =
     credentials ??
     (hasApiKey
@@ -171,18 +197,6 @@ export function toKernelAgentConfig(
       ? baseModel
       : baseModel.id;
 
-  // ── Sandbox capabilities ─────────────────────────────────────────────────
-  const builtinPoliciesForCaps = resolveBuiltinTools(config);
-  const shellEnabled = builtinPoliciesForCaps.get("bash")?.enabled ?? true;
-  const fsEnabled =
-    (builtinPoliciesForCaps.get("read_file")?.enabled ?? true) ||
-    (builtinPoliciesForCaps.get("write_file")?.enabled ?? true) ||
-    (builtinPoliciesForCaps.get("list_files")?.enabled ?? true);
-  const sandboxCapabilities =
-    !shellEnabled || !fsEnabled
-      ? { shell: shellEnabled, filesystem: fsEnabled }
-      : undefined;
-
   // ── Sandbox ─────────────────────────────────────────────────────────────
   // agent-runtime 部署形态下 sandbox 永远启用,provider 由 yaml sandbox.provider 决定
   // (向后兼容:未设时从 sandbox.enabled 推断):
@@ -197,8 +211,6 @@ export function toKernelAgentConfig(
   // 注:本地 cwd 持久化的 COS 操作走 CAM 签名,需要 TCB_SECRET_ID/KEY;
   // 只有 CLOUDBASE_APIKEY 时 kernel 会 graceful degrade(不持久,但不报错)。
   // ags-stateful 路径仍需 CLOUDBASE_APIKEY —— oak 会在缺 key 时抛 InvalidConfigError。
-  const sandboxProvider = config.sandbox?.provider
-    ?? (config.sandbox?.enabled === true ? "ags-stateful" : "local");
 
   return {
     envId,
@@ -217,24 +229,20 @@ export function toKernelAgentConfig(
     mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
     sandbox: {
       enabled: true,
-      // @ts-expect-error oak beta.7 types only accept 'ags-stateful'; beta.8 will add 'local' provider
       provider: sandboxProvider,
       scope: "session" as const,
       cloudbaseTools: false,
-      ...(sandboxCapabilities ? { capabilities: sandboxCapabilities } : {}),
+      capabilities: {},
     },
-    // 流式输出:显式开启(includePartialMessages)。kernel 把 SDK 增量 stream_event
-    // 翻译成 message_delta(逐字 chunk),pumpEvents 转成 agent_message_chunk SSE frame。
-    // 注:SCF web-function 网关全缓冲到 res.end(),前端要等整轮才收到(非实时)。
-    stream: true,
-    permissions: requireApproval ? { requireApproval } : undefined,
+    permissions: effectiveRequireApproval
+      ? { requireApproval: effectiveRequireApproval }
+      : undefined,
     // Session isolation key (projectKey). envId only selects WHICH FlexDB to
     // connect to (via credentials); it must NOT be the isolation key, otherwise
     // every agent in the same env shares one session pool. We scope by the
     // agent's own name so each agent only sees its own sessions.
-    // Trade-offs (accepted): name is not guaranteed unique within an env, so
-    // same-named agents share sessions; renaming an agent orphans old sessions;
-    // existing sessions stored under projectKey=envId become invisible.
+    // 有凭据才启用 session 持久化;无凭据时留 undefined（"未配置"，
+    // 由 kernel 按 credentials 推断），而非显式 { enabled: false }。
     session: effectiveCredentials
       ? { enabled: true, projectKey: config.name }
       : undefined,
@@ -242,9 +250,5 @@ export function toKernelAgentConfig(
       opts.customToolDefs && opts.customToolDefs.length > 0
         ? opts.customToolDefs
         : undefined,
-  // TODO: remove `as any` when @cloudbase/open-agent-kernel publishes a version
-  // (>=0.1.0-beta.7) that includes `stream` in its AgentConfig type.
-  // The field is already accepted by the kernel at runtime (npm link tested locally),
-  // only the published type definition is lagging.
-  } as any;
+  };
 }
