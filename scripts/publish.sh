@@ -27,10 +27,4 @@ docker --context colima tag "${GHCR}/open-managed-agent-scf:${TAG}" "${GHCR}/ope
 docker --context colima push "${GHCR}/open-managed-agent-scf:latest"
 echo "   ✓ ${GHCR}/open-managed-agent-scf:${TAG} + latest"
 
-# ── 更新 sync.sh ────────────────────────────────────────
-echo ""
-echo ">>> 3. 更新 sync.sh"
-sed -i '' 's/^BASELINE_TAG=.*/BASELINE_TAG="'"$TAG"'"/' "$(dirname "$0")/sync.sh"
-echo "   BASELINE_TAG=$TAG"
-echo ""
 echo "done."
