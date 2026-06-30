@@ -1,24 +1,31 @@
 # OMA 镜像分发 — 维护指南
 
-OMA 通过 `magent sync-image` 将预构建镜像分发到用户的 TCR。
+`magent sync-image` 将预构建镜像分发到用户的 TCR。
 
-## 与 CloudBase 沙箱分发的差异
+## 镜像清单
 
-- OMA 同步 3 个镜像：sandbox（沙箱）、tcbr（云托管）、scf（云函数）
-- 基线源仅 GHCR，不支持 COS
-- CNB 脚本为 Node.js 内联模板，零额外依赖
+| 镜像 | 标识 | GHCR 地址 |
+|------|:---:|------|
+| CloudBase 沙箱（沙箱镜像） | `sandbox` | `ghcr.io/realalexandreai/tcb-remote-workspace:latest` |
+| OMA Agent（云托管） | `tcbr` | `ghcr.io/realalexandreai/open-managed-agent:latest` |
+| OMA Agent（云函数） | `scf` | `ghcr.io/realalexandreai/open-managed-agent-scf:latest` |
 
 ## 发布新版本
 
+### OMA 镜像（tcbr + scf）
+
 ```bash
 ./scripts/publish.sh [tag]
-# 默认 tag：YYMMDD-HHMM
-# 自动推送 :latest
 ```
 
-镜像地址：
-- `ghcr.io/realalexandreai/open-managed-agent:<tag>`
-- `ghcr.io/realalexandreai/open-managed-agent-scf:<tag>`
+构建 `packages/agent-runtime` 的 Dockerfile + Dockerfile.scf，推送到 GHCR。默认 tag `YYMMDD-HHMM`，同时推送 `:latest`。
+
+### 沙箱镜像（sandbox）
+
+```bash
+./scripts/build.sh --preset magent --load   # 构建 tcb-sandbox-ags:app-magent
+./cloudapp/publish.sh [tag]                 # 推送 GHCR + AGS CCR
+```
 
 ## 用户文档
 
