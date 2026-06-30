@@ -26,6 +26,9 @@
  *   run            -a <agent-id>   -m <text>  (one-shot: create session + chat + stream)
  *   repl           -a <agent-id>              (interactive REPL)
  *
+ *   sync-image                                同步预构建镜像到您的容器镜像服务
+ *     --images sandbox,tcbr,scf,all（默认）
+ *
  *   <anything else>                           Transparently proxied to tcb CLI
  */
 
@@ -41,6 +44,7 @@ import { registerChatCommands } from "./lib/commands/chat.mjs";
 import { registerEnvCommands } from "./lib/commands/env.mjs";
 import { registerCloudrunCommands } from "./lib/commands/cloudrun.mjs";
 import { registerInitCommand } from "./lib/commands/init.mjs";
+import { registerSyncImageCommand } from "./lib/commands/sync-image.mjs";
 
 // ── Load .env file ──────────────────────────────────────────────────────────
 const envFile = new URL(".env", import.meta.url).pathname;
@@ -69,6 +73,7 @@ program
 registerAgentCommands(program);
 registerSessionCommands(program);
 registerChatCommands(program);
+registerSyncImageCommand(program);
 registerEnvCommands(program);
 registerCloudrunCommands(program);
 registerInitCommand(program);

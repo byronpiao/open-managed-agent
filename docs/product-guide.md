@@ -6,10 +6,12 @@ OpenManagedAgent 是一个兼容 [Anthropic Managed Agents](https://platform.cla
 
 **核心能力：**
 - 一键创建 Agent（自动部署为云函数）
+- 沙箱内 Agent（OpenCode / Claude Code，在远程沙箱中运行）
 - YAML 声明式配置（tools、MCP、skills、permission policy）
 - 热更新配置（~8s 生效，无需重新部署代码）
 - TypeScript SDK 流式对话
 - 多轮上下文保持
+- **同步镜像到容器镜像服务** — [`magent sync-image`](./sync-image.md)
 
 ---
 
