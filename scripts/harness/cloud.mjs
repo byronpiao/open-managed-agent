@@ -411,16 +411,32 @@ async function verifyCloudHarness(agentId, expectedEngine = "opencode") {
 
   const acpUrl = gatewayAcpUrl(envId, agentId);
 
-  async function acpCall(method, params) {
-    const headers = await getAuthHeaders(envId);
-    const res = await fetch(acpUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
-    });
-    const json = await res.json();
-    if (json.error) throw new Error(`${method}: ${json.error.message}`);
-    return json.result;
+  async function acpCall(method, params, { retries = 8 } = {}) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      const headers = await getAuthHeaders(envId);
+      const res = await fetch(acpUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+      });
+      const text = await res.text();
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        const retryable =
+          attempt < retries &&
+          (res.status >= 500 || res.status === 404 || text.trimStart().startsWith("<"));
+        if (retryable) {
+          await sleep(2000);
+          continue;
+        }
+        throw new Error(`${method} not JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
+      }
+      if (json.error) throw new Error(`${method}: ${json.error.message}`);
+      return json.result;
+    }
+    throw new Error(`${method} failed after ${retries} attempts`);
   }
 
   const ms = (t0) => `${Date.now() - t0}ms`;

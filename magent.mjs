@@ -26,8 +26,8 @@
  *   run            -a <agent-id>   -m <text>  (one-shot: create session + chat + stream)
  *   repl           -a <agent-id>              (interactive REPL)
  *
- *   sync-image                                同步预构建镜像到您的容器镜像服务
- *     --images sandbox,tcbr,scf,all（默认）
+ *   sync-image                                同步预构建镜像到 TCR（无需密码，流水线自动推送）
+ *     -i sandbox,tcbr,scf,all
  *
  *   <anything else>                           Transparently proxied to tcb CLI
  */
