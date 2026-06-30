@@ -19,6 +19,7 @@ import {
 } from "./llm-providers.js";
 import { buildHarnessOpencodePermission } from "./engine/opencode/opencode-permissions.js";
 import { mergeHarnessInstanceEnv, sandboxEnvToHarnessVars } from "./sandbox/sandbox-env.js";
+import { resolveCamControlPlaneCredentials } from "./harness-env.js";
 
 export { buildHarnessOpencodePermission } from "./engine/opencode/opencode-permissions.js";
 
@@ -224,18 +225,13 @@ export function buildHarnessInitCredEnv(): HarnessEnvVar[] {
     if (value) out.push({ Name: name, Value: value });
   };
   push("CLOUDBASE_ENV_ID", process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID);
-  push(
-    "TENCENTCLOUD_SECRETID",
-    process.env.TCB_SECRET_ID ?? process.env.TENCENTCLOUD_SECRETID,
-  );
-  push(
-    "TENCENTCLOUD_SECRETKEY",
-    process.env.TCB_SECRET_KEY ?? process.env.TENCENTCLOUD_SECRETKEY,
-  );
-  push(
-    "TENCENTCLOUD_SESSIONTOKEN",
-    process.env.TCB_TOKEN ?? process.env.TENCENTCLOUD_SESSIONTOKEN,
-  );
+  // SCF agent runtime: resolveCamControlPlaneCredentials prefers TENCENTCLOUD_* role
+  // keys (see CONTRIBUTING §9). TCBR / local harness prefer TCB_SECRET_*.
+  const creds = resolveCamControlPlaneCredentials();
+  push("TENCENTCLOUD_SECRETID", creds.secretId);
+  push("TENCENTCLOUD_SECRETKEY", creds.secretKey);
+  push("TENCENTCLOUD_SESSIONTOKEN", creds.sessionToken);
+  push("TCB_REGION", process.env.TCB_REGION);
   return out;
 }
 

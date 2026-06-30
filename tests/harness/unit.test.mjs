@@ -787,12 +787,42 @@ test("buildHarnessInitCredEnv maps TCB secrets", () => {
     CLOUDBASE_ENV_ID: process.env.CLOUDBASE_ENV_ID,
     TCB_SECRET_ID: process.env.TCB_SECRET_ID,
     TCB_SECRET_KEY: process.env.TCB_SECRET_KEY,
+    SCF_RUNTIME: process.env.SCF_RUNTIME,
+    TENCENTCLOUD_SECRETID: process.env.TENCENTCLOUD_SECRETID,
+    TENCENTCLOUD_SECRETKEY: process.env.TENCENTCLOUD_SECRETKEY,
   };
   process.env.CLOUDBASE_ENV_ID = "env-test";
   process.env.TCB_SECRET_ID = "sid";
   process.env.TCB_SECRET_KEY = "skey";
+  delete process.env.SCF_RUNTIME;
+  delete process.env.TENCENTCLOUD_SECRETID;
+  delete process.env.TENCENTCLOUD_SECRETKEY;
   const env = buildHarnessInitCredEnv();
   assert.ok(env.some((e) => e.Name === "TENCENTCLOUD_SECRETID" && e.Value === "sid"));
+  for (const [k, v] of Object.entries(prev)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
+
+test("buildHarnessInitCredEnv on SCF prefers TENCENTCLOUD_* over TCB_SECRET_*", () => {
+  const prev = {
+    TCB_SECRET_ID: process.env.TCB_SECRET_ID,
+    TCB_SECRET_KEY: process.env.TCB_SECRET_KEY,
+    SCF_RUNTIME: process.env.SCF_RUNTIME,
+    TENCENTCLOUD_SECRETID: process.env.TENCENTCLOUD_SECRETID,
+    TENCENTCLOUD_SECRETKEY: process.env.TENCENTCLOUD_SECRETKEY,
+    TENCENTCLOUD_SESSIONTOKEN: process.env.TENCENTCLOUD_SESSIONTOKEN,
+  };
+  process.env.SCF_RUNTIME = "Nodejs18";
+  process.env.TCB_SECRET_ID = "maintainer-long";
+  process.env.TCB_SECRET_KEY = "maintainer-key";
+  process.env.TENCENTCLOUD_SECRETID = "scf-role-id";
+  process.env.TENCENTCLOUD_SECRETKEY = "scf-role-key";
+  process.env.TENCENTCLOUD_SESSIONTOKEN = "scf-token";
+  const env = buildHarnessInitCredEnv();
+  assert.ok(env.some((e) => e.Name === "TENCENTCLOUD_SECRETID" && e.Value === "scf-role-id"));
+  assert.ok(env.some((e) => e.Name === "TENCENTCLOUD_SESSIONTOKEN" && e.Value === "scf-token"));
   for (const [k, v] of Object.entries(prev)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -1481,7 +1511,7 @@ test("buildHarnessOpencodeConfigContent embeds permission in OPENCODE_CONFIG", (
         type: "agent_toolset",
         default_config: { enabled: true, permission_policy: { type: "always_allow" } },
         configs: [
-          { name: "write_file", enabled: true, permission_policy: { type: "always_ask" } },
+          { name: "edit", enabled: true, permission_policy: { type: "always_ask" } },
         ],
       },
     ],
