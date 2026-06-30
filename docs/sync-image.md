@@ -39,8 +39,8 @@ magent sync-image -i sandbox,tcbr
 
 ```
   CloudBase 沙箱：ccr.ccs.tencentyun.com/tcb-100xxx/tcb-sandbox:tcb-sandbox-001
-  OMA 云托管：   ccr.ccs.tencentyun.com/tcb-100xxx/open-managed-agent:open-managed-agent-001
-  OMA 云函数：   ccr.ccs.tencentyun.com/tcb-100xxx/open-managed-agent:scf-open-managed-agent-001
+  OpenManagedAgent 云托管：   ccr.ccs.tencentyun.com/tcb-100xxx/open-managed-agent:open-managed-agent-001
+  OpenManagedAgent 云函数：   ccr.ccs.tencentyun.com/tcb-100xxx/open-managed-agent:scf-open-managed-agent-001
 ```
 
 首次自动开通时打印 UIN 和密码，提醒前往控制台修改。
