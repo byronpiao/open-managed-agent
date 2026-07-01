@@ -24,18 +24,17 @@ import {
   type HarnessSessionRecord,
 } from "./sandbox/session-store.js";
 import { harnessCallbackBase } from "./callback-base.js";
+import { resolveHarnessEnvId } from "./harness-env.js";
 import { harnessLog } from "./observability/logging.js";
 
 export { harnessCallbackBase } from "./callback-base.js";
 
 export function envIdFromConfig(): string {
-  const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "";
-  if (!envId) {
-    throw Object.assign(new Error("CLOUDBASE_ENV_ID is required for harness runtime"), {
-      rpcCode: -32000,
-    });
+  try {
+    return resolveHarnessEnvId();
+  } catch (err) {
+    throw Object.assign(new Error((err as Error).message), { rpcCode: -32000 });
   }
-  return envId;
 }
 
 export async function ensureSandboxForSession(

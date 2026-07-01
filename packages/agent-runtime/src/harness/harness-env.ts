@@ -18,6 +18,14 @@ export function requireEnv(name: string, hint?: string): string {
   return value;
 }
 
+export function resolveHarnessEnvId(): string {
+  const envId = process.env.CLOUDBASE_ENV_ID?.trim() ?? process.env.TCB_ENV_ID?.trim();
+  if (!envId) {
+    throw new Error("CLOUDBASE_ENV_ID is required for harness runtime");
+  }
+  return envId;
+}
+
 export function resolveHarnessSandboxImage(agentImage?: string | null): string {
   const fromYaml = agentImage?.trim();
   if (fromYaml) return fromYaml;
@@ -187,7 +195,7 @@ export function resolveCamControlPlaneCredentials(): {
  * Maintainer creds for harness FlexDB data (e.g. harness_claude_* probe).
  * SCF execution role may lack read on collections written with injected maintainer keys.
  */
-export function resolveHarnessMaintainerCredentials(): {
+export function resolveHarnessInjectionCredentials(): {
   secretId: string;
   secretKey: string;
   sessionToken?: string;
@@ -203,6 +211,14 @@ export function resolveHarnessMaintainerCredentials(): {
     };
   }
   return resolveCamControlPlaneCredentials();
+}
+
+export function resolveHarnessMaintainerCredentials(): {
+  secretId: string;
+  secretKey: string;
+  sessionToken?: string;
+} {
+  return resolveHarnessInjectionCredentials();
 }
 
 function resolveCamSessionToken(): string | undefined {
