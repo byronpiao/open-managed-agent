@@ -185,9 +185,10 @@ async function deployCloudHarness(argv, backend = "tcbr", engine = "opencode") {
   let agentId = agentIdArg;
 
   if (agentId) {
-    console.log(`=== magent agent:update (${backend} harness ${engine} ${agentId}) ===`);
+    const updateLabel = `magent agent:update (${backend} harness ${engine} ${agentId})`;
+    console.log(`=== ${updateLabel} ===`);
     await agentUpdateWithRetry(agentId, yamlPath, envId, {
-      afterRedeploy: backend === "tcbr",
+      afterRedeploy: true,
       backend,
       engine,
       argv,
@@ -217,7 +218,7 @@ async function deployCloudHarness(argv, backend = "tcbr", engine = "opencode") {
     console.log("(avoid SCF Deleting-state 435 — waiting before create…)");
     await sleep(SCF_CREATE_COOLDOWN_MS);
     const createOut = execSync(
-      `node "${magent}" agent:create -n "${createAgentName(backend, engine)}" --type scf --agent-runtime harness --engine ${engine} -f "${yamlPath}" --code "${runtimeRoot}" -e "${envId}"`,
+      `node "${magent}" agent:create -n "${createAgentName(backend, engine)}" --type scf --agent-runtime harness --engine ${engine} -f "${yamlPath}" -e "${envId}"`,
       {
         encoding: "utf-8",
         cwd: repoRoot,
@@ -236,31 +237,42 @@ async function deployCloudHarness(argv, backend = "tcbr", engine = "opencode") {
   }
   console.log(`\nAgent ID: ${agentId}`);
 
-  let base = process.env.CLOUDBASE_SERVER_URL?.trim();
-  if (!base || base.includes("127.0.0.1") || base.includes("localhost")) {
-    try {
-      const detail = execSync(`node "${magent}" agent:get -a "${agentId}" -e "${envId}"`, {
-        encoding: "utf-8",
-      });
-      const urlMatch = detail.match(/https:\/\/[^\s]+\.tcloudbase\.com[^\s]*/i);
-      if (urlMatch) base = urlMatch[0].replace(/[)\],]+$/, "");
-    } catch {
-      /* optional */
-    }
+  // Pinned agent path already ran agent:update above.
+  if (agentIdArg) {
+    return agentId;
   }
 
-  if (base && !base.includes("127.0.0.1")) {
-    console.log(`\n=== healthz ${base}/healthz ===`);
-    process.env.CLOUDBASE_SERVER_URL = base;
-    sh(`curl -sf "${base}/healthz" | head -c 800`);
-    console.log("\n");
-    await agentUpdateWithRetry(agentId, yamlPath, envId, {
-      env: { ...harnessDeployEnv(backend, engine, argv), CLOUDBASE_SERVER_URL: base },
-      backend,
-      engine,
-    });
+  // Post-create: deploy harness env (CLOUDBASE_AGENT_ID; TCBR may override callback URL).
+  if (backend === "tcbr") {
+    let base = process.env.CLOUDBASE_SERVER_URL?.trim();
+    if (!base || base.includes("127.0.0.1") || base.includes("localhost")) {
+      try {
+        const detail = execSync(`node "${magent}" agent:get -a "${agentId}" -e "${envId}"`, {
+          encoding: "utf-8",
+        });
+        const urlMatch = detail.match(/https:\/\/[^\s]+\.tcloudbase\.com[^\s]*/i);
+        if (urlMatch) base = urlMatch[0].replace(/[)\],]+$/, "");
+      } catch {
+        /* optional */
+      }
+    }
+
+    if (base && !base.includes("127.0.0.1")) {
+      console.log(`\n=== healthz ${base}/healthz ===`);
+      sh(`curl -sf "${base}/healthz" | head -c 800`);
+      console.log("\n");
+      await agentUpdateWithRetry(agentId, yamlPath, envId, {
+        env: { ...harnessDeployEnv(backend, engine, argv), CLOUDBASE_SERVER_URL: base },
+        backend,
+        engine,
+        argv,
+      });
+    } else {
+      console.warn("WARN: could not resolve TCBR service URL for client-tool callback");
+      await agentUpdateWithRetry(agentId, yamlPath, envId, { backend, engine, argv });
+    }
   } else {
-    console.warn("WARN: set CLOUDBASE_SERVER_URL to public gateway for client-tool callback");
+    await agentUpdateWithRetry(agentId, yamlPath, envId, { backend, engine, argv });
   }
 
   return agentId;

@@ -23,7 +23,10 @@ import {
   getHarnessSessionStore,
   type HarnessSessionRecord,
 } from "./sandbox/session-store.js";
+import { harnessCallbackBase } from "./callback-base.js";
 import { harnessLog } from "./observability/logging.js";
+
+export { harnessCallbackBase } from "./callback-base.js";
 
 export function envIdFromConfig(): string {
   const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "";
@@ -33,13 +36,6 @@ export function envIdFromConfig(): string {
     });
   }
   return envId;
-}
-
-export function harnessCallbackBase(): string {
-  const fromUrl = process.env.CLOUDBASE_SERVER_URL?.trim();
-  if (fromUrl) return fromUrl.replace(/\/$/, "");
-  const port = process.env.PORT ?? 9000;
-  return `http://127.0.0.1:${port}`;
 }
 
 export async function ensureSandboxForSession(

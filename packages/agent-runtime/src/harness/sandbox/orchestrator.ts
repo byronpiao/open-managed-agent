@@ -289,7 +289,12 @@ export class AgsStatefulSandboxOrchestrator {
     await this.stopInstance(instanceId, cred, envId);
   }
 
-  async connectToInstance(instanceId: string, envId: string): Promise<HarnessSandboxHandle> {
+  async connectToInstance(
+    instanceId: string,
+    envId: string,
+    toolId?: string,
+    instanceEnv?: HarnessEnvVar[],
+  ): Promise<HarnessSandboxHandle> {
     const cred = resolveCredentials(this.options);
     if (!cred.apiKey?.trim()) cred.apiKey = await fetchGatewayAccessToken(envId);
     const baseUrl = resolveGatewayUrl(envId, cred.gatewayBaseUrl);
@@ -299,9 +304,24 @@ export class AgsStatefulSandboxOrchestrator {
       apiKey: cred.apiKey, instanceId, port: SANDBOX_TRW_SERVICE_PORT, accessToken,
     });
     await waitForReady({ baseUrl, headers });
+    if (instanceEnv?.length) {
+      const wl = harnessLog({
+        lane: "orchestrator",
+        operation: "instance.reconnect.init",
+        instanceId,
+      });
+      await this.trwWorkspaceInit(baseUrl, headers, instanceEnv, wl);
+    }
     return buildHarnessSandboxHandle({
-      instanceId, toolId: cred.harnessToolId ?? "", baseUrl, apiKey: cred.apiKey,
-      accessToken, cred, envId, sandbox, orchestrator: this,
+      instanceId,
+      toolId: toolId ?? cred.harnessToolId ?? "",
+      baseUrl,
+      apiKey: cred.apiKey,
+      accessToken,
+      cred,
+      envId,
+      sandbox,
+      orchestrator: this,
     });
   }
 

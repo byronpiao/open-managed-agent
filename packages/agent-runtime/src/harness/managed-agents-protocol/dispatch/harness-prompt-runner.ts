@@ -32,14 +32,8 @@ import type {
   McpExecuteCommand,
   PermissionResolveCommand,
 } from "../vendor/runtime-command-types.js";
+import { harnessCallbackBase } from "../../callback-base.js";
 import { acpSessionUpdateToDriverEvents } from "../bridge/acp-to-driver-event.js";
-
-function harnessCallbackBase(): string {
-  const fromUrl = process.env.CLOUDBASE_SERVER_URL?.trim();
-  if (fromUrl) return fromUrl.replace(/\/$/, "");
-  const port = process.env.PORT ?? 9000;
-  return `http://127.0.0.1:${port}`;
-}
 
 function envId(): string {
   return process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "default";

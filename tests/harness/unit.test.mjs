@@ -35,6 +35,8 @@ import {
   buildSkillsManifestEnv,
   HARNESS_PUBLIC_MAGENT_IMAGE,
   resolveHarnessSandboxImage,
+  resolveCamControlPlaneCredentials,
+  resolveHarnessMaintainerCredentials,
   deliverClientToolResult,
   invokeClientToolFromSandbox,
   registerActivePrompt,
@@ -46,6 +48,8 @@ import {
   hydrateOpencodeSyncEvents,
   resolveHarnessSandboxIdlePauseMs,
   resetSandboxPrewarmForTests,
+  harnessCallbackBase,
+  harnessGatewayBotBase,
   normalizeInboundRequestId,
   parseCloudbaseTraceHeader,
   parseTraceparent,
@@ -59,6 +63,8 @@ import { openAiChatCompletionsUrl } from "../../packages/agent-runtime/dist/harn
 import {
   normalizeAgentRuntime,
   applyHarnessRuntimeEnv,
+  resolveHarnessClientToolCallbackBase,
+  harnessGatewayBotBase as deployHarnessGatewayBotBase,
 } from "../../lib/harness-deploy.mjs";
 import {
   getHarnessSessionStore,
@@ -709,27 +715,75 @@ test("normalizeAgentRuntime sets harness + engine from CLI args", () => {
 });
 
 test("applyHarnessRuntimeEnv writes mcporter for custom tools", () => {
-  const env = applyHarnessRuntimeEnv(
-    {},
-    {
-      name: "t",
-      model: "m",
-      system: "s",
-      runtime: "harness",
-      engine: "opencode",
-      tools: [
-        {
-          type: "custom",
-          name: "my_tool",
-          description: "d",
-          input_schema: { type: "object", properties: {} },
-        },
-      ],
-    },
-    { clientToolCallbackBase: "https://gw.example.com" },
-  );
-  assert.ok(env.MCPORTER_CONFIG_CONTENT);
+  const prevUrl = process.env.CLOUDBASE_SERVER_URL;
+  process.env.CLOUDBASE_SERVER_URL = "https://gw.example.com";
+  let env;
+  try {
+    env = applyHarnessRuntimeEnv(
+      {},
+      {
+        name: "t",
+        model: "m",
+        system: "s",
+        runtime: "harness",
+        engine: "opencode",
+        tools: [
+          {
+            type: "custom",
+            name: "my_tool",
+            description: "d",
+            input_schema: { type: "object", properties: {} },
+          },
+        ],
+      },
+      { envId: "env-1", agentId: "agent-1" },
+    );
+    assert.ok(env.MCPORTER_CONFIG_CONTENT);
+    assert.equal(env.CLOUDBASE_AGENT_ID, "agent-1");
+    const parsed = JSON.parse(env.MCPORTER_CONFIG_CONTENT);
+    assert.ok(parsed.mcpServers[MANAGED_AGENT_CLIENT_MCP_SERVER].url.startsWith("https://gw.example.com/"));
+  } finally {
+    if (prevUrl === undefined) delete process.env.CLOUDBASE_SERVER_URL;
+    else process.env.CLOUDBASE_SERVER_URL = prevUrl;
+  }
   assert.equal(env.HARNESS_SANDBOX_IMAGE, undefined);
+});
+
+test("resolveHarnessClientToolCallbackBase derives gateway from envId + agentId", () => {
+  const prevUrl = process.env.CLOUDBASE_SERVER_URL;
+  delete process.env.CLOUDBASE_SERVER_URL;
+  try {
+    assert.equal(
+      resolveHarnessClientToolCallbackBase("env-abc", { agentId: "agent-xyz" }),
+      deployHarnessGatewayBotBase("env-abc", "agent-xyz"),
+    );
+    assert.equal(
+      harnessGatewayBotBase("env-abc", "agent-xyz"),
+      "https://env-abc.api.tcloudbasegateway.com/v1/aibot/bots/agent-xyz",
+    );
+  } finally {
+    if (prevUrl === undefined) delete process.env.CLOUDBASE_SERVER_URL;
+    else process.env.CLOUDBASE_SERVER_URL = prevUrl;
+  }
+});
+
+test("harnessCallbackBase derives gateway from env vars at runtime", () => {
+  const keys = ["CLOUDBASE_SERVER_URL", "CLOUDBASE_ENV_ID", "CLOUDBASE_AGENT_ID", "PORT"];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  try {
+    delete process.env.CLOUDBASE_SERVER_URL;
+    process.env.CLOUDBASE_ENV_ID = "env-abc";
+    process.env.CLOUDBASE_AGENT_ID = "agent-xyz";
+    assert.equal(
+      harnessCallbackBase(),
+      "https://env-abc.api.tcloudbasegateway.com/v1/aibot/bots/agent-xyz",
+    );
+  } finally {
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
 });
 
 test("resolveHarnessSandboxImage prefers yaml over builtin default", () => {
@@ -805,24 +859,92 @@ test("buildHarnessInitCredEnv maps TCB secrets", () => {
   }
 });
 
-test("buildHarnessInitCredEnv on SCF prefers TENCENTCLOUD_* over TCB_SECRET_*", () => {
+test("buildHarnessInitCredEnv for sandbox prefers TCB_SECRET over TENCENTCLOUD", () => {
   const prev = {
     TCB_SECRET_ID: process.env.TCB_SECRET_ID,
     TCB_SECRET_KEY: process.env.TCB_SECRET_KEY,
     SCF_RUNTIME: process.env.SCF_RUNTIME,
     TENCENTCLOUD_SECRETID: process.env.TENCENTCLOUD_SECRETID,
     TENCENTCLOUD_SECRETKEY: process.env.TENCENTCLOUD_SECRETKEY,
-    TENCENTCLOUD_SESSIONTOKEN: process.env.TENCENTCLOUD_SESSIONTOKEN,
   };
   process.env.SCF_RUNTIME = "Nodejs18";
   process.env.TCB_SECRET_ID = "maintainer-long";
   process.env.TCB_SECRET_KEY = "maintainer-key";
   process.env.TENCENTCLOUD_SECRETID = "scf-role-id";
   process.env.TENCENTCLOUD_SECRETKEY = "scf-role-key";
-  process.env.TENCENTCLOUD_SESSIONTOKEN = "scf-token";
   const env = buildHarnessInitCredEnv();
-  assert.ok(env.some((e) => e.Name === "TENCENTCLOUD_SECRETID" && e.Value === "scf-role-id"));
-  assert.ok(env.some((e) => e.Name === "TENCENTCLOUD_SESSIONTOKEN" && e.Value === "scf-token"));
+  assert.ok(env.some((e) => e.Name === "TENCENTCLOUD_SECRETID" && e.Value === "maintainer-long"));
+  for (const [k, v] of Object.entries(prev)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
+
+test("buildHarnessInitCredEnv omits SCF role session token when maintainer AK is used", () => {
+  const prev = {
+    TCB_SECRET_ID: process.env.TCB_SECRET_ID,
+    TCB_SECRET_KEY: process.env.TCB_SECRET_KEY,
+    TENCENTCLOUD_SESSIONTOKEN: process.env.TENCENTCLOUD_SESSIONTOKEN,
+    SCF_RUNTIME: process.env.SCF_RUNTIME,
+    TENCENTCLOUD_SECRETID: process.env.TENCENTCLOUD_SECRETID,
+    TENCENTCLOUD_SECRETKEY: process.env.TENCENTCLOUD_SECRETKEY,
+  };
+  process.env.SCF_RUNTIME = "Nodejs18";
+  process.env.TCB_SECRET_ID = "maintainer-long";
+  process.env.TCB_SECRET_KEY = "maintainer-key";
+  process.env.TENCENTCLOUD_SECRETID = "scf-role-id";
+  process.env.TENCENTCLOUD_SECRETKEY = "scf-role-key";
+  process.env.TENCENTCLOUD_SESSIONTOKEN = "scf-role-token";
+  const env = buildHarnessInitCredEnv();
+  assert.ok(!env.some((e) => e.Name === "TENCENTCLOUD_SESSIONTOKEN"));
+  for (const [k, v] of Object.entries(prev)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
+
+test("buildHarnessInitCredEnv includes role session token when no maintainer AK", () => {
+  const prev = {
+    TCB_SECRET_ID: process.env.TCB_SECRET_ID,
+    TCB_SECRET_KEY: process.env.TCB_SECRET_KEY,
+    TENCENTCLOUD_SESSIONTOKEN: process.env.TENCENTCLOUD_SESSIONTOKEN,
+    TENCENTCLOUD_SECRETID: process.env.TENCENTCLOUD_SECRETID,
+    TENCENTCLOUD_SECRETKEY: process.env.TENCENTCLOUD_SECRETKEY,
+  };
+  delete process.env.TCB_SECRET_ID;
+  delete process.env.TCB_SECRET_KEY;
+  process.env.TENCENTCLOUD_SECRETID = "role-id";
+  process.env.TENCENTCLOUD_SECRETKEY = "role-key";
+  process.env.TENCENTCLOUD_SESSIONTOKEN = "role-token";
+  const env = buildHarnessInitCredEnv();
+  assert.ok(env.some((e) => e.Name === "TENCENTCLOUD_SESSIONTOKEN" && e.Value === "role-token"));
+  for (const [k, v] of Object.entries(prev)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
+
+test("resolveHarnessMaintainerCredentials prefers TCB_SECRET on SCF host", () => {
+  const prev = {
+    TCB_SECRET_ID: process.env.TCB_SECRET_ID,
+    TCB_SECRET_KEY: process.env.TCB_SECRET_KEY,
+    SCF_RUNTIME: process.env.SCF_RUNTIME,
+    TENCENTCLOUD_SECRETID: process.env.TENCENTCLOUD_SECRETID,
+    TENCENTCLOUD_SECRETKEY: process.env.TENCENTCLOUD_SECRETKEY,
+  };
+  process.env.SCF_RUNTIME = "Nodejs18";
+  process.env.TCB_SECRET_ID = "maintainer-long";
+  process.env.TCB_SECRET_KEY = "maintainer-key";
+  process.env.TENCENTCLOUD_SECRETID = "scf-role-id";
+  process.env.TENCENTCLOUD_SECRETKEY = "scf-role-key";
+  process.env.TENCENTCLOUD_SESSIONTOKEN = "scf-role-token";
+  const maintainer = resolveHarnessMaintainerCredentials();
+  assert.equal(maintainer.secretId, "maintainer-long");
+  assert.equal(maintainer.secretKey, "maintainer-key");
+  assert.equal(maintainer.sessionToken, undefined);
+  const cam = resolveCamControlPlaneCredentials();
+  assert.equal(cam.secretId, "scf-role-id");
+  assert.equal(cam.secretKey, "scf-role-key");
   for (const [k, v] of Object.entries(prev)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;

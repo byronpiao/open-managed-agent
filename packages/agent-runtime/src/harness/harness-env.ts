@@ -183,6 +183,28 @@ export function resolveCamControlPlaneCredentials(): {
   };
 }
 
+/**
+ * Maintainer creds for harness FlexDB data (e.g. harness_claude_* probe).
+ * SCF execution role may lack read on collections written with injected maintainer keys.
+ */
+export function resolveHarnessMaintainerCredentials(): {
+  secretId: string;
+  secretKey: string;
+  sessionToken?: string;
+} {
+  const maintainerId = process.env.TCB_SECRET_ID?.trim();
+  const maintainerKey = process.env.TCB_SECRET_KEY?.trim();
+  if (maintainerId && maintainerKey) {
+    return {
+      secretId: maintainerId,
+      secretKey: maintainerKey,
+      // TCB_TOKEN only when maintainer creds are STS; never attach SCF role token to permanent AK.
+      sessionToken: process.env.TCB_TOKEN?.trim() || undefined,
+    };
+  }
+  return resolveCamControlPlaneCredentials();
+}
+
 function resolveCamSessionToken(): string | undefined {
   return (
     process.env.TCB_TOKEN?.trim() ??

@@ -102,6 +102,47 @@ export async function waitForClaudeSessionEntries(engineSessionId, minRows = 1, 
   return n;
 }
 
+/** Poll FlexDB using latest engineSessionId from harness_sessions (SCF may update after prompt). */
+export async function waitForClaudeSessionEntriesForAcp(
+  envId,
+  acpSessionId,
+  minRows = 1,
+  maxAttempts = 36,
+) {
+  const { countHarnessClaudeSessionEntries } = await import(
+    "../../packages/agent-runtime/dist/harness/engine/claude/claude-session-probe.js"
+  );
+  const { getHarnessSessionStore } = await import(
+    "../../packages/agent-runtime/dist/harness/sandbox/session-store.js"
+  );
+  const store = getHarnessSessionStore(envId);
+  let lastEngineSessionId;
+  for (let i = 0; i < maxAttempts; i++) {
+    const row = await store.get(acpSessionId);
+    lastEngineSessionId = row?.engineSessionId;
+    if (lastEngineSessionId) {
+      const n = await countHarnessClaudeSessionEntries(lastEngineSessionId);
+      if (n >= minRows) return { entries: n, engineSessionId: lastEngineSessionId };
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  const n = lastEngineSessionId
+    ? await countHarnessClaudeSessionEntries(lastEngineSessionId)
+    : 0;
+  if (n < minRows) {
+    const row = await store.get(acpSessionId);
+    const hints = [];
+    if (row?.claudeStoreEmptyAt) hints.push(`claudeStoreEmptyAt=${row.claudeStoreEmptyAt}`);
+    hints.push(
+      "sandbox creds: maintainer TCB_SECRET_* must not be paired with SCF role SESSIONTOKEN",
+    );
+    throw new Error(
+      `expected >= ${minRows} harness_claude_session_entries for ${lastEngineSessionId ?? acpSessionId}, got ${n} (${hints.join("; ")})`,
+    );
+  }
+  return { entries: n, engineSessionId: lastEngineSessionId };
+}
+
 export function printDbPressureSummary(engine, rounds, samples) {
   const totals = samples.reduce(
     (acc, s) => {

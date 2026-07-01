@@ -19,7 +19,6 @@ import {
 } from "./llm-providers.js";
 import { buildHarnessOpencodePermission } from "./engine/opencode/opencode-permissions.js";
 import { mergeHarnessInstanceEnv, sandboxEnvToHarnessVars } from "./sandbox/sandbox-env.js";
-import { resolveCamControlPlaneCredentials } from "./harness-env.js";
 
 export { buildHarnessOpencodePermission } from "./engine/opencode/opencode-permissions.js";
 
@@ -219,18 +218,35 @@ export function buildSkillsManifestEnv(
  * CloudBase control-plane creds for TRW workspace/init (enables in-box CloudBase MCP).
  * Intentionally injected into the sandbox — not a harness host env knob.
  */
+/**
+ * CloudBase control-plane creds injected into the AGS instance at start.
+ * Prefer maintainer TCB_SECRET_* when set — sandbox Claude SessionStore needs
+ * FlexDB write scope. (SCF function host may use TENCENTCLOUD_* via
+ * resolveCamControlPlaneCredentials; that is separate from instance env.)
+ */
 export function buildHarnessInitCredEnv(): HarnessEnvVar[] {
   const out: HarnessEnvVar[] = [];
   const push = (name: string, value: string | undefined) => {
     if (value) out.push({ Name: name, Value: value });
   };
+  const maintainerId = process.env.TCB_SECRET_ID?.trim();
+  const maintainerKey = process.env.TCB_SECRET_KEY?.trim();
+  const secretId = maintainerId ?? process.env.TENCENTCLOUD_SECRETID?.trim();
+  const secretKey = maintainerKey ?? process.env.TENCENTCLOUD_SECRETKEY?.trim();
   push("CLOUDBASE_ENV_ID", process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID);
-  // SCF agent runtime: resolveCamControlPlaneCredentials prefers TENCENTCLOUD_* role
-  // keys (see CONTRIBUTING §9). TCBR / local harness prefer TCB_SECRET_*.
-  const creds = resolveCamControlPlaneCredentials();
-  push("TENCENTCLOUD_SECRETID", creds.secretId);
-  push("TENCENTCLOUD_SECRETKEY", creds.secretKey);
-  push("TENCENTCLOUD_SESSIONTOKEN", creds.sessionToken);
+  push("TENCENTCLOUD_SECRETID", secretId);
+  push("TENCENTCLOUD_SECRETKEY", secretKey);
+  // Never pair maintainer long-term AK/SK with SCF execution-role session token (SIGN_PARAM_INVALID).
+  const sessionToken = maintainerId && maintainerKey
+    ? process.env.TCB_TOKEN?.trim()
+    : process.env.TCB_TOKEN?.trim() ??
+      process.env.TENCENTCLOUD_SESSIONTOKEN?.trim() ??
+      process.env.TENCENTCLOUD_TOKEN?.trim();
+  push("TENCENTCLOUD_SESSIONTOKEN", sessionToken);
+  // TRW fromProcessEnv also reads TCB_SECRET_* at daemon boot (AGS instance env).
+  push("TCB_SECRET_ID", process.env.TCB_SECRET_ID?.trim());
+  push("TCB_SECRET_KEY", process.env.TCB_SECRET_KEY?.trim());
+  push("TCB_TOKEN", process.env.TCB_TOKEN?.trim());
   push("TCB_REGION", process.env.TCB_REGION);
   return out;
 }

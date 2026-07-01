@@ -5,7 +5,7 @@ import { createCloudAcpClient, extractSseText } from "./cloud-acp-client.mjs";
 import {
   waitForEngineSessionId,
   waitForOpencodeSyncEventsRemote,
-  waitForClaudeSessionEntries,
+  waitForClaudeSessionEntriesForAcp,
 } from "./db-metrics.mjs";
 
 function sleep(ms) {
@@ -115,9 +115,10 @@ export async function verifyCloudClaudeSessionStore(agentId, envId) {
   }
 
   const engineSessionId = await waitForEngineSessionId(envId, sessionId);
-  const entryCount = await waitForClaudeSessionEntries(engineSessionId);
+  const { entries: entryCount, engineSessionId: polledEngineId } =
+    await waitForClaudeSessionEntriesForAcp(envId, sessionId);
   console.log(
-    `✓ harness_claude_session_entries rows=${entryCount} engineSessionId=${engineSessionId}`,
+    `✓ harness_claude_session_entries rows=${entryCount} engineSessionId=${polledEngineId ?? engineSessionId}`,
   );
 
   const { getHarnessSessionStore } = await import(
