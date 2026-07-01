@@ -23,6 +23,7 @@ import {
   type HarnessSandboxHandle,
 } from "./orchestrator.js";
 import { harnessCallbackBase } from "../callback-base.js";
+import { resolveHarnessEnvId } from "../harness-env.js";
 import { getHarnessSessionStore, type HarnessSessionRecord } from "./session-store.js";
 
 const prewarmInflight = new Map<string, Promise<{ syncHydrated: number }>>();
@@ -30,14 +31,12 @@ const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** Agent config per ACP session — used for idle-pause opencode export. */
 const sessionAgentConfigs = new Map<string, AgentConfig>();
 
-function envIdFromProcess(): string {
-  const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "";
-  if (!envId) {
-    throw Object.assign(new Error("CLOUDBASE_ENV_ID is required for harness runtime"), {
-      rpcCode: -32000,
-    });
+function harnessEnvIdOrThrow(): string {
+  try {
+    return resolveHarnessEnvId();
+  } catch (err) {
+    throw Object.assign(new Error((err as Error).message), { rpcCode: -32000 });
   }
-  return envId;
 }
 
 /** Default 20 min idle before pause; set HARNESS_SANDBOX_IDLE_PAUSE_MS=0 to disable. */
@@ -88,7 +87,7 @@ export async function bindSandboxForSession(
   acpSessionId: string,
 ): Promise<{ syncHydrated: number }> {
   sessionAgentConfigs.set(acpSessionId, config);
-  const envId = envIdFromProcess();
+  const envId = harnessEnvIdOrThrow();
   const store = getHarnessSessionStore(envId);
   let record = await store.get(acpSessionId);
   if (!record) {
@@ -159,6 +158,15 @@ export async function bindSandboxForSession(
         acpSessionId,
         instanceId: boundInstanceId,
       }).error(err);
+      harnessLog({
+        lane: "orchestrator",
+        operation: "instance.reconnect",
+        acpSessionId,
+        instanceId: boundInstanceId,
+      }).emit({
+        status: "warn",
+        message: "reconnect failed; clearing binding and acquiring a new sandbox",
+      });
       try {
         await getSandboxOrchestrator().stopInstanceForEnv(boundInstanceId, envId);
       } catch (stopErr) {

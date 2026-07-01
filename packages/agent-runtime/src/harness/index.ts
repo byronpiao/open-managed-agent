@@ -3,7 +3,11 @@
  * 箱内引擎（ACP 服务端）在远程沙箱内跑 agent loop；托管运行时（managed）在网关上跑 OAK。
  */
 
-export { harnessCallbackBase, harnessGatewayBotBase } from "./callback-base.js";
+export {
+  harnessCallbackBase,
+  harnessGatewayBotBase,
+  resolveHarnessClientToolCallbackBase,
+} from "./callback-base.js";
 
 export {
   MANAGED_AGENT_CLIENT_MCP_SERVER,
@@ -91,6 +95,8 @@ export {
   missingHarnessCosEnv,
   missingHarnessLlmEnv,
   resolveCamControlPlaneCredentials,
+  resolveHarnessEnvId,
+  resolveHarnessInjectionCredentials,
   resolveHarnessMaintainerCredentials,
   resolveHarnessToolRoleArn,
   resolveTcbRegion,

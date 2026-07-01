@@ -122,13 +122,6 @@ export function resolveGatewayUrl(envId: string, override?: string): string {
 }
 
 function resolveImageRegistryType(sandbox: ResolvedSandboxConfig): string {
-  const legacy = process.env.HARNESS_SANDBOX_IMAGE_REGISTRY_TYPE?.trim();
-  if (
-    !sandbox.imageRegistryType &&
-    (legacy === "enterprise" || legacy === "personal")
-  ) {
-    return legacy;
-  }
   return resolveSandboxImageRegistryType(sandbox);
 }
 

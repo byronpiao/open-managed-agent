@@ -50,6 +50,7 @@ import {
   resetSandboxPrewarmForTests,
   harnessCallbackBase,
   harnessGatewayBotBase,
+  resolveHarnessClientToolCallbackBase,
   normalizeInboundRequestId,
   parseCloudbaseTraceHeader,
   parseTraceparent,
@@ -58,13 +59,11 @@ import {
   buildHarnessOutboundCorrelationHeaders,
   TRACEPARENT_HEADER,
 } from "../../packages/agent-runtime/dist/harness/index.js";
-// Probe functions removed from runtime barrel; import directly.
 import { openAiChatCompletionsUrl } from "../../packages/agent-runtime/dist/harness/llm-probe.js";
 import {
   normalizeAgentRuntime,
   applyHarnessRuntimeEnv,
-  resolveHarnessClientToolCallbackBase,
-  harnessGatewayBotBase as deployHarnessGatewayBotBase,
+  resolveHarnessClientToolCallbackBase as deployResolveHarnessClientToolCallbackBase,
 } from "../../lib/harness-deploy.mjs";
 import {
   getHarnessSessionStore,
@@ -754,12 +753,27 @@ test("resolveHarnessClientToolCallbackBase derives gateway from envId + agentId"
   delete process.env.CLOUDBASE_SERVER_URL;
   try {
     assert.equal(
-      resolveHarnessClientToolCallbackBase("env-abc", { agentId: "agent-xyz" }),
-      deployHarnessGatewayBotBase("env-abc", "agent-xyz"),
+      deployResolveHarnessClientToolCallbackBase("env-abc", { agentId: "agent-xyz" }),
+      harnessGatewayBotBase("env-abc", "agent-xyz"),
     );
     assert.equal(
       harnessGatewayBotBase("env-abc", "agent-xyz"),
       "https://env-abc.api.tcloudbasegateway.com/v1/aibot/bots/agent-xyz",
+    );
+  } finally {
+    if (prevUrl === undefined) delete process.env.CLOUDBASE_SERVER_URL;
+    else process.env.CLOUDBASE_SERVER_URL = prevUrl;
+  }
+});
+
+test("resolveHarnessClientToolCallbackBase returns empty without agentId at deploy", () => {
+  const prevUrl = process.env.CLOUDBASE_SERVER_URL;
+  delete process.env.CLOUDBASE_SERVER_URL;
+  try {
+    assert.equal(resolveHarnessClientToolCallbackBase("env-abc"), "");
+    assert.equal(
+      deployResolveHarnessClientToolCallbackBase("env-abc"),
+      "",
     );
   } finally {
     if (prevUrl === undefined) delete process.env.CLOUDBASE_SERVER_URL;

@@ -103,11 +103,7 @@ function hasFlag(argv, name) {
 }
 
 export function resolveCloudHarnessEngine(argv = []) {
-  try {
-    return parseHarnessEnginesArg(argv);
-  } catch {
-    return "opencode";
-  }
+  return parseHarnessEnginesArg(argv);
 }
 
 async function buildAgentYaml(backend = "tcbr", engine = "opencode") {
