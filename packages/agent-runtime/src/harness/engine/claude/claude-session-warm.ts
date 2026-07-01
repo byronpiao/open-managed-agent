@@ -7,14 +7,8 @@ import { resolveRuntime } from "../../../config.js";
 import { buildHarnessAcpMcpServers, DEFAULT_HARNESS_SANDBOX_CWD } from "../../deploy.js";
 import { harnessLog } from "../../observability/logging.js";
 import type { HarnessSandboxHandle } from "../../sandbox/orchestrator.js";
+import { harnessCallbackBase } from "../../callback-base.js";
 import { getSandboxOrchestrator } from "../../sandbox/orchestrator.js";
-
-function harnessCallbackBase(): string {
-  const fromUrl = process.env.CLOUDBASE_SERVER_URL?.trim();
-  if (fromUrl) return fromUrl.replace(/\/$/, "");
-  const port = process.env.PORT ?? 9000;
-  return `http://127.0.0.1:${port}`;
-}
 
 async function drainAcpResponseBody(res: globalThis.Response): Promise<Record<string, unknown>[]> {
   const messages: Record<string, unknown>[] = [];

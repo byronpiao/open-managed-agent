@@ -2,7 +2,7 @@
  * Read-only probe for harness_claude_session_entries (e2e / debug).
  */
 
-import { resolveCamControlPlaneCredentials } from "../../harness-env.js";
+import { resolveHarnessMaintainerCredentials } from "../../harness-env.js";
 
 const PREFIX = "harness_claude_";
 
@@ -34,7 +34,7 @@ export interface ClaudeSessionFootprint {
 export async function countHarnessClaudeSessionFootprint(
   engineSessionId: string,
 ): Promise<ClaudeSessionFootprint> {
-  const creds = resolveCamControlPlaneCredentials();
+  const creds = resolveHarnessMaintainerCredentials();
   const envId = process.env.CLOUDBASE_ENV_ID ?? process.env.TCB_ENV_ID ?? "";
   if (!creds.secretId || !creds.secretKey || !envId) {
     return { entries: 0, messages: 0 };

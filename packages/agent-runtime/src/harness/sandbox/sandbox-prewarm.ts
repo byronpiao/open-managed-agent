@@ -20,8 +20,10 @@ import {
   cacheSandboxHandle,
   getCachedSandboxHandle,
   getSandboxOrchestrator,
+  type HarnessSandboxHandle,
 } from "./orchestrator.js";
-import { getHarnessSessionStore } from "./session-store.js";
+import { harnessCallbackBase } from "../callback-base.js";
+import { getHarnessSessionStore, type HarnessSessionRecord } from "./session-store.js";
 
 const prewarmInflight = new Map<string, Promise<{ syncHydrated: number }>>();
 const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -38,13 +40,6 @@ function envIdFromProcess(): string {
   return envId;
 }
 
-function harnessCallbackBase(): string {
-  const fromUrl = process.env.CLOUDBASE_SERVER_URL?.trim();
-  if (fromUrl) return fromUrl.replace(/\/$/, "");
-  const port = process.env.PORT ?? 9000;
-  return `http://127.0.0.1:${port}`;
-}
-
 /** Default 20 min idle before pause; set HARNESS_SANDBOX_IDLE_PAUSE_MS=0 to disable. */
 export function resolveHarnessSandboxIdlePauseMs(): number {
   const raw = process.env.HARNESS_SANDBOX_IDLE_PAUSE_MS?.trim();
@@ -52,6 +47,39 @@ export function resolveHarnessSandboxIdlePauseMs(): number {
   const n = Number(raw);
   if (Number.isFinite(n) && n >= 0) return n;
   return 20 * 60 * 1000;
+}
+
+async function hydrateEngineStateAfterBind(args: {
+  handle: HarnessSandboxHandle;
+  config: AgentConfig;
+  record: HarnessSessionRecord;
+  acpSessionId: string;
+  envId: string;
+}): Promise<number> {
+  const { handle, config, record, acpSessionId, envId } = args;
+  if (record.engine === "opencode" && record.engineSessionId) {
+    const hydrated = await hydrateOpencodeSyncEvents({
+      handle,
+      syncStore: getHarnessSyncEventStore(envId),
+      acpSessionId,
+      aggregateId: record.engineSessionId,
+    });
+    return hydrated.replayed;
+  }
+  if (record.engine === "claude" && record.engineSessionId) {
+    const warm = await warmClaudeEngineSession({
+      handle,
+      config,
+      acpSessionId,
+      engineSessionId: record.engineSessionId,
+    });
+    await markClaudeWarmOutcome({ acpSessionId, ok: warm.ok });
+    if (warm.ok) {
+      const footprint = await countHarnessClaudeSessionFootprint(record.engineSessionId);
+      await noteClaudeSessionEntryCount({ acpSessionId, entries: footprint.entries });
+    }
+  }
+  return 0;
 }
 
 /** Acquire (or stub) sandbox and bind to session — shared by prewarm and prompt path. */
@@ -81,20 +109,69 @@ export async function bindSandboxForSession(
   }
 
   const callbackBase = harnessCallbackBase();
-  const staleInstanceId = record.instanceId;
+  const boundInstanceId = record.instanceId;
+  const boundToolId = record.toolId;
 
-  if (staleInstanceId && record.toolId && !isE2eStubSandboxEnabled(config)) {
+  // SCF (and any cold host): reattach to FlexDB-bound AGS instance instead of
+  // stopping it and starting a fresh box — required for Claude SessionStore continuity.
+  if (boundInstanceId && boundToolId && !isE2eStubSandboxEnabled(config)) {
     try {
-      await getSandboxOrchestrator().stopInstanceForEnv(staleInstanceId, envId);
+      const orchestrator = getSandboxOrchestrator();
+      const reconnectEnv = buildHarnessSandboxEnv({
+        config,
+        engine: record.engine,
+        clientToolCallbackBase: callbackBase,
+        acpSessionId,
+        secretMasterKey: record.secretMasterKey,
+      });
+      const handle = await orchestrator.connectToInstance(
+        boundInstanceId,
+        envId,
+        boundToolId,
+        reconnectEnv,
+      );
+      await handle.resumeIfPaused();
+      const syncHydrated = await hydrateEngineStateAfterBind({
+        handle,
+        config,
+        record,
+        acpSessionId,
+        envId,
+      });
+      await store.bindInstance(acpSessionId, {
+        instanceId: handle.instanceId,
+        toolId: handle.toolId,
+        instanceAccessToken: handle.instanceAccessToken,
+      });
+      cacheSandboxHandle(acpSessionId, handle);
+      scheduleIdlePause(acpSessionId);
+      harnessLog({
+        lane: "orchestrator",
+        operation: "instance.reconnect",
+        acpSessionId,
+        instanceId: boundInstanceId,
+      }).emit({ status: "ok" });
+      return { syncHydrated };
     } catch (err) {
       harnessLog({
         lane: "orchestrator",
-        operation: "stale_instance.stop",
+        operation: "instance.reconnect",
         acpSessionId,
-        instanceId: staleInstanceId,
+        instanceId: boundInstanceId,
       }).error(err);
+      try {
+        await getSandboxOrchestrator().stopInstanceForEnv(boundInstanceId, envId);
+      } catch (stopErr) {
+        harnessLog({
+          lane: "orchestrator",
+          operation: "stale_instance.stop",
+          acpSessionId,
+          instanceId: boundInstanceId,
+        }).error(stopErr);
+      }
+      await store.clearInstanceBinding(acpSessionId);
+      record = (await store.get(acpSessionId)) ?? record;
     }
-    await store.clearInstanceBinding(acpSessionId);
   }
 
   let syncHydrated = 0;
@@ -117,27 +194,13 @@ export async function bindSandboxForSession(
         secretMasterKey: record.secretMasterKey,
       }),
     });
-    if (record.engine === "opencode" && record.engineSessionId) {
-      const hydrated = await hydrateOpencodeSyncEvents({
-        handle,
-        syncStore: getHarnessSyncEventStore(envId),
-        acpSessionId,
-        aggregateId: record.engineSessionId,
-      });
-      syncHydrated = hydrated.replayed;
-    } else if (record.engine === "claude" && record.engineSessionId) {
-      const warm = await warmClaudeEngineSession({
-        handle,
-        config,
-        acpSessionId,
-        engineSessionId: record.engineSessionId,
-      });
-      await markClaudeWarmOutcome({ acpSessionId, ok: warm.ok });
-      if (warm.ok) {
-        const footprint = await countHarnessClaudeSessionFootprint(record.engineSessionId);
-        await noteClaudeSessionEntryCount({ acpSessionId, entries: footprint.entries });
-      }
-    }
+    syncHydrated = await hydrateEngineStateAfterBind({
+      handle,
+      config,
+      record,
+      acpSessionId,
+      envId,
+    });
     await store.bindInstance(acpSessionId, {
       instanceId: handle.instanceId,
       toolId: handle.toolId,
