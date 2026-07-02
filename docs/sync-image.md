@@ -165,10 +165,20 @@ TCR_INSTANCE_ID=tcr-xxxxxxxx
 ## 输出示例
 
 ```
-  沙箱  : ccr.ccs.tencentyun.com/tcb-<主账号UIN>/tcb-sandbox:tcb-sandbox-xxxx
-  云托管: ccr.ccs.tencentyun.com/tcb-<主账号UIN>/open-managed-agent:open-managed-agent-xxxx
-  云函数: ccr.ccs.tencentyun.com/tcb-<主账号UIN>/open-managed-agent:scf-open-managed-agent-xxxx
+镜像标签: sandbox→magent-260616-1430  tcbr→260616-1430  scf→260616-1430-scf
+
+  沙箱  : ccr.ccs.tencentyun.com/tcb-<主账号UIN>/tcb-sandbox:magent-260616-1430
+  云托管: ccr.ccs.tencentyun.com/tcb-<主账号UIN>/open-managed-agent:260616-1430
+  云函数: ccr.ccs.tencentyun.com/tcb-<主账号UIN>/open-managed-agent:260616-1430-scf
 ```
+
+一次 `sync-image` 共用同一时间戳（`YYMMDD-HHMM`，与 GHCR `publish.sh` 一致）：
+
+| 镜像 | TCR tag 规则 |
+|------|----------------|
+| `sandbox` | `magent-<时间戳>` |
+| `tcbr` | `<时间戳>` |
+| `scf` | `<时间戳>-scf`（与云托管同仓库，后缀区分） |
 
 ---
 
