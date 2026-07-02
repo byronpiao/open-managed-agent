@@ -212,6 +212,9 @@ export function toKernelAgentConfig(
   // 只有 CLOUDBASE_APIKEY 时 kernel 会 graceful degrade(不持久,但不报错)。
   // ags-stateful 路径仍需 CLOUDBASE_APIKEY —— oak 会在缺 key 时抛 InvalidConfigError。
 
+  const skillNames =
+    config.skills?.map((s) => s.name).filter((n) => n?.trim()) ?? [];
+
   return {
     envId,
     name: config.name,
@@ -250,5 +253,7 @@ export function toKernelAgentConfig(
       opts.customToolDefs && opts.customToolDefs.length > 0
         ? opts.customToolDefs
         : undefined,
+    skills:
+      skillNames.length > 0 ? { enabled: skillNames } : undefined,
   };
 }

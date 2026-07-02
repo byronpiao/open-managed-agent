@@ -1,0 +1,3 @@
+# Other skill
+
+Codeword: gamma

@@ -1,7 +1,7 @@
 /**
  * Agent Configuration Loader
  *
- * Loads agent configuration from agent.yaml (or agent.yml).
+ * Loads agent configuration from AGENT_CONFIG (cloud) or agent.yaml (local).
  * Env vars AGENT_MODEL / AGENT_SYSTEM can override YAML values.
  * Falls back to pure env vars if no YAML file is found (backward compatible).
  *
@@ -12,6 +12,9 @@
 import fs from "fs/promises";
 import path from "path";
 import { parse as parseYaml } from "yaml";
+
+// Track the config file path so resolveSkills can resolve relative skill sources correctly
+let configFilePath: string | undefined;
 import {
   applyResolvedSandboxToConfig,
   resolveSandboxConfig,
@@ -65,8 +68,8 @@ export interface McpServer {
 
 export interface Skill {
   name: string;
-  description?: string;
-  source: string;
+  /** Install-time only (magent). Runtime reads skills/<name>/ in the deploy bundle. */
+  source?: string;
 }
 
 export interface ModelSpec {
@@ -343,20 +346,51 @@ export function getMcpToolsets(config: AgentConfig): McpToolset[] {
 // Source paths are resolved relative to the agent.yaml location (cwd), or
 // absolute if they start with '/'.
 
+/**
+ * Inject skills into system prompt — harness runtime only.
+ * Managed agents use OAK native skills (see managed/skills.ts).
+ */
 export async function resolveSkills(config: AgentConfig): Promise<AgentConfig> {
-  const skills = config.skills;
-  if (!skills || skills.length === 0) return config;
+  const { runtime } = resolveRuntime(config);
+  if (runtime !== "harness") {
+    return config;
+  }
 
+  const skills = config.skills;
+  if (!skills || skills.length === 0) {
+    return config;
+  }
+
+  console.warn(`[Config] Resolving ${skills.length} harness skill(s) for system prompt...`);
   const blocks: string[] = [];
+  const skillsDir = path.resolve("skills");
+
   for (const skill of skills) {
-    const srcPath = path.isAbsolute(skill.source)
-      ? skill.source
-      : path.resolve(skill.source);
+    let srcPath: string | null = null;
+    const dirPath = path.join(skillsDir, skill.name);
+    if (await fileExists(dirPath) && (await fileExists(path.join(dirPath, "SKILL.md")) || await fileExists(path.join(dirPath, "skill.md")))) {
+      srcPath = (await fileExists(path.join(dirPath, "SKILL.md")))
+        ? path.join(dirPath, "SKILL.md")
+        : path.join(dirPath, "skill.md");
+    }
+    if (!srcPath) {
+      for (const ext of [".md", ".txt", ""]) {
+        const fp = path.join(skillsDir, skill.name + ext);
+        if (await fileExists(fp)) {
+          srcPath = fp;
+          break;
+        }
+      }
+    }
+
+    if (!srcPath) {
+      console.warn(`[Config] Skill '${skill.name}': not found in ${skillsDir}`);
+      continue;
+    }
+
     try {
       const content = await fs.readFile(srcPath, "utf-8");
-      const header = skill.description
-        ? `# Skill: ${skill.name}\n${skill.description}\n`
-        : `# Skill: ${skill.name}\n`;
+      const header = `# Skill: ${skill.name}\n`;
       blocks.push(`${header}\n${content.trim()}`);
     } catch (err) {
       console.warn(
@@ -369,6 +403,15 @@ export async function resolveSkills(config: AgentConfig): Promise<AgentConfig> {
 
   const skillSection = `\n\n---\n\n## Skills\n\n${blocks.join("\n\n---\n\n")}`;
   return { ...config, system: config.system + skillSection };
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath, fs.constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export type {
@@ -426,34 +469,13 @@ export function applyDevEnvOverrides(config: AgentConfig): AgentConfig {
 
 // ── Loader ────────────────────────────────────────────────────────────────────
 //
-//   1. agent.yaml / agent.yml
-//   2. AGENT_CONFIG / AGENT_CONFIG_B64（magent 云上部署）
+//   1. AGENT_CONFIG / AGENT_CONFIG_B64（magent agent:update 写入，云上权威）
+//   2. agent.yaml / agent.yml（本地研发 / 首次 bootstrap）
 //   3. AGENT_NAME / AGENT_MODEL / AGENT_SYSTEM
 //   4. applyDevEnvOverrides — `.env` / `.env.harness` 与 yaml 重叠项（研发本地）
 
 export async function loadAgentConfig(): Promise<AgentConfig> {
-  // Priority 1: YAML file (highest — explicit, version-controlled config)
-  const searchPaths = [
-    path.resolve("agent.yaml"),
-    path.resolve("agent.yml"),
-    "/var/user/agent.yaml",
-    "/var/user/agent.yml",
-  ];
-
-  for (const p of searchPaths) {
-    try {
-      const content = await fs.readFile(p, "utf-8");
-      const config = applyDevEnvOverrides(
-        normalizeAgentConfig(parseYaml(content) as AgentConfig),
-      );
-      console.log(`[Config] Loaded agent config from: ${p}`);
-      return config;
-    } catch {
-      // File not found or parse error, try next
-    }
-  }
-
-  // Priority 2: AGENT_CONFIG or AGENT_CONFIG_B64 env var (from `magent agent:update`)
+  // Priority 1: AGENT_CONFIG env (authoritative after magent agent:update on cloud)
   const rawConfig =
     process.env.AGENT_CONFIG ??
     (process.env.AGENT_CONFIG_B64
@@ -469,6 +491,28 @@ export async function loadAgentConfig(): Promise<AgentConfig> {
       return config;
     } catch (err) {
       console.warn(`[Config] Failed to parse AGENT_CONFIG env var:`, err);
+    }
+  }
+
+  // Priority 2: YAML file (local dev bootstrap)
+  const searchPaths = [
+    path.resolve("agent.yaml"),
+    path.resolve("agent.yml"),
+    "/var/user/agent.yaml",
+    "/var/user/agent.yml",
+  ];
+
+  for (const p of searchPaths) {
+    try {
+      const content = await fs.readFile(p, "utf-8");
+      const config = applyDevEnvOverrides(
+        normalizeAgentConfig(parseYaml(content) as AgentConfig),
+      );
+      configFilePath = p;
+      console.log(`[Config] Loaded agent config from: ${p}`);
+      return config;
+    } catch {
+      // File not found or parse error, try next
     }
   }
 

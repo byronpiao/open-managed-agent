@@ -270,11 +270,10 @@ mcp_servers:
     name: github
     url: https://api.githubcopilot.com/mcp/
 
-# Skills（领域知识）
+# Skills（领域知识）— 完整 10 种写法见 docs/examples/agent.skills-sources.example.yaml
 skills:
   - name: code-review
-    description: Code review best practices
-    source: ./skills/code-review.md
+    source: ./skills/code-review
 
 # 自定义元数据
 metadata:
@@ -659,7 +658,8 @@ await client.sessions.delete(session.id);
 | 命令 | 内部调用 | 耗时 | 频率 |
 |------|----------|------|------|
 | `magent agent:create` | `tcb agent create`（上传代码包） | ~60s | 首次部署 |
-| `magent agent:update` | `tcb agent update --env`（只更新环境变量） | ~8s | 日常配置 |
+| `magent agent:update` | `--env`；skills 变化时另传 `--code` | ~8s–2min | 配置 / skill |
+| `magent agent:sync-skills` | pull → 安装 skills → `agent update --code` | ~1–2min | 仅 skills |
 | `magent agent:delete` | `tcb agent delete`（删除云函数） | ~5s | 清理 |
 
 > 你不需要直接使用 `tcb` CLI（除非调试底层问题）。
@@ -710,22 +710,38 @@ magent agent:create \
 
 ### 配置更新（`magent agent:update`）
 
-日常改配置不需要重新部署代码：
+改 system / model 通常只更新环境变量。`-f` 且 skills 变化时会自动重装 skills 并重传代码包：
 
 ```bash
 magent agent:update --system "New prompt" --model deepseek-v4-flash
 magent agent:update --file ./new-config.yaml
+magent agent:sync-skills -a <agent-id> -f agent.yaml -e <env-id>
 ```
+
+### Skills 同步
+
+在 `agent.yaml` 的 `skills` 数组里声明技能来源；`magent` 会在部署时安装到运行包的 `skills/` 目录。
+
+完整 schema 见 **[docs/examples/agent.skills-sources.example.yaml](./docs/examples/agent.skills-sources.example.yaml)**。
+
+```bash
+# 首次部署（SCF 默认；TCBR 加 --type tcbr）
+magent agent:create -n my-agent -f agent.yaml -e <env-id>
+
+# 仅更新 skills（拉取线上包 → 重装 → 重传）
+magent agent:sync-skills -a <agent-id> -f agent.yaml -e <env-id>
+```
+
+本地 skill 建议放在与 `agent.yaml` 同级的 `skills/<name>/`（含 `SKILL.md`）。
 
 ### 代码更新
 
-当 runtime 源码变更时（新功能、bug fix），需要重新部署：
+runtime 源码变更时需重新部署：
 
 ```bash
 cd packages/agent-runtime && npm run build && cd ../..
 magent agent:create --name my-agent --env <env-id>
-# 或直接用 tcb:
-# tcb agent update <agent-id> --code /path/to/deploy -e <env-id>
+# harness SCF: magent agent:update -f agent.harness.yaml --code ./packages/agent-runtime
 ```
 
 ### 环境变量

@@ -1,0 +1,54 @@
+# agent.yaml — Skills 配置示例（完整 schema）
+#
+# 用法：
+#   1. 复制本文件为 agent.yaml，按需删掉不需要的 skills 条目
+#   2. 本地 skill 放在与 agent.yaml 同级的 skills/ 目录
+#   3. 部署：magent agent:create -n my-agent -f agent.yaml -e <env-id>
+#   4. 仅更新 skills：magent agent:sync-skills -a <agent-id> -f agent.yaml -e <env-id>
+#
+# source 前缀：git: · skillhub: · skills.sh: · 本地路径
+# 省略 source 时，自动查找 skills/<name>/ 或 skills/<name>.md
+
+name: my-agent
+runtime: managed
+model: hy3-preview
+system: You are a helpful assistant.
+
+skills:
+  # ① 本地相对路径（相对 agent.yaml 所在目录）
+  - name: code-review
+    source: ./skills/code-review
+
+  # ② 本地绝对路径
+  - name: my-skill
+    source: /path/to/my-skill
+
+  # ③ git 单 skill（推荐：只装仓库里的一个子目录）
+  - name: handoff
+    source: git:https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff
+
+  # ④ git 整库（会扫描并安装仓库内全部 skill 目录，请确认仓库可信）
+  - name: team-skills-bundle
+    source: git:https://github.com/your-org/skills-repo/tree/main
+
+  # ⑤ skillhub 简写（等同 skillhub.cn/skills/<slug>）
+  - name: poster
+    source: skillhub:poster
+
+  # ⑥ skillhub 完整页面 URL
+  - name: academic-review
+    source: skillhub:https://skillhub.cn/skills/academic-pre-review-committee
+
+  # ⑦ skills.sh 简写（owner/repo/skill-id）
+  - name: edit-article
+    source: skills.sh:mattpocock/skills/edit-article
+
+  # ⑧ skills.sh 完整 URL
+  - name: tdd
+    source: skills.sh:https://www.skills.sh/mattpocock/skills/tdd
+
+  # ⑨ 无 source：读取 skills/<name>/ 目录（需含 SKILL.md）
+  - name: internal-playbook
+
+  # ⑩ 无 source：读取 skills/<name>.md 单文件（自动转为目录布局）
+  - name: quick-tip

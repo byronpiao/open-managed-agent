@@ -194,16 +194,37 @@ export function buildSkillsManifestEnv(
 ): HarnessEnvVar | null {
   const skills = config.skills;
   if (!skills?.length) return null;
-  const packed: Array<{ name: string; description: string; content: string }> = [];
+  const packed: Array<{ name: string; content: string }> = [];
+  const skillsDir = path.resolve(baseDir, "skills");
+
   for (const skill of skills) {
-    const srcPath = path.isAbsolute(skill.source)
-      ? skill.source
-      : path.resolve(baseDir, skill.source);
-    if (!fs.existsSync(srcPath)) continue;
+    let srcPath: string | null = null;
+    const skillDir = path.join(skillsDir, skill.name);
+    for (const doc of ["SKILL.md", "skill.md"]) {
+      const fp = path.join(skillDir, doc);
+      if (fs.existsSync(fp)) {
+        srcPath = fp;
+        break;
+      }
+    }
+    if (!srcPath) {
+      for (const ext of [".md", ".txt", ""]) {
+        const fp = path.join(skillsDir, skill.name + ext);
+        if (fs.existsSync(fp)) {
+          srcPath = fp;
+          break;
+        }
+      }
+    }
+
+    if (!srcPath) {
+      console.warn(`[Deploy] Skill '${skill.name}' not found in ${skillsDir}`);
+      continue;
+    }
+
     try {
       packed.push({
         name: skill.name,
-        description: skill.description ?? "",
         content: fs.readFileSync(srcPath, "utf-8").trim(),
       });
     } catch {

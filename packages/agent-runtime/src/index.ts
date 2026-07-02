@@ -21,6 +21,7 @@ import express from "express";
 import cors from "cors";
 import { mountAcpEndpoint } from "./acp-endpoint.js";
 import { loadAgentConfig, resolveRuntime, resolveSkills } from "./config.js";
+import { materializeManagedSkills } from "./managed/skills.js";
 import { getKernelAgent, getStoreDiag } from "./oak-runtime/kernel-adapter.js";
 
 const port = Number(process.env.PORT ?? 9000);
@@ -38,8 +39,19 @@ async function main() {
   }
 
   const rawConfig = await loadAgentConfig();
-  const config = await resolveSkills(rawConfig);
-  const { runtime, engine } = resolveRuntime(config);
+  const { runtime, engine } = resolveRuntime(rawConfig);
+
+  let config = rawConfig;
+  if (runtime === "managed") {
+    const { initManagedLogging } = await import("./managed/observability/logging.js");
+    initManagedLogging();
+    const skillNames = rawConfig.skills?.map((s) => s.name).filter(Boolean) ?? [];
+    if (skillNames.length > 0) {
+      await materializeManagedSkills(skillNames);
+    }
+  } else {
+    config = await resolveSkills(rawConfig);
+  }
 
   type HarnessRuntime = typeof import("./harness/index.js");
   let harnessRuntime: HarnessRuntime | undefined;
