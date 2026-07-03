@@ -23,27 +23,26 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
 const FIXTURE_ROOT = join(__dirname, "fixtures", "skills-e2e");
 
-/** Nine explicitly named skills from the canonical schema (bundle installs extra dirs). */
+/** Deployed skill directory names (single-source installs). */
 export const EXPECTED_NAMED_SKILLS = [
   "local-rel",
   "local-abs",
   "handoff",
   "poster",
-  "academic-review",
+  "academic-pre-review-committee",
   "edit-article",
   "tdd",
-  "no-source-dir",
-  "flat-legacy",
 ];
 
-export const BUNDLE_YAML_NAME = "public-skills-bundle";
+/** git 整库 bundle 的 source 字符串（manifest bundleKey）。 */
+export const BUNDLE_GIT_SOURCE =
+  "git:https://github.com/RealAlexandreAI/public-skills/tree/main";
 
 /** Remote sources used in the full schema (network E2E). */
 export const REMOTE_SKILL_SOURCES = {
   handoff:
     "git:https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff",
-  [BUNDLE_YAML_NAME]:
-    "git:https://github.com/RealAlexandreAI/public-skills/tree/main",
+  bundle: BUNDLE_GIT_SOURCE,
   poster: "skillhub:poster",
   "academic-review":
     "skillhub:https://skillhub.cn/skills/academic-pre-review-committee",
@@ -99,14 +98,13 @@ export function requireCloudCredentials({ cloud = false } = {}) {
 
 /**
  * Prepare an isolated workspace under /tmp with local fixtures + abs-path skill.
- * @returns {{ workspaceDir: string, agentYaml: string, absSkillPath: string, skills: Array }}
  */
 export function prepareSkillE2eWorkspace(tmpRoot = join("/tmp", `oma-skill-e2e-${Date.now()}`)) {
   rmSync(tmpRoot, { recursive: true, force: true });
   mkdirSync(tmpRoot, { recursive: true });
   cpSync(FIXTURE_ROOT, tmpRoot, { recursive: true });
 
-  const absSkillPath = join(tmpRoot, "abs-local-skill");
+  const absSkillPath = join(tmpRoot, "skills", "local-abs");
   mkdirSync(absSkillPath, { recursive: true });
   writeFileSync(
     join(absSkillPath, "SKILL.md"),
@@ -136,23 +134,19 @@ export function prepareSkillE2eWorkspace(tmpRoot = join("/tmp", `oma-skill-e2e-$
 
 export function buildCanonicalSkills(absSkillPath) {
   return [
-    { name: "local-rel", source: "./skills/local-rel" },
-    { name: "local-abs", source: absSkillPath },
-    { name: "handoff", source: REMOTE_SKILL_SOURCES.handoff },
-    { name: BUNDLE_YAML_NAME, source: REMOTE_SKILL_SOURCES[BUNDLE_YAML_NAME] },
-    { name: "poster", source: REMOTE_SKILL_SOURCES.poster },
-    { name: "academic-review", source: REMOTE_SKILL_SOURCES["academic-review"] },
-    { name: "edit-article", source: REMOTE_SKILL_SOURCES["edit-article"] },
-    { name: "tdd", source: REMOTE_SKILL_SOURCES.tdd },
-    { name: "no-source-dir" },
-    { name: "flat-legacy" },
+    { source: "file:./skills/local-rel" },
+    { source: `file:${absSkillPath}` },
+    { source: REMOTE_SKILL_SOURCES.handoff },
+    { source: REMOTE_SKILL_SOURCES.bundle },
+    { source: REMOTE_SKILL_SOURCES.poster },
+    { source: REMOTE_SKILL_SOURCES["academic-review"] },
+    { source: REMOTE_SKILL_SOURCES["edit-article"] },
+    { source: REMOTE_SKILL_SOURCES.tdd },
   ];
 }
 
 function formatSkillYamlEntry(skill) {
-  const lines = [`  - name: ${skill.name}`];
-  if (skill.source) lines.push(`    source: ${skill.source}`);
-  return lines;
+  return [`  - source: ${skill.source}`];
 }
 
 export function loadSkillsFromAgentYaml(agentYaml) {
@@ -182,8 +176,8 @@ export function assertFullSchemaDeployed(deployDir, { minBundleSkills = 1 } = {}
   }
 
   const manifest = readInstallManifest(skillsDir);
-  const bundle = manifest.bundles?.[BUNDLE_YAML_NAME];
-  assert.ok(bundle, `missing manifest bundle '${BUNDLE_YAML_NAME}'`);
+  const bundle = manifest.bundles?.[BUNDLE_GIT_SOURCE];
+  assert.ok(bundle, `missing manifest bundle for source: ${BUNDLE_GIT_SOURCE}`);
   assert.ok(
     Array.isArray(bundle.installed) && bundle.installed.length >= minBundleSkills,
     `bundle installed too small: ${bundle.installed?.length ?? 0}`,

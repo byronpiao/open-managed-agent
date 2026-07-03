@@ -2,15 +2,27 @@
  * Managed runtime — materialize deployment-bundle skills into OAK cwd layout.
  *
  * OAK / Claude Agent SDK expects: <cwd>/.claude/skills/<name>/SKILL.md
- * Deployment bundle stores:     <process.cwd()>/skills/<name>/...
+ * Deployment bundle stores:     <runtime-pkg>/skills/<name>/...
+ *   SCF:  /var/user/skills/...   (runtime pkg root; process cwd is /tmp/workspace)
+ *   TCBR: /app/skills/...        (WORKDIR /app)
  */
 
+import { existsSync, readdirSync } from "fs";
 import fs from "fs/promises";
 import path from "path";
+import { fileURLToPath } from "url";
 
+import { resolveOakWorkspaceCwd } from "../oak-runtime/workspace.js";
 import { managedLog, managedTrace } from "./observability/logging.js";
 
 const SKILL_DOC_NAMES = ["SKILL.md", "skill.md"] as const;
+
+export {
+  DEFAULT_WORKSPACE_CWD,
+  OAK_WORKSPACE_CWD,
+  OAK_WORKSPACE_CWD_SCF,
+  resolveOakWorkspaceCwd,
+} from "../oak-runtime/workspace.js";
 
 export interface MaterializeManagedSkillsResult {
   materialized: string[];
@@ -18,10 +30,16 @@ export interface MaterializeManagedSkillsResult {
 }
 
 export interface MaterializeManagedSkillsOptions {
-  /** Bundle skills root (default: resolve("skills") relative to cwd). */
+  /** Bundle skills root (default: resolveBundleSkillsDir()). */
   bundleSkillsDir?: string;
-  /** OAK session cwd (default: /tmp/workspace). */
+  /** OAK session cwd (default: {@link resolveOakWorkspaceCwd}). */
   workspaceCwd?: string;
+}
+
+export interface ResolveBundleSkillsDirOptions {
+  cwd?: string;
+  /** Override runtime package root (tests); default: dirname(import.meta.url)/../.. */
+  runtimePkgRoot?: string;
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -31,6 +49,82 @@ async function pathExists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Destination SKILL.md path for a skill name under the OAK workspace cwd. */
+export function oakSkillDestPath(workspaceCwd: string, skillName: string): string {
+  return path.join(workspaceCwd, ".claude", "skills", skillName, "SKILL.md");
+}
+
+/**
+ * Locate deploy-bundle skills/ regardless of process cwd.
+ * SCF starts with cwd=/tmp/workspace but skills live under /var/user/skills.
+ */
+export async function resolveBundleSkillsDir(
+  opts: ResolveBundleSkillsDirOptions = {},
+): Promise<string> {
+  const cwd = opts.cwd ?? process.cwd();
+  const runtimePkgRoot =
+    opts.runtimePkgRoot ??
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+  const candidates = [
+    path.join(runtimePkgRoot, "skills"),
+    path.resolve(cwd, "skills"),
+    "/var/user/skills",
+    "/app/skills",
+  ];
+
+  const seen = new Set<string>();
+  for (const dir of candidates) {
+    const normalized = path.resolve(dir);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    if (await pathExists(normalized)) return normalized;
+  }
+
+  return path.join(runtimePkgRoot, "skills");
+}
+
+/** Sync variant for kernel config assembly at boot. */
+export function resolveBundleSkillsDirSync(
+  opts: ResolveBundleSkillsDirOptions = {},
+): string {
+  const cwd = opts.cwd ?? process.cwd();
+  const runtimePkgRoot =
+    opts.runtimePkgRoot ??
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+  const candidates = [
+    path.join(runtimePkgRoot, "skills"),
+    path.resolve(cwd, "skills"),
+    "/var/user/skills",
+    "/app/skills",
+  ];
+
+  const seen = new Set<string>();
+  for (const dir of candidates) {
+    const normalized = path.resolve(dir);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    if (existsSync(normalized)) return normalized;
+  }
+
+  return path.join(runtimePkgRoot, "skills");
+}
+
+/** Skill directory names present in the deploy bundle (sync). */
+export function listBundledSkillNames(bundleSkillsDir: string): string[] {
+  if (!existsSync(bundleSkillsDir)) return [];
+  const names: string[] = [];
+  for (const entry of readdirSync(bundleSkillsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const dir = path.join(bundleSkillsDir, entry.name);
+    if (SKILL_DOC_NAMES.some((n) => existsSync(path.join(dir, n)))) {
+      names.push(entry.name);
+    }
+  }
+  return names;
 }
 
 async function isSkillDirectory(dir: string): Promise<boolean> {
@@ -77,8 +171,8 @@ export async function materializeManagedSkills(
   skillNames: string[],
   opts: MaterializeManagedSkillsOptions = {},
 ): Promise<MaterializeManagedSkillsResult> {
-  const bundleSkillsDir = opts.bundleSkillsDir ?? path.resolve("skills");
-  const workspaceCwd = opts.workspaceCwd ?? "/tmp/workspace";
+  const bundleSkillsDir = opts.bundleSkillsDir ?? (await resolveBundleSkillsDir());
+  const workspaceCwd = opts.workspaceCwd ?? resolveOakWorkspaceCwd();
   const destRoot = path.join(workspaceCwd, ".claude", "skills");
 
   const wl = managedLog({

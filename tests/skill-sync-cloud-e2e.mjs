@@ -1,5 +1,5 @@
 /**
- * Cloud E2E: deploy full 10-scenario skills schema to SCF + TCBR, verify downloaded package.
+ * Cloud E2E: deploy full 8-scenario skills schema to SCF + TCBR, verify downloaded package.
  *
  * Run: npm run test:skills-cloud-e2e
  *
@@ -61,7 +61,7 @@ async function runCloudSkillE2e(agentType) {
     join("/tmp", `oma-skill-cloud-ws-${agentType}-${Date.now()}`),
   );
   const skills = loadSkillsFromAgentYaml(agentYaml);
-  assert.equal(skills.length, 10);
+  assert.equal(skills.length, 8);
 
   let agentId = "";
   try {
@@ -84,7 +84,7 @@ async function runCloudSkillE2e(agentType) {
       serviceId,
     });
 
-    assert.ok(names.length >= 10, `expected ≥10 skills on ${agentType}, got ${names.length}`);
+    assert.ok(names.length >= 8, `expected ≥8 skills on ${agentType}, got ${names.length}`);
     console.log(`  ✓ ${agentType} ${agentId}: ${names.length} skills verified`);
   } finally {
     if (agentId) deleteAgent(agentId, { envId, apiKey });

@@ -13,7 +13,7 @@ function reset() {
   mkdirSync(TMP, { recursive: true });
 }
 
-test("local-only subset: scenarios 1/2/9/10 in one deploy", async () => {
+test("local-only subset: file:relative + file:absolute in one deploy", async () => {
   reset();
   const absSkill = join(TMP, "abs-skill");
   mkdirSync(absSkill, { recursive: true });
@@ -23,11 +23,6 @@ test("local-only subset: scenarios 1/2/9/10 in one deploy", async () => {
   mkdirSync(relSkill, { recursive: true });
   writeFileSync(join(relSkill, "SKILL.md"), "# rel\nmarker: rel\n");
 
-  mkdirSync(join(TMP, "skills", "nosrc-dir"), { recursive: true });
-  writeFileSync(join(TMP, "skills", "nosrc-dir", "SKILL.md"), "# dir\nmarker: dir\n");
-
-  writeFileSync(join(TMP, "skills", "nosrc-flat.md"), "# flat\nmarker: flat\n");
-
   const agentYaml = join(TMP, "agent.yaml");
   writeFileSync(
     agentYaml,
@@ -35,12 +30,8 @@ test("local-only subset: scenarios 1/2/9/10 in one deploy", async () => {
       "name: local-schema",
       "runtime: managed",
       "skills:",
-      "  - name: rel-skill",
-      "    source: ./skills/rel-skill",
-      `  - name: abs-skill`,
-      `    source: ${absSkill}`,
-      "  - name: nosrc-dir",
-      "  - name: nosrc-flat",
+      "  - source: file:./skills/rel-skill",
+      `  - source: file:${absSkill}`,
     ].join("\n"),
     "utf-8",
   );
@@ -49,17 +40,15 @@ test("local-only subset: scenarios 1/2/9/10 in one deploy", async () => {
   const result = await applySkillsToDeployDir(
     deployDir,
     [
-      { name: "rel-skill", source: "./skills/rel-skill" },
-      { name: "abs-skill", source: absSkill },
-      { name: "nosrc-dir" },
-      { name: "nosrc-flat" },
+      { source: "file:./skills/rel-skill" },
+      { source: `file:${absSkill}` },
     ],
     { configFile: agentYaml },
   );
 
-  assert.equal(result.added.length, 4);
+  assert.equal(result.added.length, 2);
   const skillsDir = join(deployDir, "skills");
-  for (const name of ["rel-skill", "abs-skill", "nosrc-dir", "nosrc-flat"]) {
+  for (const name of ["rel-skill", "abs-skill"]) {
     assertSkillMd(skillsDir, name);
   }
 });

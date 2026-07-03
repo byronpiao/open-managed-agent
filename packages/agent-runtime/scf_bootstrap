@@ -33,12 +33,17 @@ export OAK_SESSION_LOCAL_DIR=/tmp
 # sticky bit so users can't delete each other's files).
 chmod 1777 /tmp 2>/dev/null || true
 
-# /tmp/.oak: kernel 的统一自管根(见上)。/tmp/workspace: session cwd。
-# 预建并 chown 给 1001,避免子进程写不进(写不进会静默 exit 0 + 0 输出)。
-mkdir -p /tmp/.oak /tmp/workspace
-chown -R 1001:1001 /tmp/.oak /tmp/workspace 2>/dev/null || true
-chmod 0755 /tmp/.oak /tmp/workspace 2>/dev/null || true
+# OAK session cwd — MUST match packages/agent-runtime/src/oak-runtime/workspace.ts
+#   OAK_WORKSPACE_CWD. Kernel AgentConfig.cwd + skill materialize (.claude/skills/).
+#   Change this shell variable and workspace.ts together.
+OAK_WORKSPACE_CWD=/tmp/workspace
 
-cd /tmp/workspace
+# /tmp/.oak: kernel 的统一自管根(见上)。
+# 预建 session cwd 并 chown 给 1001,避免子进程写不进(写不进会静默 exit 0 + 0 输出)。
+mkdir -p /tmp/.oak "${OAK_WORKSPACE_CWD}"
+chown -R 1001:1001 /tmp/.oak "${OAK_WORKSPACE_CWD}" 2>/dev/null || true
+chmod 0755 /tmp/.oak "${OAK_WORKSPACE_CWD}" 2>/dev/null || true
+
+cd "${OAK_WORKSPACE_CWD}"
 
 exec node --import /var/user/uid-shim.mjs /var/user/dist/index.js

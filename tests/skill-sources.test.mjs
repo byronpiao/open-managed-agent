@@ -21,7 +21,6 @@ import {
   resolveLocalSource,
   resolveSkillArtifacts,
   copySkillDirToDeploy,
-  tryResolveDefaultLocalSkill,
 } from "../lib/skill-sources.mjs";
 import {
   syncSkillsInDir,
@@ -49,7 +48,8 @@ test("parseSkillSource prefixes", () => {
     kind: "skillssh",
     payload: "a/b/c",
   });
-  assert.deepEqual(parseSkillSource("./x"), { kind: "local", payload: "./x" });
+  assert.deepEqual(parseSkillSource("file:./x"), { kind: "local", payload: "./x" });
+  assert.throws(() => parseSkillSource("./x"), /protocol prefix/);
 });
 
 test("normalizeGitUrl hash subpath", () => {
@@ -91,7 +91,7 @@ test("syncSkillsInDir installs local directory", async () => {
   mkdirSync(configDir, { recursive: true });
 
   const result = await syncSkillsInDir(
-    [{ name: "demo", source: src }],
+    [{ source: `file:${src}` }],
     deploySkills,
     { configDir, cwd: TMP },
   );
@@ -109,13 +109,13 @@ test("syncSkillsInDir update and remove", async () => {
   mkdirSync(src, { recursive: true });
   writeFileSync(join(src, "SKILL.md"), "# Keep");
 
-  await syncSkillsInDir([{ name: "keep", source: src }], deploySkills, {
+  await syncSkillsInDir([{ source: `file:${src}` }], deploySkills, {
     configDir: TMP,
     cwd: TMP,
   });
 
   writeFileSync(join(src, "SKILL.md"), "# Keep v2");
-  const updated = await syncSkillsInDir([{ name: "keep", source: src }], deploySkills, {
+  const updated = await syncSkillsInDir([{ source: `file:${src}` }], deploySkills, {
     configDir: TMP,
     cwd: TMP,
   });
@@ -127,8 +127,12 @@ test("syncSkillsInDir update and remove", async () => {
 
 test("skillsChanged detects source edits", () => {
   assert.equal(
-    skillsChanged([{ name: "a", source: "./x" }], [{ name: "a", source: "./y" }]),
+    skillsChanged([{ source: "file:./x" }], [{ source: "file:./y" }]),
     true,
+  );
+  assert.equal(
+    skillsChanged([{ source: "file:./x" }], [{ source: "file:./x" }]),
+    false,
   );
   assert.equal(skillsChanged([], [], { forceSync: true }), true);
 });
@@ -151,43 +155,19 @@ test("resolveSkillArtifacts local relative", async () => {
   mkdirSync(skillDir, { recursive: true });
   writeFileSync(join(skillDir, "SKILL.md"), "# rel");
   const arts = await resolveSkillArtifacts(
-    { name: "rel", source: "./rel" },
+    { source: "file:./rel" },
     { cwd: TMP, configDir: TMP },
   );
   assert.equal(arts.length, 1);
   assert.ok(isValidSkillDir(arts[0].skillDir));
 });
 
-test("tryResolveDefaultLocalSkill directory and flat md", () => {
+test("resolveSkillArtifacts rejects missing source", async () => {
   resetTmp();
-  const configDir = join(TMP, "cfg");
-  const skillsRoot = join(configDir, "skills");
-  mkdirSync(join(skillsRoot, "dir-skill"), { recursive: true });
-  writeFileSync(join(skillsRoot, "dir-skill", "SKILL.md"), "# dir");
-  writeFileSync(join(skillsRoot, "flat-skill.md"), "# flat");
-
-  const dirHit = tryResolveDefaultLocalSkill({ name: "dir-skill" }, configDir, TMP);
-  assert.ok(dirHit);
-  assert.equal(dirHit.destName, "dir-skill");
-
-  const flatHit = tryResolveDefaultLocalSkill({ name: "flat-skill" }, configDir, TMP);
-  assert.ok(flatHit);
-  assert.ok(isValidSkillDir(flatHit.skillDir));
-  if (flatHit.tempRoot) rmSync(flatHit.tempRoot, { recursive: true, force: true });
-});
-
-test("resolveSkillArtifacts without source uses local default", async () => {
-  resetTmp();
-  const configDir = join(TMP, "cfg2");
-  const skillDir = join(configDir, "skills", "hello");
-  mkdirSync(skillDir, { recursive: true });
-  writeFileSync(join(skillDir, "SKILL.md"), "# hello default");
-  const arts = await resolveSkillArtifacts(
-    { name: "hello" },
-    { cwd: TMP, configDir, tempParent: join(TMP, "tmp") },
+  await assert.rejects(
+    () => resolveSkillArtifacts({}, { cwd: TMP, configDir: TMP }),
+    /requires source/,
   );
-  assert.equal(arts.length, 1);
-  assert.match(readFileSync(join(arts[0].skillDir, "SKILL.md"), "utf-8"), /hello default/);
 });
 
 test("skillsNeedSync detects local content change with same yaml", async () => {
@@ -197,9 +177,9 @@ test("skillsNeedSync detects local content change with same yaml", async () => {
   mkdirSync(skillDir, { recursive: true });
   writeFileSync(join(skillDir, "SKILL.md"), "# v1");
   const agentYaml = join(configDir, "agent.yaml");
-  writeFileSync(agentYaml, "name: t\nskills:\n  - name: demo\n");
+  writeFileSync(agentYaml, "name: t\nskills:\n  - source: file:./skills/demo\n");
 
-  const skills = [{ name: "demo" }];
+  const skills = [{ source: "file:./skills/demo" }];
   const hashes = await computeSkillContentHashes(skills, { configDir });
   const currentConfig = { metadata: { __skillHashes: hashes } };
 
@@ -229,13 +209,14 @@ test("skillsNeedSync detects bundle child content change", async () => {
   resetTmp();
   const configDir = join(TMP, "bundle-cfg");
   mkdirSync(configDir, { recursive: true });
+  const bundleSource = "git:https://github.com/example/skills.git";
   const agentYaml = join(configDir, "agent.yaml");
   writeFileSync(
     agentYaml,
-    "name: t\nskills:\n  - name: demo-bundle\n    source: git:https://github.com/example/skills.git\n",
+    `name: t\nskills:\n  - source: ${bundleSource}\n`,
   );
 
-  const skills = [{ name: "demo-bundle", source: "git:https://github.com/example/skills.git" }];
+  const skills = [{ source: bundleSource }];
   const mutableRepo = join(TMP, "mutable-repo");
   cpSync(join(FIXTURES, "nested"), mutableRepo, { recursive: true });
   const cloneMock = (_url, _branch, tempParent) => {

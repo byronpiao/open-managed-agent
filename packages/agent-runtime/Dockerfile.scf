@@ -8,7 +8,8 @@
 #     AT BUILD TIME and chown them to 1001; scf_bootstrap also re-creates
 #     + chowns them at runtime (build-time chown is reset by the SCF mount).
 #     /tmp/.oak is the kernel's unified work root (OAK_SESSION_LOCAL_DIR=/tmp →
-#     <workRoot>/.oak/{agent,users,sync}); /tmp/workspace is the session cwd.
+#     <workRoot>/.oak/{agent,users,sync}); session cwd = OAK_WORKSPACE_CWD in
+#     src/oak-runtime/workspace.ts (scf_bootstrap must match).
 #   - We bake the linux-x64 native claude binary into the image so the SDK
 #     never has to extract or fetch it at runtime, and the optionalDeps
 #     platform-skip dance is gone.

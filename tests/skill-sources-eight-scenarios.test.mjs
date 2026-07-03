@@ -1,16 +1,14 @@
 /**
- * Ten skill source scenarios (CI — no network).
+ * Eight skill source scenarios (CI — no network).
  *
- * 1. local relative path
- * 2. local absolute path
+ * 1. file: local relative path
+ * 2. file: local absolute path
  * 3. git: single skill (#subpath)
  * 4. git: whole-repo bundle scan
  * 5. skillhub: slug shorthand
  * 6. skillhub: full page URL
  * 7. skills.sh: shorthand
  * 8. skills.sh: full page URL
- * 9. no source → skills/<name>/ directory
- * 10. no source → skills/<name>.md flat file
  */
 
 import { test } from "node:test";
@@ -86,7 +84,7 @@ test("1. local relative path → skills/<name>/", async () => {
 
   const deploySkills = join(TMP, "d1", "skills");
   const result = await syncSkillsInDir(
-    [{ name: "local-rel", source: "./skills/local-rel" }],
+    [{ source: "file:./skills/local-rel" }],
     deploySkills,
     deployCtx({ configDir, cwd: configDir }),
   );
@@ -98,13 +96,13 @@ test("1. local relative path → skills/<name>/", async () => {
 
 test("2. local absolute path → skills/<name>/", async () => {
   resetTmp();
-  const absSkill = join(TMP, "abs-skill");
+  const absSkill = join(TMP, "local-abs");
   mkdirSync(absSkill, { recursive: true });
   writeFileSync(join(absSkill, "SKILL.md"), "# local absolute\nmarker: abs\n");
 
   const deploySkills = join(TMP, "d2", "skills");
   const result = await syncSkillsInDir(
-    [{ name: "local-abs", source: absSkill }],
+    [{ source: `file:${absSkill}` }],
     deploySkills,
     deployCtx({ configDir: TMP, cwd: TMP }),
   );
@@ -123,7 +121,6 @@ test("3. git: single skill (#subpath)", async () => {
 
   const result = await syncSkillsInDir(
     [{
-      name: "tdd",
       source: "git:https://github.com/example/skills.git#tdd",
     }],
     deploySkills,
@@ -142,11 +139,9 @@ test("4. git: whole-repo bundle scan + manifest", async () => {
   const deploySkills = join(TMP, "d4", "skills");
   const cloneMock = mockCloneFixture("nested");
 
+  const bundleSource = "git:https://github.com/example/skills.git";
   const result = await syncSkillsInDir(
-    [{
-      name: "demo-bundle",
-      source: "git:https://github.com/example/skills.git",
-    }],
+    [{ source: bundleSource }],
     deploySkills,
     deployCtx({ cloneGitRepo: cloneMock }),
   );
@@ -157,8 +152,8 @@ test("4. git: whole-repo bundle scan + manifest", async () => {
   assert.ok(result.added.includes("tdd") || result.updated.includes("tdd"));
 
   const manifest = readInstallManifest(deploySkills);
-  assert.ok(manifest.bundles?.["demo-bundle"]);
-  assert.ok(manifest.bundles["demo-bundle"].installed.includes("tdd"));
+  assert.ok(manifest.bundles?.[bundleSource]);
+  assert.ok(manifest.bundles[bundleSource].installed.includes("tdd"));
 });
 
 test("4b. bundle row removed deletes manifest-installed skill dirs", async () => {
@@ -166,11 +161,9 @@ test("4b. bundle row removed deletes manifest-installed skill dirs", async () =>
   const deploySkills = join(TMP, "d4b", "skills");
   const cloneMock = mockCloneFixture("nested");
 
+  const bundleSource = "git:https://github.com/example/skills.git";
   await syncSkillsInDir(
-    [{
-      name: "demo-bundle",
-      source: "git:https://github.com/example/skills.git",
-    }],
+    [{ source: bundleSource }],
     deploySkills,
     deployCtx({ cloneGitRepo: cloneMock }),
   );
@@ -185,7 +178,7 @@ test("4b. bundle row removed deletes manifest-installed skill dirs", async () =>
   assert.equal(existsSync(join(deploySkills, "tdd")), false);
   assert.equal(existsSync(join(deploySkills, "other-skill")), false);
   const manifest = readInstallManifest(deploySkills);
-  assert.equal(manifest.bundles?.["demo-bundle"], undefined);
+  assert.equal(manifest.bundles?.[bundleSource], undefined);
 });
 
 test("5. skillhub: slug shorthand (poster)", async () => {
@@ -197,7 +190,7 @@ test("5. skillhub: slug shorthand (poster)", async () => {
   assert.equal(parseSkillhubSlug(fullUrl), slug);
 
   const result = await syncSkillsInDir(
-    [{ name: "poster", source: `skillhub:${slug}` }],
+    [{ source: `skillhub:${slug}` }],
     deploySkills,
     deployCtx({
       fetchImpl: mockSkillhubFetch(slug, "# skillhub poster\nmarker: hub-slug\n"),
@@ -219,16 +212,16 @@ test("6. skillhub: full page URL (canonical)", async () => {
   assert.equal(parseSkillhubSlug(url), slug);
 
   const result = await syncSkillsInDir(
-    [{ name: "academic-review", source: `skillhub:${url}` }],
+    [{ source: `skillhub:${url}` }],
     deploySkills,
     deployCtx({
       fetchImpl: mockSkillhubFetch(slug, "# skillhub canonical\nmarker: hub-url\n"),
     }),
   );
 
-  assert.ok(result.added.includes("academic-review"));
+  assert.ok(result.added.includes("academic-pre-review-committee"));
   assert.match(
-    readFileSync(join(deploySkills, "academic-review", "SKILL.md"), "utf-8"),
+    readFileSync(join(deploySkills, "academic-pre-review-committee", "SKILL.md"), "utf-8"),
     /marker: hub-url/,
   );
 });
@@ -248,7 +241,7 @@ test("7. skills.sh: shorthand (edit-article)", async () => {
   });
 
   const result = await syncSkillsInDir(
-    [{ name: "edit-article", source: `skills.sh:${shorthand}` }],
+    [{ source: `skills.sh:${shorthand}` }],
     deploySkills,
     deployCtx({ cloneGitRepo: mockCloneFixture("nested") }),
   );
@@ -267,7 +260,7 @@ test("8. skills.sh: full page URL (canonical tdd)", async () => {
   });
 
   const result = await syncSkillsInDir(
-    [{ name: "tdd", source: `skills.sh:${url}` }],
+    [{ source: `skills.sh:${url}` }],
     deploySkills,
     deployCtx({ cloneGitRepo: mockCloneFixture("nested") }),
   );
@@ -296,66 +289,25 @@ test("parseSkillSource covers all prefix kinds", () => {
   assert.equal(parseSkillSource("git:u").kind, "git");
   assert.equal(parseSkillSource("skillhub:x").kind, "skillhub");
   assert.equal(parseSkillSource("skills.sh:a/b/c").kind, "skillssh");
-  assert.equal(parseSkillSource("./local").kind, "local");
+  assert.equal(parseSkillSource("file:./local").kind, "local");
+  assert.throws(() => parseSkillSource("./local"), /protocol prefix/);
 });
 
 test("resolveSkillArtifacts git single vs bundle artifact shapes", async () => {
   const cloneMock = mockCloneFixture("nested");
+  const gitSingle = "git:https://github.com/x/r.git#tdd";
   const single = await resolveSkillArtifacts(
-    { name: "tdd", source: "git:https://github.com/x/r.git#tdd" },
+    { source: gitSingle },
     { cwd: TMP, configDir: TMP, cloneGitRepo: cloneMock, tempParent: join(TMP, "art") },
   );
   assert.equal(single.length, 1);
   assert.equal(single[0].bundleKey, undefined);
 
+  const gitBundle = "git:https://github.com/x/r.git";
   const bundle = await resolveSkillArtifacts(
-    { name: "bundle", source: "git:https://github.com/x/r.git" },
+    { source: gitBundle },
     { cwd: TMP, configDir: TMP, cloneGitRepo: cloneMock, tempParent: join(TMP, "art2") },
   );
   assert.ok(bundle.length >= 2);
-  assert.ok(bundle.every((a) => a.bundleKey === "bundle"));
-});
-
-test("9. no source: skills/<name>/ directory", async () => {
-  resetTmp();
-  const configDir = join(TMP, "cfg9");
-  const skillDir = join(configDir, "skills", "auto-dir");
-  mkdirSync(skillDir, { recursive: true });
-  writeFileSync(join(skillDir, "SKILL.md"), "# no source dir\nmarker: auto-dir\n");
-
-  const deploySkills = join(TMP, "d9", "skills");
-  const result = await syncSkillsInDir(
-    [{ name: "auto-dir" }],
-    deploySkills,
-    deployCtx({ configDir, cwd: configDir }),
-  );
-
-  assert.ok(result.added.includes("auto-dir"));
-  assert.match(
-    readFileSync(join(deploySkills, "auto-dir", "SKILL.md"), "utf-8"),
-    /marker: auto-dir/,
-  );
-});
-
-test("10. no source: skills/<name>.md flat file", async () => {
-  resetTmp();
-  const configDir = join(TMP, "cfg10");
-  mkdirSync(join(configDir, "skills"), { recursive: true });
-  writeFileSync(
-    join(configDir, "skills", "auto-flat.md"),
-    "# no source flat\nmarker: auto-flat\n",
-  );
-
-  const deploySkills = join(TMP, "d10", "skills");
-  const result = await syncSkillsInDir(
-    [{ name: "auto-flat" }],
-    deploySkills,
-    deployCtx({ configDir, cwd: configDir }),
-  );
-
-  assert.ok(result.added.includes("auto-flat"));
-  assert.match(
-    readFileSync(join(deploySkills, "auto-flat", "SKILL.md"), "utf-8"),
-    /marker: auto-flat/,
-  );
+  assert.ok(bundle.every((a) => a.bundleKey === gitBundle));
 });

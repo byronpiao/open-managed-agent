@@ -30,8 +30,7 @@ writeFileSync(
   `name: smoke
 runtime: managed
 skills:
-  - name: demo
-    source: ./skills/demo
+  - source: file:./skills/demo
 `,
 );
 
@@ -40,7 +39,7 @@ mkdirSync(deployDir, { recursive: true });
 
 const result = await applySkillsToDeployDir(
   deployDir,
-  [{ name: "demo", source: "./skills/demo" }],
+  [{ source: "file:./skills/demo" }],
   { configFile: agentYaml },
 );
 

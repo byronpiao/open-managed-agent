@@ -21,7 +21,7 @@ import express from "express";
 import cors from "cors";
 import { mountAcpEndpoint } from "./acp-endpoint.js";
 import { loadAgentConfig, resolveRuntime, resolveSkills } from "./config.js";
-import { materializeManagedSkills } from "./managed/skills.js";
+import { materializeManagedSkills, resolveBundleSkillsDir, listBundledSkillNames } from "./managed/skills.js";
 import { getKernelAgent, getStoreDiag } from "./oak-runtime/kernel-adapter.js";
 
 const port = Number(process.env.PORT ?? 9000);
@@ -45,9 +45,10 @@ async function main() {
   if (runtime === "managed") {
     const { initManagedLogging } = await import("./managed/observability/logging.js");
     initManagedLogging();
-    const skillNames = rawConfig.skills?.map((s) => s.name).filter(Boolean) ?? [];
+    const bundleSkillsDir = await resolveBundleSkillsDir();
+    const skillNames = listBundledSkillNames(bundleSkillsDir);
     if (skillNames.length > 0) {
-      await materializeManagedSkills(skillNames);
+      await materializeManagedSkills(skillNames, { bundleSkillsDir });
     }
   } else {
     config = await resolveSkills(rawConfig);

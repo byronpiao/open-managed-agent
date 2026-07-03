@@ -270,10 +270,9 @@ mcp_servers:
     name: github
     url: https://api.githubcopilot.com/mcp/
 
-# Skills（领域知识）— 完整 10 种写法见 docs/examples/agent.skills-sources.example.yaml
+# Skills（领域知识）— 完整 8 种写法见 docs/examples/agent.skills-sources.example.yaml
 skills:
-  - name: code-review
-    source: ./skills/code-review
+  - source: file:./skills/code-review
 
 # 自定义元数据
 metadata:
@@ -732,7 +731,7 @@ magent agent:create -n my-agent -f agent.yaml -e <env-id>
 magent agent:sync-skills -a <agent-id> -f agent.yaml -e <env-id>
 ```
 
-本地 skill 建议放在与 `agent.yaml` 同级的 `skills/<name>/`（含 `SKILL.md`）。
+本地 skill 放在与 `agent.yaml` 同级的 `skills/<dir>/`（含 `SKILL.md`），YAML 里用 `source: file:./skills/<dir>`。
 
 ### 代码更新
 

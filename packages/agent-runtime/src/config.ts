@@ -67,9 +67,8 @@ export interface McpServer {
 }
 
 export interface Skill {
-  name: string;
-  /** Install-time only (magent). Runtime reads skills/<name>/ in the deploy bundle. */
-  source?: string;
+  /** Install-time source (magent). Runtime reads skills/<destName>/ in the deploy bundle. */
+  source: string;
 }
 
 export interface ModelSpec {
@@ -366,35 +365,43 @@ export async function resolveSkills(config: AgentConfig): Promise<AgentConfig> {
   const skillsDir = path.resolve("skills");
 
   for (const skill of skills) {
-    let srcPath: string | null = null;
-    const dirPath = path.join(skillsDir, skill.name);
-    if (await fileExists(dirPath) && (await fileExists(path.join(dirPath, "SKILL.md")) || await fileExists(path.join(dirPath, "skill.md")))) {
-      srcPath = (await fileExists(path.join(dirPath, "SKILL.md")))
-        ? path.join(dirPath, "SKILL.md")
-        : path.join(dirPath, "skill.md");
+    const src = skill.source?.trim();
+    if (!src?.startsWith("file:")) {
+      console.warn(`[Config] Harness skill skipped — file: required: ${src ?? "(missing)"}`);
+      continue;
     }
-    if (!srcPath) {
-      for (const ext of [".md", ".txt", ""]) {
-        const fp = path.join(skillsDir, skill.name + ext);
-        if (await fileExists(fp)) {
-          srcPath = fp;
-          break;
-        }
+    const payload = src.slice(5);
+    const label = path.basename(payload).replace(/\.(md|txt)$/i, "") || path.basename(payload);
+    let srcPath: string | null = null;
+    const configDir = configFilePath ? path.dirname(configFilePath) : process.cwd();
+    const candidates = [
+      path.resolve(configDir, payload),
+      path.join(skillsDir, label, "SKILL.md"),
+      path.join(skillsDir, label, "skill.md"),
+      path.join(skillsDir, `${label}.md`),
+      path.join(skillsDir, label),
+    ];
+    for (const fp of candidates) {
+      if (await fileExists(fp) && (fp.endsWith(".md") || (await fileExists(path.join(fp, "SKILL.md"))))) {
+        srcPath = fp.endsWith(".md") ? fp : (await fileExists(path.join(fp, "SKILL.md")))
+          ? path.join(fp, "SKILL.md")
+          : path.join(fp, "skill.md");
+        break;
       }
     }
 
     if (!srcPath) {
-      console.warn(`[Config] Skill '${skill.name}': not found in ${skillsDir}`);
+      console.warn(`[Config] Skill '${label}' (${src}): not found under ${skillsDir}`);
       continue;
     }
 
     try {
       const content = await fs.readFile(srcPath, "utf-8");
-      const header = `# Skill: ${skill.name}\n`;
+      const header = `# Skill: ${label}\n`;
       blocks.push(`${header}\n${content.trim()}`);
     } catch (err) {
       console.warn(
-        `[Config] Skill '${skill.name}': failed to read ${srcPath}: ${(err as Error).message}`,
+        `[Config] Skill '${label}': failed to read ${srcPath}: ${(err as Error).message}`,
       );
     }
   }

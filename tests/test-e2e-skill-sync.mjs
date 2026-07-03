@@ -38,8 +38,8 @@ test("add new skill directory", async () => {
   const configDir = join(TEST_DIR, "local");
   const result = await syncSkillsInDir(
     [
-      { name: "existing", source: join(deployedSkillsDir, "existing") },
-      { name: "new-skill", source: localSkill },
+      { source: `file:${join(deployedSkillsDir, "existing")}` },
+      { source: `file:${localSkill}` },
     ],
     deployedSkillsDir,
     { configDir, cwd: configDir },
@@ -70,13 +70,13 @@ test("update skill content", async () => {
   mkdirSync(src, { recursive: true });
   writeFileSync(join(src, "SKILL.md"), "# v1");
 
-  await syncSkillsInDir([{ name: "demo", source: src }], deployedSkillsDir, {
+  await syncSkillsInDir([{ source: `file:${src}` }], deployedSkillsDir, {
     configDir: TEST_DIR,
     cwd: TEST_DIR,
   });
 
   writeFileSync(join(src, "SKILL.md"), "# v2");
-  const result = await syncSkillsInDir([{ name: "demo", source: src }], deployedSkillsDir, {
+  const result = await syncSkillsInDir([{ source: `file:${src}` }], deployedSkillsDir, {
     configDir: TEST_DIR,
     cwd: TEST_DIR,
   });
@@ -86,9 +86,12 @@ test("update skill content", async () => {
 });
 
 test("skillsChanged", () => {
-  assert.equal(skillsChanged([{ name: "a" }], [{ name: "b" }]), true);
   assert.equal(
-    skillsChanged([{ name: "a", source: "./x" }], [{ name: "a", source: "./x" }]),
+    skillsChanged([{ source: "file:./a" }], [{ source: "file:./b" }]),
+    true,
+  );
+  assert.equal(
+    skillsChanged([{ source: "file:./x" }], [{ source: "file:./x" }]),
     false,
   );
   assert.equal(skillsChanged([], [], { forceSync: true }), true);
@@ -106,7 +109,7 @@ test("applySkillsToDeployDir", async () => {
 
   const result = await applySkillsToDeployDir(
     deployDir,
-    [{ name: "hello", source: src }],
+    [{ source: `file:${src}` }],
     { configFile: agentYaml },
   );
 

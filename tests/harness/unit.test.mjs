@@ -975,7 +975,7 @@ test("buildSkillsManifestEnv packs skill files", () => {
       name: "t",
       model: "m",
       system: "s",
-      skills: [{ name: "demo", source: "./skills/demo" }],
+      skills: [{ source: "file:./skills/demo" }],
     },
     dir,
   );

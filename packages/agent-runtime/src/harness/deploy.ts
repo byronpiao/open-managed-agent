@@ -198,8 +198,15 @@ export function buildSkillsManifestEnv(
   const skillsDir = path.resolve(baseDir, "skills");
 
   for (const skill of skills) {
+    const src = skill.source?.trim();
+    if (!src?.startsWith("file:")) {
+      console.warn(`[Deploy] Harness skill skipped — file: required: ${src ?? "(missing)"}`);
+      continue;
+    }
+    const payload = src.slice(5);
+    const label = path.basename(payload).replace(/\.(md|txt)$/i, "") || path.basename(payload);
     let srcPath: string | null = null;
-    const skillDir = path.join(skillsDir, skill.name);
+    const skillDir = path.join(skillsDir, label);
     for (const doc of ["SKILL.md", "skill.md"]) {
       const fp = path.join(skillDir, doc);
       if (fs.existsSync(fp)) {
@@ -208,8 +215,8 @@ export function buildSkillsManifestEnv(
       }
     }
     if (!srcPath) {
-      for (const ext of [".md", ".txt", ""]) {
-        const fp = path.join(skillsDir, skill.name + ext);
+      for (const ext of [".md", ".txt"]) {
+        const fp = path.join(skillsDir, `${label}${ext}`);
         if (fs.existsSync(fp)) {
           srcPath = fp;
           break;
@@ -218,13 +225,13 @@ export function buildSkillsManifestEnv(
     }
 
     if (!srcPath) {
-      console.warn(`[Deploy] Skill '${skill.name}' not found in ${skillsDir}`);
+      console.warn(`[Deploy] Skill '${label}' (${src}): not found in ${skillsDir}`);
       continue;
     }
 
     try {
       packed.push({
-        name: skill.name,
+        name: label,
         content: fs.readFileSync(srcPath, "utf-8").trim(),
       });
     } catch {
