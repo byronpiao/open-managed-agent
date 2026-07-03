@@ -19,6 +19,7 @@ import {
 } from "./llm-providers.js";
 import { buildHarnessOpencodePermission } from "./engine/opencode/opencode-permissions.js";
 import { mergeHarnessInstanceEnv, sandboxEnvToHarnessVars } from "./sandbox/sandbox-env.js";
+import { resolveHarnessSkillDocSync } from "./file-skill.js";
 
 export { buildHarnessOpencodePermission } from "./engine/opencode/opencode-permissions.js";
 
@@ -195,7 +196,6 @@ export function buildSkillsManifestEnv(
   const skills = config.skills;
   if (!skills?.length) return null;
   const packed: Array<{ name: string; content: string }> = [];
-  const skillsDir = path.resolve(baseDir, "skills");
 
   for (const skill of skills) {
     const src = skill.source?.trim();
@@ -203,39 +203,23 @@ export function buildSkillsManifestEnv(
       console.warn(`[Deploy] Harness skill skipped — file: required: ${src ?? "(missing)"}`);
       continue;
     }
-    const payload = src.slice(5);
-    const label = path.basename(payload).replace(/\.(md|txt)$/i, "") || path.basename(payload);
-    let srcPath: string | null = null;
-    const skillDir = path.join(skillsDir, label);
-    for (const doc of ["SKILL.md", "skill.md"]) {
-      const fp = path.join(skillDir, doc);
-      if (fs.existsSync(fp)) {
-        srcPath = fp;
-        break;
-      }
-    }
-    if (!srcPath) {
-      for (const ext of [".md", ".txt"]) {
-        const fp = path.join(skillsDir, `${label}${ext}`);
-        if (fs.existsSync(fp)) {
-          srcPath = fp;
-          break;
-        }
-      }
-    }
 
-    if (!srcPath) {
-      console.warn(`[Deploy] Skill '${label}' (${src}): not found in ${skillsDir}`);
+    const resolved = resolveHarnessSkillDocSync(baseDir, src);
+    if (!resolved) {
+      console.warn(`[Deploy] Skill (${src}): not found under ${baseDir}`);
       continue;
     }
 
+    const { label, srcPath } = resolved;
     try {
       packed.push({
         name: label,
         content: fs.readFileSync(srcPath, "utf-8").trim(),
       });
-    } catch {
-      // skip
+    } catch (err) {
+      console.warn(
+        `[Deploy] Skill '${label}': failed to read ${srcPath}: ${(err as Error).message}`,
+      );
     }
   }
   if (!packed.length) return null;

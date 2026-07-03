@@ -21,6 +21,7 @@ import {
   resolveLocalSource,
   resolveSkillArtifacts,
   copySkillDirToDeploy,
+  deployNameFromSkillDir,
 } from "../lib/skill-sources.mjs";
 import {
   syncSkillsInDir,
@@ -77,6 +78,49 @@ test("resolveLocalSource prefers cwd", () => {
   writeFileSync(join(skillDir, "SKILL.md"), "# x");
   const abs = resolveLocalSource(skillDir, { cwd: TMP, configDir: TMP });
   assert.equal(abs, skillDir);
+});
+
+test("deployNameFromSkillDir uses directory basename", () => {
+  assert.equal(deployNameFromSkillDir("/path/to/my-skill"), "my-skill");
+  assert.equal(deployNameFromSkillDir(join(TMP, "nested", "tdd")), "tdd");
+});
+
+test("syncSkillsInDir warns when duplicate destName from different sources", async () => {
+  resetTmp();
+  const srcA = join(TMP, "collision-a", "foo");
+  const srcB = join(TMP, "collision-b", "foo");
+  for (const dir of [srcA, srcB]) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(join(srcA, "SKILL.md"), "# from A");
+  writeFileSync(join(srcB, "SKILL.md"), "# from B");
+
+  const deploySkills = join(TMP, "collision-deploy", "skills");
+  const warnings = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => {
+    warnings.push(args.map(String).join(" "));
+    origWarn(...args);
+  };
+
+  try {
+    await syncSkillsInDir(
+      [{ source: `file:${srcA}` }, { source: `file:${srcB}` }],
+      deploySkills,
+      { configDir: TMP, cwd: TMP },
+    );
+  } finally {
+    console.warn = origWarn;
+  }
+
+  assert.ok(
+    warnings.some((w) => w.includes("foo") && w.includes("overwritten")),
+    `expected overwrite warning, got: ${warnings.join(" | ")}`,
+  );
+  assert.equal(
+    readFileSync(join(deploySkills, "foo", "SKILL.md"), "utf-8"),
+    "# from B",
+  );
 });
 
 test("syncSkillsInDir installs local directory", async () => {

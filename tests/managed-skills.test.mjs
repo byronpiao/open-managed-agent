@@ -15,13 +15,12 @@ const runtimeRoot = join(
 const {
   resolveOakWorkspaceCwd,
   OAK_WORKSPACE_CWD,
-  OAK_WORKSPACE_CWD_SCF,
-  DEFAULT_WORKSPACE_CWD,
 } = await import(join(runtimeRoot, "dist", "oak-runtime", "workspace.js"));
 
 const {
   materializeManagedSkills,
   resolveBundleSkillsDir,
+  resolveBundleSkillsDirSync,
   oakSkillDestPath,
 } = await import(join(runtimeRoot, "dist", "managed", "skills.js"));
 
@@ -34,7 +33,6 @@ function reset() {
 
 test("resolveOakWorkspaceCwd returns /tmp/workspace", () => {
   assert.equal(resolveOakWorkspaceCwd(), OAK_WORKSPACE_CWD);
-  assert.equal(OAK_WORKSPACE_CWD_SCF, OAK_WORKSPACE_CWD);
 });
 
 test("oakSkillDestPath matches OAK layout", () => {
@@ -42,6 +40,18 @@ test("oakSkillDestPath matches OAK layout", () => {
     oakSkillDestPath("/tmp/workspace", "demo"),
     "/tmp/workspace/.claude/skills/demo/SKILL.md",
   );
+});
+
+test("resolveBundleSkillsDir matches sync variant", async () => {
+  reset();
+  const appRoot = join(TMP, "sync-parity");
+  const appSkills = join(appRoot, "skills");
+  mkdirSync(join(appSkills, "parity"), { recursive: true });
+  writeFileSync(join(appSkills, "parity", "SKILL.md"), "# p");
+
+  const opts = { cwd: appRoot, runtimePkgRoot: appRoot };
+  assert.equal(await resolveBundleSkillsDir(opts), resolveBundleSkillsDirSync(opts));
+  assert.equal(await resolveBundleSkillsDir(opts), appSkills);
 });
 
 test("resolveBundleSkillsDir prefers runtime pkg over mismatched cwd (SCF)", async () => {
@@ -59,7 +69,7 @@ test("resolveBundleSkillsDir prefers runtime pkg over mismatched cwd (SCF)", asy
   });
   assert.equal(resolved, scfSkills);
 
-  const dest = oakSkillDestPath(DEFAULT_WORKSPACE_CWD, "demo");
+  const dest = oakSkillDestPath(OAK_WORKSPACE_CWD, "demo");
   assert.equal(dest, "/tmp/workspace/.claude/skills/demo/SKILL.md");
 
   const result = await materializeManagedSkills(["demo"], {

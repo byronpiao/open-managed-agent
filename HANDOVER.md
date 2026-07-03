@@ -13,7 +13,6 @@
 - 网络 E2E：`npm run test:skills-e2e`（`/tmp` 自包含 fixture，无 `~/.skills-manager-plus` 依赖）
 - 云上 E2E：`npm run test:skills-cloud-e2e`（SCF + TCBR 全 schema，8 source 条目 + bundle 子 skill 校验，默认 env `lowcode-8gtybv2a87db84a3`）
 - 对客文档：`docs/examples/agent.skills-sources.example.yaml`（8 种写法注释示例）、README「Skills 同步」节
-- Bugbot 修复项与 evlog 埋点在工作区待提交
 
 ---
 

@@ -17,12 +17,7 @@ import { managedLog, managedTrace } from "./observability/logging.js";
 
 const SKILL_DOC_NAMES = ["SKILL.md", "skill.md"] as const;
 
-export {
-  DEFAULT_WORKSPACE_CWD,
-  OAK_WORKSPACE_CWD,
-  OAK_WORKSPACE_CWD_SCF,
-  resolveOakWorkspaceCwd,
-} from "../oak-runtime/workspace.js";
+const BUNDLE_SKILLS_DIR_CANDIDATES = ["/var/user/skills", "/app/skills"] as const;
 
 export interface MaterializeManagedSkillsResult {
   materialized: string[];
@@ -56,61 +51,46 @@ export function oakSkillDestPath(workspaceCwd: string, skillName: string): strin
   return path.join(workspaceCwd, ".claude", "skills", skillName, "SKILL.md");
 }
 
+function bundleSkillsDirCandidates(opts: ResolveBundleSkillsDirOptions): string[] {
+  const cwd = opts.cwd ?? process.cwd();
+  const runtimePkgRoot =
+    opts.runtimePkgRoot ??
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+  return [
+    path.join(runtimePkgRoot, "skills"),
+    path.resolve(cwd, "skills"),
+    ...BUNDLE_SKILLS_DIR_CANDIDATES,
+  ];
+}
+
 /**
  * Locate deploy-bundle skills/ regardless of process cwd.
  * SCF starts with cwd=/tmp/workspace but skills live under /var/user/skills.
  */
-export async function resolveBundleSkillsDir(
-  opts: ResolveBundleSkillsDirOptions = {},
-): Promise<string> {
-  const cwd = opts.cwd ?? process.cwd();
-  const runtimePkgRoot =
-    opts.runtimePkgRoot ??
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-
-  const candidates = [
-    path.join(runtimePkgRoot, "skills"),
-    path.resolve(cwd, "skills"),
-    "/var/user/skills",
-    "/app/skills",
-  ];
-
-  const seen = new Set<string>();
-  for (const dir of candidates) {
-    const normalized = path.resolve(dir);
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    if (await pathExists(normalized)) return normalized;
-  }
-
-  return path.join(runtimePkgRoot, "skills");
-}
-
-/** Sync variant for kernel config assembly at boot. */
 export function resolveBundleSkillsDirSync(
   opts: ResolveBundleSkillsDirOptions = {},
 ): string {
-  const cwd = opts.cwd ?? process.cwd();
   const runtimePkgRoot =
     opts.runtimePkgRoot ??
     path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-
-  const candidates = [
-    path.join(runtimePkgRoot, "skills"),
-    path.resolve(cwd, "skills"),
-    "/var/user/skills",
-    "/app/skills",
-  ];
+  const fallback = path.join(runtimePkgRoot, "skills");
 
   const seen = new Set<string>();
-  for (const dir of candidates) {
+  for (const dir of bundleSkillsDirCandidates(opts)) {
     const normalized = path.resolve(dir);
     if (seen.has(normalized)) continue;
     seen.add(normalized);
     if (existsSync(normalized)) return normalized;
   }
 
-  return path.join(runtimePkgRoot, "skills");
+  return fallback;
+}
+
+export async function resolveBundleSkillsDir(
+  opts: ResolveBundleSkillsDirOptions = {},
+): Promise<string> {
+  return resolveBundleSkillsDirSync(opts);
 }
 
 /** Skill directory names present in the deploy bundle (sync). */

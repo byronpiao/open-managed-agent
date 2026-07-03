@@ -1,8 +1,6 @@
 /**
  * OAK session cwd — kernel AgentConfig.cwd and skill materialize target.
- *
- * SCF / TCBR 目前共用 `/tmp/workspace`（历史上 toKernelAgentConfig 一直写死此路径）。
- * SCF `scf_bootstrap` 须与 {@link OAK_WORKSPACE_CWD} 保持同步。
+ * Keep `scf_bootstrap` OAK_WORKSPACE_CWD in sync with {@link OAK_WORKSPACE_CWD}.
  */
 
 import { mkdirSync, unlinkSync, writeFileSync } from "fs";
@@ -10,14 +8,6 @@ import path from "path";
 
 /** OAK kernel `cwd` + `.claude/skills/` materialize root (SCF + TCBR). */
 export const OAK_WORKSPACE_CWD = "/tmp/workspace";
-
-/** @deprecated Use {@link OAK_WORKSPACE_CWD} */
-export const OAK_WORKSPACE_CWD_SCF = OAK_WORKSPACE_CWD;
-
-/**
- * @deprecated Prefer {@link resolveOakWorkspaceCwd}; kept for tests referencing the path.
- */
-export const DEFAULT_WORKSPACE_CWD = OAK_WORKSPACE_CWD;
 
 let cachedOakWorkspaceCwd: string | undefined;
 
@@ -30,8 +20,10 @@ export function resolveOakWorkspaceCwd(): string {
     const probe = path.join(dir, `.oak-cwd-probe-${process.pid}`);
     writeFileSync(probe, "");
     unlinkSync(probe);
-  } catch {
-    // scf_bootstrap 通常会预建；仍返回约定路径
+  } catch (err) {
+    console.warn(
+      `[OAK] Workspace cwd not writable (${dir}): ${(err as Error).message}`,
+    );
   }
   cachedOakWorkspaceCwd = dir;
   return dir;

@@ -19,6 +19,7 @@ import {
   applyResolvedSandboxToConfig,
   resolveSandboxConfig,
 } from "./harness/sandbox/sandbox-config.js";
+import { resolveHarnessSkillDoc } from "./harness/file-skill.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -362,7 +363,7 @@ export async function resolveSkills(config: AgentConfig): Promise<AgentConfig> {
 
   console.warn(`[Config] Resolving ${skills.length} harness skill(s) for system prompt...`);
   const blocks: string[] = [];
-  const skillsDir = path.resolve("skills");
+  const configDir = configFilePath ? path.dirname(configFilePath) : process.cwd();
 
   for (const skill of skills) {
     const src = skill.source?.trim();
@@ -370,31 +371,14 @@ export async function resolveSkills(config: AgentConfig): Promise<AgentConfig> {
       console.warn(`[Config] Harness skill skipped — file: required: ${src ?? "(missing)"}`);
       continue;
     }
-    const payload = src.slice(5);
-    const label = path.basename(payload).replace(/\.(md|txt)$/i, "") || path.basename(payload);
-    let srcPath: string | null = null;
-    const configDir = configFilePath ? path.dirname(configFilePath) : process.cwd();
-    const candidates = [
-      path.resolve(configDir, payload),
-      path.join(skillsDir, label, "SKILL.md"),
-      path.join(skillsDir, label, "skill.md"),
-      path.join(skillsDir, `${label}.md`),
-      path.join(skillsDir, label),
-    ];
-    for (const fp of candidates) {
-      if (await fileExists(fp) && (fp.endsWith(".md") || (await fileExists(path.join(fp, "SKILL.md"))))) {
-        srcPath = fp.endsWith(".md") ? fp : (await fileExists(path.join(fp, "SKILL.md")))
-          ? path.join(fp, "SKILL.md")
-          : path.join(fp, "skill.md");
-        break;
-      }
-    }
 
-    if (!srcPath) {
-      console.warn(`[Config] Skill '${label}' (${src}): not found under ${skillsDir}`);
+    const resolved = await resolveHarnessSkillDoc(configDir, src);
+    if (!resolved) {
+      console.warn(`[Config] Skill (${src}): not found under ${configDir}`);
       continue;
     }
 
+    const { label, srcPath } = resolved;
     try {
       const content = await fs.readFile(srcPath, "utf-8");
       const header = `# Skill: ${label}\n`;
@@ -410,15 +394,6 @@ export async function resolveSkills(config: AgentConfig): Promise<AgentConfig> {
 
   const skillSection = `\n\n---\n\n## Skills\n\n${blocks.join("\n\n---\n\n")}`;
   return { ...config, system: config.system + skillSection };
-}
-
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath, fs.constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export type {
