@@ -1,27 +1,47 @@
 /**
- * Kernel adapter — bridges open-agent-kernel's AcpSessionUpdate stream to
+ * Kernel adapter — bridges open-agent-kernel's AcpStreamMessage stream to
  * the ACP wire protocol used by `./acp-endpoint.ts`.
  *
- * Since kernel v0.1.0-beta.8, session.send() / respondApproval() /
- * respondToolUse() all return `AsyncIterable<AcpSessionUpdate>` — the kernel's
- * built-in AcpStreamAdapter already translates Claude SDK messages into
- * standard-aligned ACP session/update shapes. This module is now a thin layer
- * that:
+ * Since kernel v0.1.0-beta.8+, session.send() / respondApproval() /
+ * respondToolUse() return `AsyncIterable<AcpStreamMessage>`. The kernel's
+ * built-in AcpStreamAdapter envelopes EVERY yielded item as a JSON-RPC
+ * message:
  *
- *   1. Wraps each AcpSessionUpdate in a JSON-RPC `session/update` SSE frame.
- *   2. Watches for stop-and-resume triggers (request_permission / ask_user)
- *      and breaks out of the stream so the SSE ends with the right stopReason.
+ *   - plain Claude SDK messages  → `session/update` NOTIFICATION
+ *       ({ jsonrpc, method:"session/update", params:{ sessionId, update } })
+ *   - client tool / AskUserQuestion → `client/<ToolName>` JSON-RPC REQUEST
+ *       ({ jsonrpc, id:"<sessionId>:<toolCallId>", method:"client/<Name>",
+ *          params:{...input}, _meta:{ sessionId, toolCallId, assistantMessageId } })
+ *   - HITL permission interrupt → `session/request_permission` JSON-RPC REQUEST
+ *       ({ jsonrpc, id:"<sessionId>:<toolCallId>", method:"session/request_permission",
+ *          params:{ sessionId, toolCall:{...}, options:[...] } })
+ *
+ * This module is a thin pass-through: it forwards each frame to the SSE sink
+ * verbatim (only normalizing `sessionId`), and watches for the two stop-and-
+ * resume triggers (request_permission / client tool) to end the turn with the
+ * right stopReason. We NEVER re-wrap a frame — the kernel already envelopes.
  *
  * Stop-and-resume model (no reverse-RPC, no in-memory pending state):
  *
- *   1. When the kernel emits `request_permission`, the turn is paused. The
- *      client resumes by POSTing a fresh `session/prompt` with a
- *      `permission_decision` block → `session.respondApproval()`.
+ *   1. `session/request_permission` request → turn paused, stopReason=
+ *      "awaiting_permission". Client resumes via a fresh `session/prompt`
+ *      with a `permission_decision` block → `session.respondApproval()`.
  *
- *   2. When the kernel emits `ask_user` (AskUserQuestion), the turn is paused.
- *      The client resumes with a `tool_result` block → `session.respondToolUse()`.
+ *   2. `client/<ToolName>` request (client tool / AskUserQuestion) → turn
+ *      paused, stopReason="tool_use". Client resumes with a `tool_result`
+ *      block → `session.respondToolUse()`.
  *
- *   3. `agent_phase: idle` signals turn completion (end_turn).
+ *   3. `session/update` carrying `agent_phase: idle` → turn complete,
+ *      stopReason="end_turn".
+ *
+ * Note on AskUserQuestion: the kernel's `AcpSessionUpdate` d.ts marks the
+ * `ask_user` variant `@deprecated ... now flows through request_permission`,
+ * but that comment is stale — the beta.14 dist de-specializes AskUserQuestion
+ * into an ordinary client-tool (`isAskUserQuestion = bareToolName ===
+ * "AskUserQuestion"`, emitted via `client/AskUserQuestion`), and the `ask_user`
+ * variant is fully removed (0 occurrences in dist). So AskUserQuestion pauses
+ * with `stopReason="tool_use"` and resumes via `respondToolUse`, exactly like a
+ * custom client tool — NOT via `request_permission`/`respondApproval`.
  *
  * No service-side state is held between requests. The same conversation can
  * resume on a different runtime instance (kernel session store is the SoR).
@@ -287,12 +307,41 @@ export interface PumpResult {
 }
 
 /**
- * Pump kernel AcpSessionUpdate stream into ACP SSE frames.
+ * A single enveloped message yielded by the kernel (new enveloping kernel,
+ * beta.14+): a JSON-RPC frame — either a `session/update` notification, or a
+ * `client/<ToolName>` / `session/request_permission` REQUEST. Always carries
+ * `jsonrpc`. Legacy bare-update kernels are not supported (see package.json).
+ */
+interface AcpStreamFrame {
+  jsonrpc?: string;
+  id?: unknown;
+  method?: string;
+  params?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
+}
+
+/**
+ * Pump kernel AcpStreamMessage stream into ACP SSE frames.
  *
- * Each update is wrapped in a JSON-RPC `session/update` envelope and written
- * to the SSE sink. The function watches for stop-and-resume triggers
- * (request_permission / ask_user) and breaks out of the loop so the caller
- * can end the SSE stream with the appropriate stopReason.
+ * The kernel's AcpStreamAdapter already envelopes every item (see module
+ * doc). We forward each frame verbatim — only normalizing `sessionId` inside
+ * `params` — and break out of the loop on the two stop-and-resume triggers so
+ * the caller can end the SSE stream with the right stopReason.
+ *
+ * Three frame shapes (new enveloping kernel only):
+ *
+ *   1. `session/update` NOTIFICATION — forwarded as-is; if its `update` is
+ *      `agent_phase: idle`, the turn is complete → stopReason="end_turn".
+ *
+ *   2. `session/request_permission` REQUEST — forwarded as-is; turn paused →
+ *      stopReason="awaiting_permission", pendingPermission from params.
+ *
+ *   3. `client/<ToolName>` REQUEST (client tool / AskUserQuestion) — forwarded
+ *      as-is; turn paused → stopReason="tool_use", pendingToolUse from params.
+ *
+ * Double-wrapping is avoided: an already-enveloped frame is forwarded as-is,
+ * never re-wrapped. The kernel always envelopes (beta.14), so every item is
+ * a JSON-RPC frame — no bare-update fallback is needed.
  *
  * Returns the final stopReason and, when the turn was paused for an external
  * action, a pendingToolUse or pendingPermission payload describing what the
@@ -302,47 +351,52 @@ export async function pumpEvents(
   events: AsyncIterable<AcpSessionUpdate>,
   ctx: StreamCtx,
 ): Promise<PumpResult> {
-  for await (const update of events) {
-    // 1. Wrap in JSON-RPC session/update envelope and passthrough to SSE client.
-    ctx.sse.write({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: ctx.acpSessionId,
-        update,
-      },
-    });
+  for await (const item of events) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item as AcpStreamFrame;
 
-    // 2. Stop-and-resume: HITL permission request → end turn, wait for
-    //    client to resume with a permission_decision block.
-    if (update.sessionUpdate === "request_permission") {
+    const method = typeof raw.method === "string" ? raw.method : "";
+    // Forward verbatim, normalizing sessionId into params (the kernel's
+    // sessionId equals ctx.acpSessionId — see getOrCreateKernelSession — so
+    // this is a safe no-op normalization).
+    const params: Record<string, unknown> = { ...(raw.params ?? {}), sessionId: ctx.acpSessionId };
+    ctx.sse.write({ ...raw, params });
+
+    // Case 2: HITL permission request → `session/request_permission` REQUEST.
+    if (method === "session/request_permission") {
+      const toolCall = (params.toolCall as Record<string, unknown> | undefined) ?? {};
+      const options = (params.options as PermissionOption[]) ?? [];
       return {
         stopReason: "awaiting_permission",
         pendingPermission: {
-          toolUseId: update.toolCall.toolCallId,
-          toolName: update.toolCall.title ?? "unknown",
-          args: update.toolCall.rawInput,
-          options: update.options,
+          toolUseId: String(toolCall.toolCallId ?? ""),
+          toolName: String(toolCall.title ?? "unknown"),
+          args: toolCall.rawInput,
+          options,
         },
       };
     }
 
-    // 3. Stop-and-resume: AskUserQuestion → end turn, wait for client to
-    //    resume with a tool_result block carrying the user's answer.
-    if (update.sessionUpdate === "ask_user") {
+    // Case 3: client tool / AskUserQuestion → `client/<ToolName>` REQUEST.
+    if (method.startsWith("client/")) {
+      const toolUseId = String(raw._meta?.toolCallId ?? "");
+      const toolName = method.slice("client/".length);
       return {
         stopReason: "tool_use",
         pendingToolUse: {
-          toolUseId: update.toolCallId,
-          toolName: "AskUserQuestion",
-          input: update.questions,
+          toolUseId,
+          toolName,
+          input: raw.params ?? {},
         },
       };
     }
 
-    // 4. Turn completion: agent_phase idle signals the kernel finished.
-    if (update.sessionUpdate === "agent_phase" && update.phase === "idle") {
-      return { stopReason: "end_turn" };
+    // Case 1: `session/update` notification — check for turn completion.
+    if (method === "session/update") {
+      const update = params.update as AcpSessionUpdate | undefined;
+      if (update?.sessionUpdate === "agent_phase" && (update as { phase?: string }).phase === "idle") {
+        return { stopReason: "end_turn" };
+      }
     }
   }
 

@@ -20,8 +20,9 @@
  *   session/load              Load session (replay=true → SSE history_page)
  *   session/prompt            SSE: agent_message_chunk / tool_call(_update)
  *                             May pause with stopReason='awaiting_permission'
- *                             (request_permission session/update) or
- *                             stopReason='tool_use' (ask_user session/update)
+ *                             (session/request_permission REQUEST) or
+ *                             stopReason='tool_use' (client/<ToolName> REQUEST,
+ *                             incl. AskUserQuestion)
  *   session/cancel            Notification: abort the in-flight prompt
  *   session/delete            Idempotent delete (ACP spec extension)
  *
@@ -326,10 +327,13 @@ async function handleSessionPrompt(
   id: unknown,
   config: AgentConfig,
 ): Promise<boolean> {
-  const sessionId = String(params.sessionId ?? "");
-  if (!sessionId) {
-    res.json(rpcError(id, -32602, "sessionId is required"));
-    return true;
+  // One-shot mode: no sessionId → auto-generate a transient UUID.
+  // Session is NOT persisted (syncRegisterSession only runs in session/new),
+  // so history won't survive — pure one-time chat for quick testing.
+  const isOneShot = !params.sessionId;
+  const sessionId = String(params.sessionId ?? "") || crypto.randomUUID();
+  if (isOneShot) {
+    console.log(`[ACP] session/prompt: no sessionId, generated transient ${sessionId}`);
   }
 
   const promptBlocks = (params.prompt ?? []) as Array<{
@@ -348,7 +352,10 @@ async function handleSessionPrompt(
   const toolResultBlock = promptBlocks.find((b) => b.type === "tool_result");
   const permissionBlock = promptBlocks.find((b) => b.type === "permission_decision");
 
-  const session = await getOrCreateKernelSession(config, sessionId);
+  // One-shot mode must use startSession (isNew:true) — resumeSession on a
+  // UUID the kernel has never seen returns an empty session that produces
+  // 0 model output (silent end_turn with no agent_message_chunk).
+  const session = await getOrCreateKernelSession(config, sessionId, isOneShot ? { isNew: true } : {});
 
   sseStart(res);
   const sse = makeSseSink(res);
