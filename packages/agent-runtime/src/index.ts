@@ -12,6 +12,8 @@
  * 暴露端点：
  *   POST /acp                              ACP JSON-RPC 2.0
  *   POST /v1/aibot/bots/:botId/acp         ACP via gateway proxy
+ *   POST /send-message                     ACP alias (compat path, managed only)
+ *   POST /v1/aibot/bots/:botId/send-message  ACP alias via gateway proxy
  *   GET  /healthz                          Health check
  *   /v1/agents|environments|sessions       Claude Managed Agents HTTP (harness)
  */
@@ -165,7 +167,7 @@ async function main() {
       });
     } else {
       console.log(`OpenManagedAgent Runtime listening on :${port}`);
-      console.log(`  ACP   : POST /acp, POST /v1/aibot/bots/:botId/acp`);
+      console.log(`  ACP   : POST /acp, POST /send-message (+ /v1/aibot/bots/:botId/{acp,send-message})`);
       console.log(`  Health: GET  /healthz`);
       console.log(`  Model : ${typeof config.model === "string" ? config.model : config.model?.id}`);
     }

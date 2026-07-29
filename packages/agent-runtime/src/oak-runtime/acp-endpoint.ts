@@ -476,6 +476,7 @@ async function handleSessionResume(params: Record<string, unknown>, config: Agen
 export function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) {
   app.use("/acp", expressLib.json({ limit: "10mb" }));
   app.use("/v1/aibot/bots", expressLib.json({ limit: "10mb" }));
+  app.use("/send-message", expressLib.json({ limit: "10mb" }));
 
   // CORS — let chat-playground (cross-origin) talk to us.
   // In SCF (behind tcloudbasegateway), the gateway already sets CORS headers;
@@ -504,6 +505,7 @@ export function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) 
   };
   app.use("/acp", corsHandler);
   app.use("/v1/aibot/bots", corsHandler);
+  app.use("/send-message", corsHandler);
 
   const acpHandler = async (req: Request, res: Response) => {
     const body = req.body as {
@@ -593,6 +595,8 @@ export function mountManagedAcpEndpoint(app: Express, agentConfig: AgentConfig) 
 
   app.post("/acp", acpHandler);
   app.post("/v1/aibot/bots/:botId/acp", acpHandler);
+  app.post("/send-message", acpHandler);
+  app.post("/v1/aibot/bots/:botId/send-message", acpHandler);
 
-  console.log("[ACP] Managed endpoints mounted: POST /acp (+ gateway /v1/aibot/bots/:botId/acp)");
+  console.log("[ACP] Managed endpoints mounted: POST /acp, POST /send-message (+ gateway /v1/aibot/bots/:botId/{acp,send-message})");
 }
