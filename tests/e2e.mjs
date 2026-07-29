@@ -232,7 +232,7 @@ await client.sessions.delete(session.id);`;
       { type: "custom", name: "analyze_code", description: "Analyze code quality metrics", input_schema: { type: "object", properties: { file_path: { type: "string" } }, required: ["file_path"] } },
     ],
     mcp_servers: [{ type: "url", name: "github", url: "https://api.githubcopilot.com/mcp/" }],
-    skills: [{ name: "github-workflow", description: "GitHub PR and code review expertise", source: "./skills/github.md" }],
+    skills: [{ source: "file:./skills/github.md" }],
   };
 
   const configFile = resolve(ROOT, "tests/.tmp-e2e-config.json");
@@ -295,7 +295,7 @@ Body: {"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}`;
       console.log(`  MCP[0]:       ${cfg.mcp_servers[0].name} → ${cfg.mcp_servers[0].url}`);
     }
     if (cfg?.skills?.length > 0) {
-      console.log(`  Skill[0]:     ${cfg.skills[0].name}`);
+      console.log(`  Skill[0]:     ${cfg.skills[0].source}`);
     }
 
     if ((cfg?.mcp_servers?.length ?? 0) > 0 && (cfg?.skills?.length ?? 0) > 0) {

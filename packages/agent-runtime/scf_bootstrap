@@ -33,12 +33,52 @@ export OAK_SESSION_LOCAL_DIR=/tmp
 # sticky bit so users can't delete each other's files).
 chmod 1777 /tmp 2>/dev/null || true
 
-# /tmp/.oak: kernel 的统一自管根(见上)。/tmp/workspace: session cwd。
-# 预建并 chown 给 1001,避免子进程写不进(写不进会静默 exit 0 + 0 输出)。
-mkdir -p /tmp/.oak /tmp/workspace
-chown -R 1001:1001 /tmp/.oak /tmp/workspace 2>/dev/null || true
-chmod 0755 /tmp/.oak /tmp/workspace 2>/dev/null || true
+# OAK session cwd — MUST match packages/agent-runtime/src/oak-runtime/workspace.ts
+#   OAK_WORKSPACE_CWD. Kernel AgentConfig.cwd + skill materialize (.claude/skills/).
+#   Change this shell variable and workspace.ts together.
+OAK_WORKSPACE_CWD=/tmp/workspace
 
-cd /tmp/workspace
+# /tmp/.oak: kernel 的统一自管根(见上)。
+# 预建 session cwd 并 chown 给 1001,避免子进程写不进(写不进会静默 exit 0 + 0 输出)。
+mkdir -p /tmp/.oak "${OAK_WORKSPACE_CWD}"
+chown -R 1001:1001 /tmp/.oak "${OAK_WORKSPACE_CWD}" 2>/dev/null || true
+chmod 0755 /tmp/.oak "${OAK_WORKSPACE_CWD}" 2>/dev/null || true
+
+# ── claude 原生二进制解析策略 ──────────────────────────────────────────
+# 优先用 node_modules 里预装的平台包(@anthropic-ai/claude-agent-sdk-linux-x64)。
+# 若该包不存在(SCF 只读 /var/user、云端 BuildCodeViaSCF 体积墙导致无法预装,
+# 我们刻意 npm --omit=optional 不装它),则运行时下载真二进制到 /tmp/oak-claude,
+# 并通过 OAK_CLAUDE_CODE_EXECUTABLE_PATH 显式告诉 kernel/SDK 二进制路径,
+# 跳过 require.resolve 探测。kernel(agent-builder.ts)读到该变量后把它注入
+# SDK 的 pathToClaudeCodeExecutable,SDK 直接 spawn 该绝对路径。
+# 幂等:-x 已在则跳过(warm 实例 /tmp 保留)。
+OAK_CLAUDE_DIR=/tmp/oak-claude
+NODE_MODULES_BIN=/var/user/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude
+
+if [ -x "${NODE_MODULES_BIN}" ]; then
+  # 平台包已预装在 node_modules —— SDK 默认 require.resolve 即可,无需额外处理。
+  echo "[bootstrap] claude binary present in node_modules — using default SDK resolution" >&2
+else
+  if [ ! -x "${OAK_CLAUDE_DIR}/claude" ]; then
+    SDKVER=$(node -p "require('/var/user/node_modules/@anthropic-ai/claude-agent-sdk/package.json').version")
+    URL="https://mirrors.tencent.com/npm/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-${SDKVER}.tgz"
+    mkdir -p "${OAK_CLAUDE_DIR}"
+    if ! curl -fsSL --retry 3 --retry-delay 1 "$URL" -o /tmp/oak-claude.tgz; then
+      echo "[bootstrap] FATAL: failed to download claude binary from $URL after retries" >&2
+      exit 1
+    fi
+    # tgz 内是 package/claude,strip-components=1 直接落到 OAK_CLAUDE_DIR/claude
+    tar -xzf /tmp/oak-claude.tgz -C "${OAK_CLAUDE_DIR}" --strip-components=1
+    chmod +x "${OAK_CLAUDE_DIR}/claude"
+    rm -f /tmp/oak-claude.tgz
+    echo "[bootstrap] claude binary ready at ${OAK_CLAUDE_DIR}/claude (sdk ${SDKVER})" >&2
+  fi
+  chown -R 1001:1001 "${OAK_CLAUDE_DIR}" 2>/dev/null || true
+  # 仅当 node_modules 无平台包时显式指定路径
+  export OAK_CLAUDE_CODE_EXECUTABLE_PATH="${OAK_CLAUDE_DIR}/claude"
+  echo "[bootstrap] OAK_CLAUDE_CODE_EXECUTABLE_PATH=${OAK_CLAUDE_DIR}/claude" >&2
+fi
+
+cd "${OAK_WORKSPACE_CWD}"
 
 exec node --import /var/user/uid-shim.mjs /var/user/dist/index.js

@@ -45,6 +45,9 @@ import { registerEnvCommands } from "./lib/commands/env.mjs";
 import { registerCloudrunCommands } from "./lib/commands/cloudrun.mjs";
 import { registerInitCommand } from "./lib/commands/init.mjs";
 import { registerSyncImageCommand } from "./lib/commands/sync-image.mjs";
+import { initManagedLogging } from "./lib/managed-logging.mjs";
+
+initManagedLogging();
 
 // ── Load .env file ──────────────────────────────────────────────────────────
 const envFile = new URL(".env", import.meta.url).pathname;

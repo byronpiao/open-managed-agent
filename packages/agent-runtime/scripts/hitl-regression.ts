@@ -3,9 +3,16 @@
  *
  * 覆盖 stateless（SCF）请求边界下的 stop-and-resume：
  *   1. multi-turn      —— session transcript 持久化（跨请求记忆）
- *   2. bash approval   —— request_permission → permission_decision → 真实执行
- *   3. client-tool     —— request_permission → tool_result 回填 → 模型使用结果
- *   4. AskUserQuestion —— 同 client-tool 路径，patchSentinelToolResult resume
+ *   2. bash approval   —— session/request_permission REQUEST → permission_decision → 真实执行
+ *   3. client-tool     —— client/<Name> REQUEST → tool_result 回填 → 模型使用结果
+ *   4. AskUserQuestion —— client/AskUserQuestion REQUEST → tool_result resume
+ *
+ * Kernel v0.1.0-beta.14+ envelopes every stream item: plain updates become
+ * `session/update` notifications; HITL permission becomes a
+ * `session/request_permission` JSON-RPC REQUEST; client tools (incl.
+ * AskUserQuestion) become `client/<ToolName>` REQUESTs. This parser captures
+ * BOTH the notification (`params.update`) and REQUEST forms so the test also
+ * works against legacy bare-update kernels.
  *
  * 前置：
  *   - OAK runtime 已在 BASE_URL（默认 http://localhost:3199）运行
@@ -48,8 +55,10 @@ interface PromptResult {
   text: string;
   /** 最后一个 stopReason */
   stopReason: string | null;
-  /** 所有 session/update 事件 */
+  /** 所有 session/update 通知里的 update 载荷（裸 update） */
   updates: Json[];
+  /** 所有 JSON-RPC REQUEST 帧（session/request_permission、client/<Name>） */
+  requests: Json[];
 }
 
 /** 发一轮 prompt，消费 SSE 直到结束，聚合文本 / stopReason / updates。 */
@@ -63,6 +72,7 @@ async function prompt(sessionId: string, promptBlocks: Json[]): Promise<PromptRe
   let text = "";
   let stopReason: string | null = null;
   const updates: Json[] = [];
+  const requests: Json[] = [];
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -81,24 +91,50 @@ async function prompt(sessionId: string, promptBlocks: Json[]): Promise<PromptRe
       } catch {
         continue;
       }
-      const update = (msg.params as { update?: Json } | undefined)?.update;
-      if (update) {
-        updates.push(update);
-        if (update.sessionUpdate === "agent_message_chunk") {
-          const content = update.content as { type?: string; text?: string } | undefined;
-          if (content?.type === "text" && typeof content.text === "string") text += content.text;
+      const method = msg.method as string | undefined;
+      const params = (msg.params ?? {}) as Json;
+      // session/update notification → 裸 update 载荷
+      if (method === "session/update") {
+        const update = params.update as Json | undefined;
+        if (update) {
+          updates.push(update);
+          if (update.sessionUpdate === "agent_message_chunk") {
+            const content = update.content as { type?: string; text?: string } | undefined;
+            if (content?.type === "text" && typeof content.text === "string") text += content.text;
+          }
         }
+      } else if (method === "session/request_permission" || (method && method.startsWith("client/"))) {
+        // JSON-RPC REQUEST 帧（HITL 权限 / 客户端工具）— 新内核不再放进 params.update
+        requests.push(msg);
       }
       // JSON-RPC result（带 stopReason）
       const result = msg.result as { stopReason?: string } | undefined;
       if (result?.stopReason) stopReason = result.stopReason;
     }
   }
-  return { text, stopReason, updates };
+  return { text, stopReason, updates, requests };
 }
 
-/** 从 updates 里找指定 title 的 request_permission / tool_call 的 toolCallId。 */
-function findToolCallId(updates: Json[], title: string): string | null {
+/**
+ * 从 updates（裸 update）+ requests（REQUEST 帧）里找指定 title/name 的
+ * request_permission / client/<Name> / tool_call 的 toolCallId。
+ * 同时兼容新内核（REQUEST 形式）与旧内核（update 形式）。
+ */
+function findToolCallId(updates: Json[], requests: Json[], title: string): string | null {
+  // 新内核：REQUEST 帧
+  for (const r of requests) {
+    const method = r.method as string;
+    if (method === "session/request_permission") {
+      const tc = (r.params as { toolCall?: { toolCallId?: string; title?: string } })?.toolCall;
+      if (tc?.title === title && tc.toolCallId) return tc.toolCallId;
+    }
+    if (method?.startsWith("client/")) {
+      const name = method.slice("client/".length);
+      const tid = (r._meta as { toolCallId?: string })?.toolCallId;
+      if (name === title && tid) return tid;
+    }
+  }
+  // 旧内核：update 形式
   for (const u of updates) {
     if (u.sessionUpdate === "request_permission") {
       const tc = u.toolCall as { toolCallId?: string; title?: string } | undefined;
@@ -150,7 +186,7 @@ const checks: Check[] = [
             `set tools.agent_toolset.configs[].permission_policy=always_ask for bash to test approval`,
         );
       }
-      const tid = findToolCallId(ask.updates, "Bash");
+      const tid = findToolCallId(ask.updates, ask.requests, "Bash");
       assert(tid, "no Bash request_permission found");
       const resumed = await prompt(sid, [
         { type: "permission_decision", tool_use_id: tid, decision: "allow" },
@@ -166,9 +202,14 @@ const checks: Check[] = [
       const ask = await prompt(sid, [
         { type: "text", text: "Call getClientInfo with query='username'." },
       ]);
-      assert(ask.stopReason === "awaiting_permission", `expected awaiting_permission, got ${ask.stopReason}`);
-      const tid = findToolCallId(ask.updates, "getClientInfo");
-      assert(tid, "no getClientInfo request_permission found");
+      // 新内核：client-tool → client/<Name> REQUEST → stopReason=tool_use
+      // （旧内核走 request_permission → awaiting_permission；二者都用 tool_result 恢复）
+      assert(
+        ask.stopReason === "tool_use" || ask.stopReason === "awaiting_permission",
+        `expected tool_use or awaiting_permission, got ${ask.stopReason}`,
+      );
+      const tid = findToolCallId(ask.updates, ask.requests, "getClientInfo");
+      assert(tid, "no getClientInfo request found");
       const resumed = await prompt(sid, [
         { type: "tool_result", tool_use_id: tid, content: JSON.stringify({ username: "alice_chen" }) },
       ]);
@@ -185,7 +226,12 @@ const checks: Check[] = [
       const ask = await prompt(sid, [
         { type: "text", text: "Use the AskUserQuestion tool to ask which color I prefer: red or blue." },
       ]);
-      const tid = findToolCallId(ask.updates, "AskUserQuestion");
+      // AskUserQuestion 在新内核走 client/AskUserQuestion REQUEST → tool_use
+      assert(
+        ask.stopReason === "tool_use" || ask.stopReason === "awaiting_permission",
+        `expected tool_use or awaiting_permission, got ${ask.stopReason}`,
+      );
+      const tid = findToolCallId(ask.updates, ask.requests, "AskUserQuestion");
       assert(tid, "no AskUserQuestion tool_call found");
       const resumed = await prompt(sid, [{ type: "tool_result", tool_use_id: tid, content: "Blue" }]);
       // 关键：模型必须确认 Blue，而不是重新提问

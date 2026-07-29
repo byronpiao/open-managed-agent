@@ -19,6 +19,8 @@ import {
 
 import { getCustomTools, type AgentConfig, ModelSpec } from "../config.js";
 import { resolveBuiltinTools, getMcpToolsets } from "../config.js";
+import { listBundledSkillNames, resolveBundleSkillsDirSync } from "../managed/skills.js";
+import { resolveOakWorkspaceCwd } from "./workspace.js";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -212,6 +214,8 @@ export function toKernelAgentConfig(
   // 只有 CLOUDBASE_APIKEY 时 kernel 会 graceful degrade(不持久,但不报错)。
   // ags-stateful 路径仍需 CLOUDBASE_APIKEY —— oak 会在缺 key 时抛 InvalidConfigError。
 
+  const skillNames = listBundledSkillNames(resolveBundleSkillsDirSync());
+
   return {
     envId,
     name: config.name,
@@ -220,11 +224,11 @@ export function toKernelAgentConfig(
     model,
     systemPrompt: config.system,
     // session 工作目录(claude CLI 的 cwd)。必须是对运行 uid(1001)可写的目录 ——
-    // claude 在 cwd 里做 git 检测/写临时文件,不可写会让子进程在 init 阶段静默
-    // TCBR=/workspace/session,均已 chown 给运行 uid);未设时退 /tmp/workspace。
+    // claude 在 cwd 里做 git 检测/写临时文件,不可写会让子进程在 init 阶段静默。
+    // 路径由 resolveOakWorkspaceCwd() 统一解析（当前 SCF/TCBR 均为 /tmp/workspace）。
     // 不用 .oak 下的目录:那是 kernel 自管的配置区,cwd 是 session 级、可清理的工作区,
     // 二者作用域不同(见 kernel path-derivation 布局)。
-    cwd: "/tmp/workspace",
+    cwd: resolveOakWorkspaceCwd(),
     credentials: effectiveCredentials ?? undefined,
     mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
     sandbox: {
@@ -250,5 +254,7 @@ export function toKernelAgentConfig(
       opts.customToolDefs && opts.customToolDefs.length > 0
         ? opts.customToolDefs
         : undefined,
+    skills:
+      skillNames.length > 0 ? { enabled: skillNames } : undefined,
   };
 }

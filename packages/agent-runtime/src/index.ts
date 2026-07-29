@@ -12,6 +12,8 @@
  * 暴露端点：
  *   POST /acp                              ACP JSON-RPC 2.0
  *   POST /v1/aibot/bots/:botId/acp         ACP via gateway proxy
+ *   POST /send-message                     ACP alias (compat path, managed only)
+ *   POST /v1/aibot/bots/:botId/send-message  ACP alias via gateway proxy
  *   GET  /healthz                          Health check
  *   /v1/agents|environments|sessions       Claude Managed Agents HTTP (harness)
  */
@@ -21,6 +23,7 @@ import express from "express";
 import cors from "cors";
 import { mountAcpEndpoint } from "./acp-endpoint.js";
 import { loadAgentConfig, resolveRuntime, resolveSkills } from "./config.js";
+import { materializeManagedSkills, resolveBundleSkillsDir, listBundledSkillNames } from "./managed/skills.js";
 import { getKernelAgent, getStoreDiag } from "./oak-runtime/kernel-adapter.js";
 
 const port = Number(process.env.PORT ?? 9000);
@@ -38,8 +41,20 @@ async function main() {
   }
 
   const rawConfig = await loadAgentConfig();
-  const config = await resolveSkills(rawConfig);
-  const { runtime, engine } = resolveRuntime(config);
+  const { runtime, engine } = resolveRuntime(rawConfig);
+
+  let config = rawConfig;
+  if (runtime === "managed") {
+    const { initManagedLogging } = await import("./managed/observability/logging.js");
+    initManagedLogging();
+    const bundleSkillsDir = await resolveBundleSkillsDir();
+    const skillNames = listBundledSkillNames(bundleSkillsDir);
+    if (skillNames.length > 0) {
+      await materializeManagedSkills(skillNames, { bundleSkillsDir });
+    }
+  } else {
+    config = await resolveSkills(rawConfig);
+  }
 
   type HarnessRuntime = typeof import("./harness/index.js");
   let harnessRuntime: HarnessRuntime | undefined;
@@ -152,7 +167,7 @@ async function main() {
       });
     } else {
       console.log(`OpenManagedAgent Runtime listening on :${port}`);
-      console.log(`  ACP   : POST /acp, POST /v1/aibot/bots/:botId/acp`);
+      console.log(`  ACP   : POST /acp, POST /send-message (+ /v1/aibot/bots/:botId/{acp,send-message})`);
       console.log(`  Health: GET  /healthz`);
       console.log(`  Model : ${typeof config.model === "string" ? config.model : config.model?.id}`);
     }

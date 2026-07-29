@@ -967,15 +967,15 @@ test("resolveHarnessMaintainerCredentials prefers TCB_SECRET on SCF host", () =>
 
 test("buildSkillsManifestEnv packs skill files", () => {
   const dir = join(tmpdir(), `oma-skills-${Date.now()}`);
-  mkdirSync(dir, { recursive: true });
-  const skillPath = join(dir, "demo.md");
-  writeFileSync(skillPath, "# demo skill\n");
+  const skillsDir = join(dir, "skills", "demo");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "SKILL.md"), "# demo skill\n");
   const env = buildSkillsManifestEnv(
     {
       name: "t",
       model: "m",
       system: "s",
-      skills: [{ name: "demo", source: skillPath }],
+      skills: [{ source: "file:./skills/demo" }],
     },
     dir,
   );

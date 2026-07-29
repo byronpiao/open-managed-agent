@@ -19,6 +19,7 @@ import {
 } from "./llm-providers.js";
 import { buildHarnessOpencodePermission } from "./engine/opencode/opencode-permissions.js";
 import { mergeHarnessInstanceEnv, sandboxEnvToHarnessVars } from "./sandbox/sandbox-env.js";
+import { resolveHarnessSkillDocSync } from "./file-skill.js";
 
 export { buildHarnessOpencodePermission } from "./engine/opencode/opencode-permissions.js";
 
@@ -194,20 +195,31 @@ export function buildSkillsManifestEnv(
 ): HarnessEnvVar | null {
   const skills = config.skills;
   if (!skills?.length) return null;
-  const packed: Array<{ name: string; description: string; content: string }> = [];
+  const packed: Array<{ name: string; content: string }> = [];
+
   for (const skill of skills) {
-    const srcPath = path.isAbsolute(skill.source)
-      ? skill.source
-      : path.resolve(baseDir, skill.source);
-    if (!fs.existsSync(srcPath)) continue;
+    const src = skill.source?.trim();
+    if (!src?.startsWith("file:")) {
+      console.warn(`[Deploy] Harness skill skipped — file: required: ${src ?? "(missing)"}`);
+      continue;
+    }
+
+    const resolved = resolveHarnessSkillDocSync(baseDir, src);
+    if (!resolved) {
+      console.warn(`[Deploy] Skill (${src}): not found under ${baseDir}`);
+      continue;
+    }
+
+    const { label, srcPath } = resolved;
     try {
       packed.push({
-        name: skill.name,
-        description: skill.description ?? "",
+        name: label,
         content: fs.readFileSync(srcPath, "utf-8").trim(),
       });
-    } catch {
-      // skip
+    } catch (err) {
+      console.warn(
+        `[Deploy] Skill '${label}': failed to read ${srcPath}: ${(err as Error).message}`,
+      );
     }
   }
   if (!packed.length) return null;

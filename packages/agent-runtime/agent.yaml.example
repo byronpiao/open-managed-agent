@@ -66,11 +66,12 @@ mcp_servers: []
   #   name: github
   #   url: https://api.githubcopilot.com/mcp/
 
-# Skills (domain-specific context via markdown files)
+# Skills — installed into deploy bundle as skills/<name>/SKILL.md (+ assets).
+# Skills — 完整 8 种 source 写法见仓库根目录：
+#   docs/examples/agent.skills-sources.example.yaml
+#
+# 本地路径须使用 file: 前缀，例如 file:./skills/my-skill
 skills: []
-  # - name: code-review
-  #   description: Code review best practices
-  #   source: ./skills/code-review.md
 
 # Arbitrary metadata for tracking
 metadata:

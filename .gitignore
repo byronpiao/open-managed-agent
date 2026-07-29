@@ -33,3 +33,4 @@ agent.sandbox.yaml
 # Cursor — local IDE config (not shared)
 .cursor/cloudapp/.env
 .cursor/
+.plans/

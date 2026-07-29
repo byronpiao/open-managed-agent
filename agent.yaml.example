@@ -21,4 +21,6 @@ tools:
         type: always_allow
 
 mcp_servers: []
+
+# skills: see docs/examples/agent.skills-sources.example.yaml
 skills: []
