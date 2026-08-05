@@ -3,6 +3,10 @@
  * Parsed at load time with defaults; orchestrator consumes ResolvedSandboxConfig.
  */
 
+import type {
+  SandboxInfra,
+  SandboxResourcesInput,
+} from "open-managed-agent-runtime-shared/config.js";
 import { normalizeSandboxEnv } from "./sandbox-env.js";
 
 /** Mirrors HarnessEngine — kept local to avoid config ↔ sandbox-config cycle. */
@@ -13,15 +17,10 @@ export interface SandboxConfigSource {
   engine?: SandboxEngine;
 }
 
-export type SandboxInfra = "serverless" | "durable";
+export type { SandboxInfra, SandboxResourcesInput };
 
 /** AGS CustomConfiguration.ImageRegistryType — TCR namespace class. */
 export type SandboxImageRegistryType = "personal" | "enterprise";
-
-export interface SandboxResourcesInput {
-  cpu?: string | number;
-  memory?: string | number;
-}
 
 export type SandboxAuthMode = "token" | "none";
 

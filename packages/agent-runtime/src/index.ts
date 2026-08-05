@@ -1,19 +1,15 @@
 /**
- * OpenManagedAgent — Runtime entry.
+ * OpenManagedAgent — Harness runtime entry.
+ *
+ * Only the harness (sandbox) runtime is loaded here — no managed/OAK kernel.
+ * Deployed as SCF / TCBR for `runtime: harness` agents.
  *
  * 部署方式：
  *   tcb agent create --name my-agent --code ./packages/agent-runtime -e $ENV_ID
  *
- * 配置方式：
- *   1. AGENT_CONFIG / AGENT_CONFIG_B64 环境变量（magent agent:update 写入）
- *   2. agent.yaml 文件（随代码部署）
- *   3. 单独环境变量 AGENT_MODEL / AGENT_SYSTEM / AGENT_NAME（向后兼容）
- *
  * 暴露端点：
  *   POST /acp                              ACP JSON-RPC 2.0
  *   POST /v1/aibot/bots/:botId/acp         ACP via gateway proxy
- *   POST /send-message                     ACP alias (compat path, managed only)
- *   POST /v1/aibot/bots/:botId/send-message  ACP alias via gateway proxy
  *   GET  /healthz                          Health check
  *   /v1/agents|environments|sessions       Claude Managed Agents HTTP (harness)
  */
@@ -21,10 +17,8 @@
 import "./harness/telemetry-bootstrap.js";
 import express from "express";
 import cors from "cors";
-import { mountAcpEndpoint } from "./acp-endpoint.js";
 import { loadAgentConfig, resolveRuntime, resolveSkills } from "./config.js";
-import { materializeManagedSkills, resolveBundleSkillsDir, listBundledSkillNames } from "./managed/skills.js";
-import { getKernelAgent, getStoreDiag } from "./oak-runtime/kernel-adapter.js";
+import { mountHarnessAcpEndpoint } from "./harness/acp-endpoint.js";
 
 const port = Number(process.env.PORT ?? 9000);
 
@@ -42,59 +36,26 @@ async function main() {
 
   const rawConfig = await loadAgentConfig();
   const { runtime, engine } = resolveRuntime(rawConfig);
-
-  let config = rawConfig;
-  if (runtime === "managed") {
-    const { initManagedLogging } = await import("./managed/observability/logging.js");
-    initManagedLogging();
-    const bundleSkillsDir = await resolveBundleSkillsDir();
-    const skillNames = listBundledSkillNames(bundleSkillsDir);
-    if (skillNames.length > 0) {
-      await materializeManagedSkills(skillNames, { bundleSkillsDir });
-    }
-  } else {
-    config = await resolveSkills(rawConfig);
-  }
+  const config = await resolveSkills(rawConfig);
 
   type HarnessRuntime = typeof import("./harness/index.js");
   let harnessRuntime: HarnessRuntime | undefined;
 
-  if (runtime === "harness") {
-    harnessRuntime = await import("./harness/index.js");
-    harnessRuntime.initHarnessLogging();
-    harnessRuntime.harnessLog({
-      lane: "runtime",
-      operation: "boot",
-      name: config.name,
-      engine,
-      toolCount: config.tools?.length ?? 0,
-      mcpServerCount: config.mcp_servers?.length ?? 0,
-      skillCount: config.skills?.length ?? 0,
-    }).emit({ status: "ok" });
-  } else {
-    console.log(`[Agent] Name: ${config.name}`);
-    console.log(`[Agent] Runtime: ${runtime}`);
-    console.log(`[Agent] Model: ${config.model}`);
-    console.log(`[Agent] Tools: ${config.tools?.length ?? 0} configured`);
-    console.log(`[Agent] MCP Servers: ${config.mcp_servers?.length ?? 0} configured`);
-    console.log(`[Agent] Skills: ${config.skills?.length ?? 0} configured`);
-  }
-
-  // Eagerly build the kernel agent (managed only) so /healthz reflects store state.
-  if (runtime === "managed") {
-    try {
-      getKernelAgent(config);
-    } catch (e) {
-      console.warn("[Agent] eager getKernelAgent failed:", (e as Error)?.message);
-    }
-  }
+  harnessRuntime = await import("./harness/index.js");
+  harnessRuntime.initHarnessLogging();
+  harnessRuntime.harnessLog({
+    lane: "runtime",
+    operation: "boot",
+    name: config.name,
+    engine,
+    toolCount: config.tools?.length ?? 0,
+    mcpServerCount: config.mcp_servers?.length ?? 0,
+    skillCount: config.skills?.length ?? 0,
+  }).emit({ status: "ok" });
 
   const app = express();
-  // Reflect request Origin + allow credentials so browser ACP clients (e.g. chat-playground
-  // with fetch credentials: "include") pass OPTIONS preflight. Bare cors() answers * without
-  // Allow-Credentials, which browsers reject before POST /acp runs route-level CORS.
-  // Skip in SCF — tcloudbasegateway already sets CORS headers; duplicating causes
-  // browsers to reject "multiple values".
+  // Reflect request Origin + allow credentials so browser ACP clients pass
+  // OPTIONS preflight. Skip in SCF — tcloudbasegateway already sets CORS.
   if (!process.env.TENCENTCLOUD_RUNENV) {
     app.use(
       cors({
@@ -104,72 +65,61 @@ async function main() {
     );
   }
   app.get("/healthz", async (req, res) => {
-    const base = {
+    const envId =
+      process.env.CLOUDBASE_ENV_ID?.trim() ??
+      process.env.TCB_ENV_ID?.trim() ??
+      "default";
+    const [
+      { getHarnessStoreDiag },
+      { getHarnessSandboxCacheStats },
+      { getSandboxPrewarmStats },
+    ] = await Promise.all([
+      import("./harness/sandbox/session-store.js"),
+      import("./harness/sandbox/orchestrator.js"),
+      import("./harness/sandbox/sandbox-prewarm.js"),
+    ]);
+    const payload: Record<string, unknown> = {
       ok: true,
       name: config.name,
       model: config.model,
       runtime,
-      engine: runtime === "harness" ? engine : undefined,
-      buildMarker: runtime === "harness" ? "oma-runtime-v1" : "syncRegisterSession-v3",
+      engine,
+      buildMarker: "oma-runtime-v1",
+      sandbox: {
+        ...getHarnessSandboxCacheStats(),
+        ...getSandboxPrewarmStats(),
+      },
     };
-    if (runtime === "harness") {
-      const envId =
-        process.env.CLOUDBASE_ENV_ID?.trim() ??
-        process.env.TCB_ENV_ID?.trim() ??
-        "default";
-      const [
-        { getHarnessStoreDiag },
-        { getHarnessSandboxCacheStats },
-        { getSandboxPrewarmStats },
-      ] = await Promise.all([
-        import("./harness/sandbox/session-store.js"),
-        import("./harness/sandbox/orchestrator.js"),
-        import("./harness/sandbox/sandbox-prewarm.js"),
-      ]);
-      const payload: Record<string, unknown> = {
-        ...base,
-        sandbox: {
-          ...getHarnessSandboxCacheStats(),
-          ...getSandboxPrewarmStats(),
-        },
-      };
-      const { getTelemetrySummary } = await import("./harness/telemetry/telemetry-init.js");
-      payload.telemetry = getTelemetrySummary();
-      const wantDiag = req.query.diag === "1" || req.query.verbose === "1";
-      if (wantDiag) {
-        try {
-          payload.harnessStore = await getHarnessStoreDiag(envId);
-        } catch (e) {
-          payload.harnessStore = { error: (e as Error).message };
-        }
+    const { getTelemetrySummary } = await import("./harness/telemetry/telemetry-init.js");
+    payload.telemetry = getTelemetrySummary();
+    const wantDiag = req.query.diag === "1" || req.query.verbose === "1";
+    if (wantDiag) {
+      try {
+        payload.harnessStore = await getHarnessStoreDiag(envId);
+      } catch (e) {
+        payload.harnessStore = { error: (e as Error).message };
       }
-      res.json(payload);
-      return;
     }
-    res.json({ ...base, store: getStoreDiag() });
+    res.json(payload);
   });
 
-  mountAcpEndpoint(app, config);
-  if (runtime === "harness") {
-    const { mountManagedAgentsEndpoint } = await import("./harness/managed-agents-protocol/managed-agents-endpoint.js");
-    mountManagedAgentsEndpoint(app, config);
-  }
-  if (runtime === "harness") {
-    app.use("/internal/harness/mcp", express.json({ limit: "2mb" }));
-    harnessRuntime ??= await import("./harness/index.js");
-    harnessRuntime.mountHarnessMcpGateway(app, config);
-  }
+  // Body parsers for the ACP routes (mirrors the old dispatcher).
+  app.use("/acp", express.json({ limit: "10mb" }));
+  app.use("/v1/aibot/bots", express.json({ limit: "10mb" }));
+
+  mountHarnessAcpEndpoint(app, config);
+
+  const { mountManagedAgentsEndpoint } = await import("./harness/managed-agents-protocol/managed-agents-endpoint.js");
+  mountManagedAgentsEndpoint(app, config);
+  app.use("/internal/harness/mcp", express.json({ limit: "2mb" }));
+  harnessRuntime ??= await import("./harness/index.js");
+  harnessRuntime.mountHarnessMcpGateway(app, config);
 
   app.listen(port, () => {
-    if (runtime === "harness" && harnessRuntime) {
+    if (harnessRuntime) {
       harnessRuntime.harnessLog({ lane: "runtime", operation: "listen", port, runtime, engine }).emit({
         status: "ok",
       });
-    } else {
-      console.log(`OpenManagedAgent Runtime listening on :${port}`);
-      console.log(`  ACP   : POST /acp, POST /send-message (+ /v1/aibot/bots/:botId/{acp,send-message})`);
-      console.log(`  Health: GET  /healthz`);
-      console.log(`  Model : ${typeof config.model === "string" ? config.model : config.model?.id}`);
     }
   });
 }

@@ -1,0 +1,37 @@
+{
+  "name": "open-managed-agent-runtime-shared",
+  "version": "0.1.0",
+  "description": "Shared schema + ACP wire helpers + telemetry shim for OpenManagedAgent runtimes",
+  "type": "module",
+  "main": "./dist/config.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yhsunshining/open-managed-agent.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./config": "./dist/config.js",
+    "./config.js": "./dist/config.js",
+    "./acp-shared": "./dist/acp-shared.js",
+    "./acp-shared.js": "./dist/acp-shared.js",
+    "./telemetry": "./dist/telemetry.js",
+    "./telemetry.js": "./dist/telemetry.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "yaml": "^2.4.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.9.3"
+  }
+}

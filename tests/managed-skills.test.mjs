@@ -9,7 +9,7 @@ const runtimeRoot = join(
   dirname(fileURLToPath(import.meta.url)),
   "..",
   "packages",
-  "agent-runtime",
+  "agent-runtime-managed",
 );
 
 const {

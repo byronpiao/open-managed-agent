@@ -51,7 +51,7 @@ import {
   type ApprovalOutcome,
   type StopReason,
 } from "./kernel-adapter.js";
-import { withActiveSpan } from "../harness/telemetry/telemetry.js";
+import { withActiveSpan } from "open-managed-agent-runtime-shared/telemetry.js";
 import {
   rpcResult,
   rpcError,
@@ -60,7 +60,7 @@ import {
   sseDone,
   sseSessionUpdate,
   isAcpUuid,
-} from "../acp-shared.js";
+} from "open-managed-agent-runtime-shared/acp-shared.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -53,6 +53,7 @@ import {
   createAgent,
   type Agent as KernelAgent,
   type AcpSessionUpdate,
+  type AcpStreamMessage,
   type ApprovalDecision,
   type PermissionOption,
   type Session as KernelSession,
@@ -348,7 +349,7 @@ interface AcpStreamFrame {
  * client must do to resume.
  */
 export async function pumpEvents(
-  events: AsyncIterable<AcpSessionUpdate>,
+  events: AsyncIterable<AcpStreamMessage>,
   ctx: StreamCtx,
 ): Promise<PumpResult> {
   for await (const item of events) {

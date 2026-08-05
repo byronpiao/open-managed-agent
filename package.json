@@ -1,7 +1,7 @@
 {
   "name": "open-managed-agent",
   "version": "0.0.2",
-  "description": "magent CLI — manage CloudBase AI agents from the command line",
+  "description": "magent CLI \u2014 manage CloudBase AI agents from the command line",
   "bin": {
     "magent": "magent.mjs"
   },
@@ -9,6 +9,8 @@
     "magent.mjs",
     "lib",
     "packages/agent-runtime",
+    "packages/agent-runtime-shared",
+    "packages/agent-runtime-managed",
     "README.md"
   ],
   "keywords": [
@@ -22,7 +24,9 @@
   "license": "MIT",
   "workspaces": [
     "packages/sdk",
-    "packages/agent-runtime"
+    "packages/agent-runtime-shared",
+    "packages/agent-runtime",
+    "packages/agent-runtime-managed"
   ],
   "dependencies": {
     "@cloudbase/cli": "latest",
@@ -36,9 +40,11 @@
     "undici": "^7.27.2"
   },
   "scripts": {
-    "build": "npm run build --workspaces",
+    "build": "npm run build:sdk && npm run build:shared && npm run build:runtime && npm run build:managed",
     "build:sdk": "npm run build --workspace=packages/sdk",
+    "build:shared": "npm run build --workspace=packages/agent-runtime-shared",
     "build:runtime": "npm run build --workspace=packages/agent-runtime",
+    "build:managed": "npm run build --workspace=packages/agent-runtime-managed",
     "test": "npm run build && node tests/sync-image-tags.test.mjs && node tests/stop-and-resume.test.mjs && node tests/harness/unit.test.mjs && node --test tests/harness/file-skill.test.mjs && node tests/managed-agents/unit.test.mjs && node tests/otlp-e2e.test.mjs && node tests/managed-agents/e2e-managed-agents-harness.test.mjs && node --test tests/managed-logging.test.mjs && node --test tests/skill-sources.test.mjs && node --test tests/skill-sources-eight-scenarios.test.mjs && node --test tests/skill-redeploy-regression.test.mjs && node --test tests/skill-verify.test.mjs && node --test tests/skill-full-schema-local.test.mjs && node --test tests/test-e2e-skill-sync.mjs && node tests/managed-skills.test.mjs && node tests/smoke-bundle-skills.mjs",
     "test:skills-e2e": "node --test tests/skill-sources-e2e-real.mjs",
     "test:skills-cloud-e2e": "node --test tests/skill-sync-cloud-e2e.mjs",

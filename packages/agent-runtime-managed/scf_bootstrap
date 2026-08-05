@@ -1,0 +1,84 @@
+#!/bin/bash
+# SCF Web Function bootstrap for open-managed-agent runtime.
+#
+# SCF file system constraints:
+#   /var/user  — read-only (deployed code lives here)
+#   /tmp       — writable for root only (mode 0755, owner root:root). Sub-dirs
+#                created here as root must be chowned to the runtime uid before
+#                uid-shim drops to 1001, otherwise the claude binary spawned
+#                by the SDK cannot write its session-mirror JSONL files. When
+#                the binary fails to write, the SDK iterator silently yields
+#                done with 0 messages — manifesting as `pumpEvents total=0`
+#                and an empty SSE response.
+#
+# Non-root execution: Claude Code's CLI refuses --dangerously-skip-permissions
+# when running as uid==0. uid-shim.mjs drops root via process.setuid(1001)
+# before any module loads. --import (Node 20+) loads it as ESM before index.js.
+
+# OAK workRoot: kernel 把所有自管目录统一落在 <workRoot>/.oak/ 下
+#   .oak/agent/.claude   → CLAUDE_CONFIG_DIR(Agent 全局配置;kernel 无条件设置,无需我们 export)
+#   .oak/users/<e>/<u>/  → userMemory per-user 配置
+#   .oak/sync/           → COS 同步临时区
+# 显式把 workRoot 钉到 /tmp(SCF 唯一保证可写的地方),让 kernel 不走 home 探测、行为确定。
+export OAK_SESSION_LOCAL_DIR=/tmp
+
+# Create dirs and hand them to uid 1001 BEFORE Node starts. uid-shim's
+# `chown -R agent:agent /tmp` runs as root (uid-shim runs before setuid),
+# but a stricter mount on /tmp itself can stop chown of the mount root —
+# only the children can be reliably chowned. So we explicitly create the
+# children we need and chown those.
+# Open up /tmp itself so uid 1001 can create files/dirs at the top level
+# (e.g. os.tmpdir() / mkdtemp). chown of the mount root is rejected by SCF,
+# but chmod is not — 1777 is the standard Linux /tmp mode (world-writable +
+# sticky bit so users can't delete each other's files).
+chmod 1777 /tmp 2>/dev/null || true
+
+# OAK session cwd — MUST match packages/agent-runtime/src/oak-runtime/workspace.ts
+#   OAK_WORKSPACE_CWD. Kernel AgentConfig.cwd + skill materialize (.claude/skills/).
+#   Change this shell variable and workspace.ts together.
+OAK_WORKSPACE_CWD=/tmp/workspace
+
+# /tmp/.oak: kernel 的统一自管根(见上)。
+# 预建 session cwd 并 chown 给 1001,避免子进程写不进(写不进会静默 exit 0 + 0 输出)。
+mkdir -p /tmp/.oak "${OAK_WORKSPACE_CWD}"
+chown -R 1001:1001 /tmp/.oak "${OAK_WORKSPACE_CWD}" 2>/dev/null || true
+chmod 0755 /tmp/.oak "${OAK_WORKSPACE_CWD}" 2>/dev/null || true
+
+# ── claude 原生二进制解析策略 ──────────────────────────────────────────
+# 优先用 node_modules 里预装的平台包(@anthropic-ai/claude-agent-sdk-linux-x64)。
+# 若该包不存在(SCF 只读 /var/user、云端 BuildCodeViaSCF 体积墙导致无法预装,
+# 我们刻意 npm --omit=optional 不装它),则运行时下载真二进制到 /tmp/oak-claude,
+# 并通过 OAK_CLAUDE_CODE_EXECUTABLE_PATH 显式告诉 kernel/SDK 二进制路径,
+# 跳过 require.resolve 探测。kernel(agent-builder.ts)读到该变量后把它注入
+# SDK 的 pathToClaudeCodeExecutable,SDK 直接 spawn 该绝对路径。
+# 幂等:-x 已在则跳过(warm 实例 /tmp 保留)。
+OAK_CLAUDE_DIR=/tmp/oak-claude
+NODE_MODULES_BIN=/var/user/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude
+
+if [ -x "${NODE_MODULES_BIN}" ]; then
+  # 平台包已预装在 node_modules —— SDK 默认 require.resolve 即可,无需额外处理。
+  echo "[bootstrap] claude binary present in node_modules — using default SDK resolution" >&2
+else
+  if [ ! -x "${OAK_CLAUDE_DIR}/claude" ]; then
+    SDKVER=$(node -p "require('/var/user/node_modules/@anthropic-ai/claude-agent-sdk/package.json').version")
+    URL="https://mirrors.tencent.com/npm/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-${SDKVER}.tgz"
+    mkdir -p "${OAK_CLAUDE_DIR}"
+    if ! curl -fsSL --retry 3 --retry-delay 1 "$URL" -o /tmp/oak-claude.tgz; then
+      echo "[bootstrap] FATAL: failed to download claude binary from $URL after retries" >&2
+      exit 1
+    fi
+    # tgz 内是 package/claude,strip-components=1 直接落到 OAK_CLAUDE_DIR/claude
+    tar -xzf /tmp/oak-claude.tgz -C "${OAK_CLAUDE_DIR}" --strip-components=1
+    chmod +x "${OAK_CLAUDE_DIR}/claude"
+    rm -f /tmp/oak-claude.tgz
+    echo "[bootstrap] claude binary ready at ${OAK_CLAUDE_DIR}/claude (sdk ${SDKVER})" >&2
+  fi
+  chown -R 1001:1001 "${OAK_CLAUDE_DIR}" 2>/dev/null || true
+  # 仅当 node_modules 无平台包时显式指定路径
+  export OAK_CLAUDE_CODE_EXECUTABLE_PATH="${OAK_CLAUDE_DIR}/claude"
+  echo "[bootstrap] OAK_CLAUDE_CODE_EXECUTABLE_PATH=${OAK_CLAUDE_DIR}/claude" >&2
+fi
+
+cd "${OAK_WORKSPACE_CWD}"
+
+exec node --import /var/user/uid-shim.mjs /var/user/dist/index.js

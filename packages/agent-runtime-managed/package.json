@@ -1,0 +1,35 @@
+{
+  "name": "open-managed-agent-runtime-managed",
+  "version": "0.1.0",
+  "description": "OpenManagedAgent Managed Runtime - OAK kernel, deployed as cloud function",
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./oak-runtime/kernel-adapter": "./dist/oak-runtime/kernel-adapter.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.204",
+    "@cloudbase/node-sdk": "^3.16.0",
+    "@cloudbase/open-agent-kernel": "0.1.0-beta.17",
+    "@opentelemetry/api": "^1.9.0",
+    "cors": "^2.8.5",
+    "evlog": "^2.18.1",
+    "express": "^5.2.1",
+    "open-managed-agent-runtime-shared": "^0.1.0",
+    "yaml": "^2.4.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -15,7 +15,7 @@ import {
   pumpEvents,
   makeClientSideToolDefinition,
   outcomeToDecision,
-} from "../packages/agent-runtime/dist/oak-runtime/kernel-adapter.js";
+} from "../packages/agent-runtime-managed/dist/oak-runtime/kernel-adapter.js";
 
 const tests = [];
 function test(name, fn) {
@@ -35,8 +35,22 @@ async function* fromArray(events) {
 test("agent_phase idle ends with end_turn", async () => {
   const { ctx, frames } = makeCtx("sess-1");
   const events = fromArray([
-    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Hello" } },
-    { sessionUpdate: "agent_phase", phase: "idle" },
+    {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess-1",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Hello" } },
+      },
+    },
+    {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess-1",
+        update: { sessionUpdate: "agent_phase", phase: "idle" },
+      },
+    },
   ]);
   const result = await pumpEvents(events, ctx);
   assert.equal(result.stopReason, "end_turn");
@@ -48,32 +62,49 @@ test("request_permission → awaiting_permission + pendingPermission", async () 
   const { ctx, frames } = makeCtx("sess-2");
   const events = fromArray([
     {
-      sessionUpdate: "request_permission",
-      toolCall: {
-        toolCallId: "tu-bash-1",
-        title: "bash",
-        rawInput: { command: "rm -rf /" },
+      jsonrpc: "2.0",
+      method: "session/request_permission",
+      params: {
+        sessionId: "sess-2",
+        toolCall: {
+          toolCallId: "tu-bash-1",
+          title: "bash",
+          rawInput: { command: "rm -rf /" },
+        },
+        options: [
+          { optionId: "allow-once", name: "Allow once" },
+          { optionId: "reject-once", name: "Reject once" },
+        ],
       },
-      options: [
-        { optionId: "allow-once", name: "Allow once" },
-        { optionId: "reject-once", name: "Reject once" },
-      ],
     },
-    { sessionUpdate: "agent_phase", phase: "idle" },
+    {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess-2",
+        update: { sessionUpdate: "agent_phase", phase: "idle" },
+      },
+    },
   ]);
   const result = await pumpEvents(events, ctx);
   assert.equal(result.stopReason, "awaiting_permission");
   assert.equal(result.pendingPermission?.toolUseId, "tu-bash-1");
   assert.equal(result.pendingPermission?.toolName, "bash");
   assert.equal(frames.length, 1);
-  assert.equal(frames[0].params.update.sessionUpdate, "request_permission");
+  assert.equal(frames[0].method, "session/request_permission");
+  assert.equal(frames[0].params.toolCall.toolCallId, "tu-bash-1");
 });
 
 test("ask_user → tool_use + pendingToolUse", async () => {
   const { ctx } = makeCtx("sess-3");
   const questions = [{ question: "Which file?" }];
   const events = fromArray([
-    { sessionUpdate: "ask_user", toolCallId: "tu-ask-1", questions },
+    {
+      jsonrpc: "2.0",
+      method: "client/AskUserQuestion",
+      params: questions,
+      _meta: { toolCallId: "tu-ask-1" },
+    },
   ]);
   const result = await pumpEvents(events, ctx);
   assert.equal(result.stopReason, "tool_use");
