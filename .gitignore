@@ -34,3 +34,6 @@ agent.sandbox.yaml
 .cursor/cloudapp/.env
 .cursor/
 .plans/
+
+# Downloaded online code packages (local inspection, never committed)
+downloaded-pkg/
