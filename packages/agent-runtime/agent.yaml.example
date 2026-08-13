@@ -65,6 +65,9 @@ mcp_servers: []
   # - type: url
   #   name: github
   #   url: https://api.githubcopilot.com/mcp/
+  #   # Custom HTTP headers
+  #   headers:
+  #     Authorization: Bearer <token>
 
 # Skills — installed into deploy bundle as skills/<name>/SKILL.md (+ assets).
 # Skills — 完整 8 种 source 写法见仓库根目录：

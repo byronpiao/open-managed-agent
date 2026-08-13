@@ -76,7 +76,13 @@ export const DEFAULT_HARNESS_SANDBOX_CWD = "/home/user";
 export interface McporterConfig {
   mcpServers: Record<
     string,
-    { type: string; url?: string; command?: string; args?: string[] }
+    {
+      type: string;
+      url?: string;
+      command?: string;
+      args?: string[];
+      [key: string]: unknown;
+    }
   >;
 }
 
@@ -151,11 +157,16 @@ export function buildMcporterConfig(args: {
   clientToolCallbackBase: string;
   acpSessionId?: string;
 }): McporterConfig {
+  // yaml `type: url` → mcporter HTTP. `type` is always rewritten to
+  // `streamable-http`; every other field is forwarded as-is.
   const servers: McporterConfig["mcpServers"] = {};
 
   for (const s of args.config.mcp_servers ?? []) {
     if (s.type === "url") {
-      servers[s.name] = { type: MCPORTER_HTTP_MCP_TYPE, url: s.url };
+      servers[s.name] = {
+        ...s,
+        type: MCPORTER_HTTP_MCP_TYPE,
+      } as McporterConfig["mcpServers"][string];
     }
   }
 

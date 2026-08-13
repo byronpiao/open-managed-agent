@@ -238,6 +238,8 @@ mcp_servers:
   - type: url
     name: github
     url: https://api.githubcopilot.com/mcp/
+    headers:
+      Authorization: Bearer <token>
 
 skills:
   - name: github-workflow
@@ -350,6 +352,8 @@ mcp_servers:                      # MCP 服务器声明
   - type: url
     name: github
     url: https://api.githubcopilot.com/mcp/
+    headers:                      # 可自定义 headers
+      Authorization: Bearer <token>
 
 skills:                           # 领域知识
   - name: code-review
@@ -373,6 +377,16 @@ metadata:                         # 自定义元数据（可选）
 | `mcp_servers`         | array               | -    | MCP 服务器声明                                                                                         |
 | `skills`              | array               | -    | 领域知识文件                                                                                           |
 | `sessions_collection` | string              | -    | NoSQL 集合名（默认 `acp_sessions`，自动创建）                                                          |
+
+### `mcp_servers` 条目
+
+| 字段 | 必需 | 说明 |
+|------|------|------|
+| `type` | ✓ | 固定写 `url` |
+| `name` | ✓ | 服务器名 |
+| `url` | ✓ | HTTP MCP 地址 |
+| `headers` | - | 自定义 HTTP headers |
+| 其他 | - | 直接透传给 OpenAgentKernel 或 mcporter |
 
 ### 工具类型
 

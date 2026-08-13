@@ -253,6 +253,8 @@ mcp_servers:
   - type: url
     name: github
     url: https://api.githubcopilot.com/mcp/
+    headers:
+      Authorization: Bearer <token>
 
 tools:
   - type: mcp_toolset
