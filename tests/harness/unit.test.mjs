@@ -850,6 +850,31 @@ test("buildMcporterConfig merges agent.yaml mcp_servers url entries", () => {
   assert.equal(cfg.mcpServers.fixture_http.url, "http://127.0.0.1:9000/mcp");
 });
 
+test("buildMcporterConfig forwards extra mcp_servers fields as-is", () => {
+  const cfg = buildMcporterConfig({
+    config: {
+      name: "t",
+      model: "m",
+      system: "s",
+      mcp_servers: [
+        {
+          type: "url",
+          name: "fixture_http",
+          url: "http://127.0.0.1:9000/mcp",
+          headers: { Authorization: "Bearer tok" },
+          timeout: 30000,
+        },
+      ],
+    },
+    clientToolCallbackBase: "https://gw.example.com",
+  });
+  const server = cfg.mcpServers.fixture_http;
+  assert.equal(server.type, "streamable-http");
+  assert.equal(server.url, "http://127.0.0.1:9000/mcp");
+  assert.deepEqual(server.headers, { Authorization: "Bearer tok" });
+  assert.equal(server.timeout, 30000);
+});
+
 test("buildHarnessInitCredEnv maps TCB secrets", () => {
   const prev = {
     CLOUDBASE_ENV_ID: process.env.CLOUDBASE_ENV_ID,

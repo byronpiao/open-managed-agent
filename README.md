@@ -269,6 +269,9 @@ mcp_servers:
   - type: url
     name: github
     url: https://api.githubcopilot.com/mcp/
+    # 支持自定义 HTTP headers
+    headers:
+      Authorization: Bearer <token>
 
 # Skills（领域知识）— 完整 8 种写法见 docs/examples/agent.skills-sources.example.yaml
 skills:
@@ -292,7 +295,7 @@ sessions_collection: acp_sessions   # Session 存储的集合名，启动时自�
 | `system` | string | System prompt，定义 Agent 行为 |
 | `description` | string | Agent 描述 |
 | `tools` | array | 工具配置（见下方详细说明） |
-| `mcp_servers` | array | MCP 服务器声明 |
+| `mcp_servers` | array | MCP 服务器声明（见下方详细说明） |
 | `skills` | array | 领域知识文件 |
 | `sessions_collection` | string | Session 存储的 NoSQL 集合名（默认 `acp_sessions`，启动时自动创建） |
 | `metadata` | object | 自定义键值对 |
@@ -311,6 +314,16 @@ sessions_collection: acp_sessions   # Session 存储的集合名，启动时自�
 |------|------|
 | `always_allow` | 工具自动执行，不需要确认 |
 | `always_ask` | 暂停等待客户端发送 `user.tool_confirmation` 事件 |
+
+### `mcp_servers` 条目
+
+| 字段 | 必需 | 说明 |
+|------|------|------|
+| `type` | ✓ | 固定写 `url` |
+| `name` | ✓ | 服务器名 |
+| `url` | ✓ | HTTP MCP 地址 |
+| `headers` | - | 自定义 HTTP headers |
+| 其他 | - | 直接透传给 OpenAgentKernel 或 mcporter |
 
 ### MCP Tool Calling（`runtime=managed`）
 

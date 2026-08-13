@@ -66,10 +66,14 @@ export interface McpToolset {
 
 export type AgentTool = AgentToolset | CustomTool | McpToolset;
 
+/**
+ * Remote HTTP MCP server declared in agent.yaml.
+ */
 export interface McpServer {
   type: "url";
   name: string;
   url: string;
+  [key: string]: unknown;
 }
 
 export interface Skill {

@@ -139,6 +139,9 @@ sandbox:
 #   - type: url
 #     name: my-mcp
 #     url: https://<你的 MCP 服务地址>/mcp
+#     # 自定义 HTTP headers
+#     headers:
+#       Authorization: Bearer <token>
 
 # --- 可选：Skills ---
 

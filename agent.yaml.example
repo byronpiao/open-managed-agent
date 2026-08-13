@@ -21,6 +21,13 @@ tools:
         type: always_allow
 
 mcp_servers: []
+  # - type: url
+  #   # 字段透传，直接对齐 Claude Agent SDK McpServerConfig
+  #   name: github
+  #   url: https://api.githubcopilot.com/mcp/
+  #   # 支持自定义传入 HTTP headers
+  #   headers:
+  #     Authorization: Bearer <token>
 
 # skills: see docs/examples/agent.skills-sources.example.yaml
 skills: []

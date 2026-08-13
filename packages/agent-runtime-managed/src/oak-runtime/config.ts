@@ -107,12 +107,15 @@ export function toKernelAgentConfig(
   }
 
   // ── MCP servers ─────────────────────────────────────────────────────────
+  // yaml `type: url` → kernel HTTP MCP. `type` is always rewritten to
+  // `http`; every other field is forwarded as-is and directly aligns with
+  // Claude Agent SDK `McpServerConfig` (HTTP variant).
   const mcpServers: Record<string, KernelMcpServerConfig> = {};
   for (const s of config.mcp_servers ?? []) {
     if (s.type === "url") {
       mcpServers[s.name] = {
+        ...s,
         type: "http",
-        url: s.url,
       } as KernelMcpServerConfig;
     }
   }
