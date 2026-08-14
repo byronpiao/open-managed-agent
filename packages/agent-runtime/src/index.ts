@@ -14,7 +14,7 @@
  *   /v1/agents|environments|sessions       Claude Managed Agents HTTP (harness)
  */
 
-import "./harness/telemetry-bootstrap.js";
+import "./harness/telemetry/telemetry-bootstrap.js";
 import express from "express";
 import cors from "cors";
 import { loadAgentConfig, resolveRuntime, resolveSkills } from "./config.js";
