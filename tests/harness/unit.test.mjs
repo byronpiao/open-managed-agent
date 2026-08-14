@@ -1151,7 +1151,7 @@ test("resolveCloudBasePlatformLlm from CLOUDBASE_APIKEY + envId only", async () 
   const oc = JSON.parse(ocRaw);
   assert.equal(
     oc.provider["openai-compat"].options.baseURL,
-    "https://test-env-abc.api.tcloudbasegateway.com/v1/ai/cloudbase/v1",
+    "https://test-env-abc.api.tcloudbasegateway.com/v1/ai/cloudbase",
   );
   assert.equal(oc.provider["openai-compat"].options.apiKey, "tcb-jwt-key");
   if (saved.env === undefined) delete process.env.CLOUDBASE_ENV_ID;
@@ -1612,6 +1612,10 @@ test("openAiChatCompletionsUrl appends /v1/chat/completions", () => {
     openAiChatCompletionsUrl("https://example.com"),
     "https://example.com/v1/chat/completions",
   );
+  assert.equal(
+    openAiChatCompletionsUrl("https://env.api.tcloudbasegateway.com/v1/ai/cloudbase"),
+    "https://env.api.tcloudbasegateway.com/v1/ai/cloudbase/chat/completions",
+  );
 });
 
 test("buildHarnessOpencodePermission maps bash always_ask to ask", () => {
@@ -1690,7 +1694,7 @@ test("platform probe quota failure is classified and documented", async () => {
     ok: false,
     httpStatus: 429,
     model: "hy3-preview",
-    endpoint: "https://env.api.tcloudbasegateway.com/v1/ai/cloudbase/v1/chat/completions",
+    endpoint: "https://env.api.tcloudbasegateway.com/v1/ai/cloudbase/chat/completions",
     latencyMs: 12,
     error: "Token usage exceeded quota limit",
     errorCode: "EXCEED_TOKEN_QUOTA_LIMIT",

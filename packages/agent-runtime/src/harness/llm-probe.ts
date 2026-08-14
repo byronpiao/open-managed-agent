@@ -16,6 +16,7 @@ import {
   HARNESS_CLOUDBASE_DEFAULT_MODEL,
   buildAnthropicCompatFetchHeaders,
   cloudBaseAiGatewayBaseUrl,
+  isCloudBaseAiGatewayUrl,
 } from "./llm-providers.js";
 
 export interface HarnessLlmProbeResult {
@@ -138,10 +139,13 @@ export function formatPlatformProbeFailureGuide(result: HarnessLlmProbeResult): 
   return lines.join("\n");
 }
 
-/** Normalize OPENAI_BASE_URL → `…/v1/chat/completions`. */
+/** Normalize OpenAI-compat base → chat completions URL. CloudBase is already `…/v1/ai/cloudbase`. */
 export function openAiChatCompletionsUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/$/, "");
-  if (trimmed.endsWith("/v1")) return `${trimmed}/chat/completions`;
+  if (trimmed.endsWith("/chat/completions")) return trimmed;
+  if (trimmed.endsWith("/v1") || isCloudBaseAiGatewayUrl(trimmed)) {
+    return `${trimmed}/chat/completions`;
+  }
   return `${trimmed}/v1/chat/completions`;
 }
 
@@ -501,11 +505,13 @@ export function formatClaudePlatformProbeFailureGuide(
   return lines.join("\n");
 }
 
-/** Normalize ANTHROPIC_BASE_URL → `…/v1/messages`. */
+/** Normalize Anthropic-compat base → messages URL. CloudBase is already `…/v1/ai/cloudbase`. */
 export function anthropicMessagesUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/$/, "");
-  if (trimmed.endsWith("/v1")) return `${trimmed}/messages`;
   if (trimmed.endsWith("/messages")) return trimmed;
+  if (trimmed.endsWith("/v1") || isCloudBaseAiGatewayUrl(trimmed)) {
+    return `${trimmed}/messages`;
+  }
   return `${trimmed}/v1/messages`;
 }
 
