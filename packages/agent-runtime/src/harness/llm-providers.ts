@@ -33,13 +33,11 @@ export function cloudBaseAiGatewayBaseUrl(envId: string): string {
   return `https://${id}.api.tcloudbasegateway.com${CLOUDBASE_AI_PATH}`;
 }
 
-/** @ai-sdk/openai-compatible baseURL — CloudBase 须 `…/v1/ai/cloudbase/v1`（见 openAiChatCompletionsUrl）。 */
+/** @ai-sdk/openai-compatible baseURL. CloudBase already includes `/v1` in `/v1/ai/cloudbase`. */
 export function openAiCompatBaseUrlForHarness(provider: CompatLlmProvider): string {
   const base = provider.baseUrl?.trim().replace(/\/$/, "") ?? "";
   if (!base) return base;
-  if (isCloudBaseAiGatewayUrl(base)) {
-    return base.endsWith("/v1") ? base : `${base}/v1`;
-  }
+  if (isCloudBaseAiGatewayUrl(base)) return base;
   return base.endsWith("/v1") ? base : `${base}/v1`;
 }
 

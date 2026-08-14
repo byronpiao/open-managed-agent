@@ -68,7 +68,7 @@ export function buildMatrixParityAgentConfig(engine = "opencode") {
       {
         name: "harness-e2e-demo",
         description: "E2E skill fixture",
-        source: skillFixture,
+        source: `file:${skillFixture}`,
       },
     ],
   };

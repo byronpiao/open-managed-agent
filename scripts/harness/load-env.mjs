@@ -16,6 +16,7 @@ import {
   clearHarnessLlmEnv,
   HARNESS_LLM_ENV_KEYS,
 } from "../../lib/harness-llm-env.mjs";
+import { readTcbLoginCredential } from "../../lib/credentials.mjs";
 import { hydrateCloudEnvFromCli } from "../../lib/env.mjs";
 import {
   clearShellLeakedHarnessPins,

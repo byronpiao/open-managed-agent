@@ -1031,7 +1031,7 @@ async function testSkillsLlmOptional() {
         {
           name: "harness-e2e-demo",
           description: "E2E skill fixture",
-          source: SKILL_FIXTURE_PATH,
+          source: `file:${SKILL_FIXTURE_PATH}`,
         },
       ],
     },
