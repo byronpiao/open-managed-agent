@@ -57,7 +57,7 @@ function parseProbeErrorBody(raw: string): { message: string; code?: string } {
   }
 }
 
-/** Classify platform (hy3-preview) probe failure for actionable logs. */
+/** Classify platform (hy3) probe failure for actionable logs. */
 export function classifyPlatformProbeFailure(
   result: HarnessLlmProbeResult,
 ): PlatformProbeFailureKind {
@@ -101,13 +101,13 @@ export function formatPlatformProbeFailureGuide(result: HarnessLlmProbeResult): 
   if (kind === "quota_exceeded") {
     lines.push(
       "What this means:",
-      "  CloudBase AI free / experience quota for hy3-preview is exhausted.",
+      "  CloudBase AI free / experience quota for hy3 is exhausted.",
       "  test:merge intentionally probes hy3 BEFORE starting real AGS boxes (fail-fast).",
       "",
       "This is NOT a sandbox or CAM bug — gateway auth succeeded; the model billing gate refused.",
       "",
       "Options (pick one):",
-      "  1. Console: enable hy3-preview + purchase Token pack / raise quota",
+      "  1. Console: enable hy3 + purchase Token pack / raise quota",
       "     https://docs.cloudbase.net/ai/model/openai-sdk-access",
       "  2. Skip platform path: npm run harness -- run --infra tcbr --engine opencode   (opencode zen, no hy3)",
       "  3. Product demo with zen: agent.yaml model: zen + magent run (see harness-tutorial)",
@@ -129,7 +129,7 @@ export function formatPlatformProbeFailureGuide(result: HarnessLlmProbeResult): 
     );
   } else {
     lines.push(
-      "Check CloudBase AI console: hy3-preview enabled.",
+      "Check CloudBase AI console: hy3 enabled.",
       "  node scripts/harness/load-env.mjs --check",
       "",
     );
@@ -380,7 +380,7 @@ export async function assertHarnessPlatformLlmReachable(): Promise<HarnessLlmPro
   return result;
 }
 
-/** CloudBase AI via Anthropic Messages（claude engine 平台路径，hy3-preview）。 */
+/** CloudBase AI via Anthropic Messages（claude engine 平台路径，hy3）。 */
 export async function probeCloudBasePlatformAnthropicLlm(options?: {
   timeoutMs?: number;
   maxTokens?: number;
@@ -483,7 +483,7 @@ export function formatClaudePlatformProbeFailureGuide(
   const lines = [
     "",
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "Claude platform LLM preflight failed (CloudBase AI / hy3-preview)",
+    "Claude platform LLM preflight failed (CloudBase AI / hy3)",
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     `  model:    ${result.model}`,
     `  status:   ${status}`,

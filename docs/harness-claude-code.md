@@ -27,7 +27,7 @@ magent run -a "$CLOUDBASE_AGENT_ID" \
   -m "列出当前工作目录下的文件。"
 ```
 
-`magent login` 后自动鉴权，调用 **CloudBase AI**（[Anthropic Messages 兼容网关](https://docs.cloudbase.net/ai/model/anthropic-sdk-access)，默认 `hy3-preview`）。无需另行配置第三方 Key。
+`magent login` 后自动鉴权，调用 **CloudBase AI**（[Anthropic Messages 兼容网关](https://docs.cloudbase.net/ai/model/anthropic-sdk-access)，默认 `hy3`）。无需另行配置第三方 Key。
 
 ---
 
@@ -39,7 +39,7 @@ Claude Code 使用 **Anthropic Messages 兼容** API。在根字段 `model` 中�
 
 | 方式 | yaml | 说明 |
 |------|------|------|
-| **平台 AI（推荐）** | 省略 `model` 或 `model: hy3-preview` | CloudBase AI |
+| **平台 AI（推荐）** | 省略 `model` 或 `model: hy3` | CloudBase AI |
 | **自有模型** | 见下节 | Anthropic 兼容 endpoint + 自有 Key |
 
 `engine: claude` 时，`apiBaseUrl` 须为 **Anthropic Messages 兼容** 地址，不能填 OpenAI Chat Completions 地址。

@@ -1,4 +1,4 @@
-# Minimal sandbox agent — Claude Code + CloudBase AI (default hy3-preview).
+# Minimal sandbox agent — Claude Code + CloudBase AI (default hy3).
 name: My Claude Sandbox Agent
 runtime: harness
 engine: claude

@@ -150,7 +150,7 @@ ${bold("╚═══════════════════════
   // ── Step 1: 创建 Agent ─────────────────────────────────────
   console.log(bold("\n──── Step 1: 创建 Agent ──────────────────────"));
   const createOut = magent(
-    `agent:create --name "${AGENT_NAME}" --type ${AGENT_TYPE} --model hy3-preview ` +
+    `agent:create --name "${AGENT_NAME}" --type ${AGENT_TYPE} --model hy3 ` +
     `--system "You are a helpful assistant. When asked to use a tool, call the analyze_code tool." ` +
     `--code "${resolve(ROOT, "packages/agent-runtime")}"`,
   );

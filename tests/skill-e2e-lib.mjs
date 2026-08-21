@@ -119,7 +119,7 @@ export function prepareSkillE2eWorkspace(tmpRoot = join("/tmp", `oma-skill-e2e-$
     [
       "name: oma-skills-e2e",
       "runtime: managed",
-      "model: hy3-preview",
+      "model: hy3",
       "system: Skill sync E2E test agent.",
       "",
       "skills:",

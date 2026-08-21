@@ -13,7 +13,7 @@
 
 name: my-agent
 runtime: managed
-model: hy3-preview
+model: hy3
 system: You are a helpful assistant.
 
 skills:

@@ -7,7 +7,7 @@ sandbox:
   resources:
     cpu: "2"
     memory: "4Gi"
-model: hy3-preview
+model: hy3
 system: |
   You are a helpful assistant running in a Talos VM with Hermes ACP.
   Reply briefly in the same language as the user.

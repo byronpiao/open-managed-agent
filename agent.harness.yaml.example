@@ -21,7 +21,7 @@
 # | runtime                   | 是   | 固定写 harness |
 # | engine                    | 是   | opencode | claude |
 # | system                    | 是   | 系统提示词（多行 \|） |
-# | model                     | 否   | 省略 → CloudBase AI 默认 hy3-preview；见「模型配置」 |
+# | model                     | 否   | 省略 → CloudBase AI 默认 hy3；见「模型配置」 |
 # | description               | 否   | 简短描述 |
 # | sandbox                   | 否   | 沙箱规格与镜像；省略用平台默认 |
 # | sandbox.infra             | 否   | serverless（默认） |
@@ -42,7 +42,7 @@
 # ------------------------------------------------------------------------------
 #
 # 【A — 推荐】CloudBase 平台 AI
-#   省略 model，或：model: hy3-preview
+#   省略 model，或：model: hy3
 #   适用：opencode、claude
 #
 # 【B — 仅 opencode】箱内 zen（不扣 CloudBase AI 额度）
@@ -80,7 +80,7 @@ system: |
 
 # --- 模型（可选 — 玩法 A 可整段省略）---
 
-# model: hy3-preview
+# model: hy3
 # model: zen
 # model:
 #   id: <模型 ID>

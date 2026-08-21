@@ -405,7 +405,7 @@ test("applyZenLlmEnv sets AGENT_MODEL=zen and AGENT_ENV_OVERRIDES=1", async () =
   const { applyZenLlmEnv, applyPlatformLlmEnv } = await import(
     "../../lib/harness-llm-env.mjs"
   );
-  const env = { LLM_API_KEY: "x", AGENT_MODEL: "hy3-preview" };
+  const env = { LLM_API_KEY: "x", AGENT_MODEL: "hy3" };
   applyZenLlmEnv(env);
   assert.equal(env.AGENT_MODEL, "zen");
   assert.equal(env.AGENT_ENV_OVERRIDES, "1");
@@ -426,13 +426,13 @@ test("applyDevEnvOverrides is off unless AGENT_ENV_OVERRIDES=1", () => {
   console.warn = (...args) => {
     warns.push(args.map(String).join(" "));
   };
-  const base = { name: "from-yaml", model: "hy3-preview", system: "s" };
+  const base = { name: "from-yaml", model: "hy3", system: "s" };
   try {
     delete process.env.AGENT_ENV_OVERRIDES;
     process.env.AGENT_MODEL = "zen";
     process.env.AGENT_NAME = "env-name";
     const off = applyDevEnvOverrides(base);
-    assert.equal(off.model, "hy3-preview");
+    assert.equal(off.model, "hy3");
     assert.equal(off.name, "from-yaml");
     assert.equal(warns.length, 0);
     process.env.AGENT_ENV_OVERRIDES = "1";
@@ -654,7 +654,7 @@ test("buildHarnessOpencodeConfigContent uses LLM_* + OPENAI_BASE_URL", () => {
   };
   process.env.LLM_API_KEY = "sk-test";
   process.env.OPENAI_BASE_URL = "https://example.com/v1";
-  process.env.LLM_MODEL = "hy3-preview";
+  process.env.LLM_MODEL = "hy3";
   const raw = buildHarnessOpencodeConfigContent({
     name: "t",
     model: "ignored",
@@ -663,7 +663,7 @@ test("buildHarnessOpencodeConfigContent uses LLM_* + OPENAI_BASE_URL", () => {
   assert.ok(raw);
   const parsed = JSON.parse(raw);
   assert.equal(parsed.provider["openai-compat"].options.apiKey, "sk-test");
-  assert.ok(parsed.model.includes("hy3-preview"));
+  assert.ok(parsed.model.includes("hy3"));
   if (saved.key === undefined) delete process.env.LLM_API_KEY;
   else process.env.LLM_API_KEY = saved.key;
   if (saved.url === undefined) delete process.env.OPENAI_BASE_URL;
@@ -680,7 +680,7 @@ test("buildHarnessOpencodeConfigContent skips custom LLM when model is zen", () 
   };
   process.env.LLM_API_KEY = "sk-test";
   process.env.OPENAI_BASE_URL = "https://example.com/v1";
-  process.env.LLM_MODEL = "hy3-preview";
+  process.env.LLM_MODEL = "hy3";
   assert.equal(
     buildHarnessOpencodeConfigContent({
       name: "t",
@@ -707,17 +707,17 @@ test("buildHarnessSandboxEnv injects OPENCODE_CONFIG_CONTENT from LLM_* + OPENAI
   };
   process.env.LLM_API_KEY = "sk-test";
   process.env.OPENAI_BASE_URL = "https://example.com/v1";
-  process.env.LLM_MODEL = "hy3-preview";
+  process.env.LLM_MODEL = "hy3";
   const sid = "550e8400-e29b-41d4-a716-446655440000";
   const env = buildHarnessSandboxEnv({
-    config: { name: "t", model: "hy3-preview", system: "s" },
+    config: { name: "t", model: "hy3", system: "s" },
     engine: "opencode",
     clientToolCallbackBase: "http://127.0.0.1:19090",
     acpSessionId: sid,
   });
   const oc = env.find((e) => e.Name === "OPENCODE_CONFIG_CONTENT");
   assert.ok(oc);
-  assert.ok(JSON.parse(oc.Value).model.includes("hy3-preview"));
+  assert.ok(JSON.parse(oc.Value).model.includes("hy3"));
   assert.ok(env.some((e) => e.Name === "HARNESS_RUNTIME_CALLBACK_URL"));
   if (saved.key === undefined) delete process.env.LLM_API_KEY;
   else process.env.LLM_API_KEY = saved.key;
@@ -1240,19 +1240,19 @@ test("buildHarnessSandboxEnv maps LLM_* + ANTHROPIC_BASE_URL for claude engine",
   };
   process.env.LLM_API_KEY = "sk-ant";
   process.env.ANTHROPIC_BASE_URL = "https://example.com/v1";
-  process.env.LLM_MODEL = "hy3-preview";
+  process.env.LLM_MODEL = "hy3";
   const env = buildHarnessSandboxEnv({
-    config: { name: "t", model: "hy3-preview", system: "s" },
+    config: { name: "t", model: "hy3", system: "s" },
     engine: "claude",
     clientToolCallbackBase: "http://127.0.0.1:19090",
   });
   const names = Object.fromEntries(env.map((e) => [e.Name, e.Value]));
   assert.equal(names.ANTHROPIC_AUTH_TOKEN, "sk-ant");
   assert.equal(names.ANTHROPIC_BASE_URL, "https://example.com");
-  assert.equal(names.ANTHROPIC_MODEL, "hy3-preview");
-  assert.equal(names.ANTHROPIC_DEFAULT_HAIKU_MODEL, "hy3-preview");
-  assert.equal(names.ANTHROPIC_DEFAULT_SONNET_MODEL, "hy3-preview");
-  assert.equal(names.ANTHROPIC_DEFAULT_OPUS_MODEL, "hy3-preview");
+  assert.equal(names.ANTHROPIC_MODEL, "hy3");
+  assert.equal(names.ANTHROPIC_DEFAULT_HAIKU_MODEL, "hy3");
+  assert.equal(names.ANTHROPIC_DEFAULT_SONNET_MODEL, "hy3");
+  assert.equal(names.ANTHROPIC_DEFAULT_OPUS_MODEL, "hy3");
   assert.equal(names.OPENCODE_CONFIG_CONTENT, undefined);
   if (saved.key === undefined) delete process.env.LLM_API_KEY;
   else process.env.LLM_API_KEY = saved.key;
@@ -1313,9 +1313,9 @@ test("buildHarnessSandboxEnv maps OpenAI env for hermes engine", () => {
   };
   process.env.LLM_API_KEY = "sk-openai";
   process.env.OPENAI_BASE_URL = "https://example.com/v1";
-  process.env.LLM_MODEL = "hy3-preview";
+  process.env.LLM_MODEL = "hy3";
   const env = buildHarnessSandboxEnv({
-    config: { name: "t", model: "hy3-preview", system: "s" },
+    config: { name: "t", model: "hy3", system: "s" },
     engine: "hermes",
     clientToolCallbackBase: "http://127.0.0.1:19090",
   });
@@ -1748,7 +1748,7 @@ test("platform probe quota failure is classified and documented", async () => {
   const quota = {
     ok: false,
     httpStatus: 429,
-    model: "hy3-preview",
+    model: "hy3",
     endpoint: "https://env.api.tcloudbasegateway.com/v1/ai/cloudbase/chat/completions",
     latencyMs: 12,
     error: "Token usage exceeded quota limit",

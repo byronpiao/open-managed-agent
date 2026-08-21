@@ -511,7 +511,7 @@ function classifySandboxPrompt(body) {
     return {
       kind: "relay_timeout",
       text: "",
-      hint: `箱内 opencode ACP relay ${E2E_ACP_TIMEOUT_MS}ms 仍无 LLM 输出；查 hy3-preview / OPENCODE_CONFIG，不是 sync 逻辑本身`,
+      hint: `箱内 opencode ACP relay ${E2E_ACP_TIMEOUT_MS}ms 仍无 LLM 输出；查 hy3 / OPENCODE_CONFIG，不是 sync 逻辑本身`,
     };
   }
   if (body.includes('"stopReason"') && !text.trim()) {

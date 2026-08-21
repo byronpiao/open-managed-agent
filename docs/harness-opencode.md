@@ -34,7 +34,7 @@ OpenCode 使用 **OpenAI 兼容** Chat Completions。在根字段 `model` 中配
 
 | 方式 | yaml | 说明 |
 |------|------|------|
-| **平台 AI（推荐）** | 省略 `model` 或 `model: hy3-preview` | `magent login` 后走 CloudBase AI；[购买 Token](https://docs.cloudbase.net/ai/model/openai-sdk-access) |
+| **平台 AI（推荐）** | 省略 `model` 或 `model: hy3` | `magent login` 后走 CloudBase AI；[购买 Token](https://docs.cloudbase.net/ai/model/openai-sdk-access) |
 | **zen** | `model: zen` | 箱内内置，不扣 CloudBase AI 额度 |
 | **自有模型** | 见下节 | OpenAI 兼容 endpoint + 自有 Key |
 

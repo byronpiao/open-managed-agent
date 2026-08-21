@@ -30,7 +30,7 @@ for await (const event of client.sessions.prompt(session.id, "Review this PR")) 
 |---|------------------------|----------------------------------------|
 | 执行位置 | 网关 Runtime（SCF / 云托管） | **AGS 远程沙箱**内的 OpenCode / Claude Code |
 | 典型场景 | 对话、MCP、轻量工具 | 远程 bash、读写项目文件、完整编码环境 |
-| 默认模型 | CloudBase 混元 / DeepSeek 等 | CloudBase AI **`hy3-preview`**（环境 API Key） |
+| 默认模型 | CloudBase 混元 / DeepSeek 等 | CloudBase AI **`hy3`**（环境 API Key） |
 | 配置要点 | `agent.yaml` 省略 `runtime` | `runtime: harness` + `engine: opencode` 或 `claude` |
 | 详细文档 | 下文 [快速开始](#快速开始) | [用户故事](./docs/harness-user-story.md) → [使用指南](./docs/harness-tutorial.md) |
 
@@ -57,7 +57,7 @@ for await (const event of client.sessions.prompt(session.id, "Review this PR")) 
 
 - Node.js ≥ 20
 - 腾讯云 CloudBase 环境（[创建环境](https://tcb.cloud.tencent.com)）
-- 已开通 **CloudBase AI** 并启用体验模型（沙箱 Agent 默认 `hy3-preview` 时需要）
+- 已开通 **CloudBase AI** 并启用体验模型（沙箱 Agent 默认 `hy3` 时需要）
 
 ### 1. 安装 `magent` CLI
 
@@ -166,7 +166,7 @@ for await (const event of client.sessions.prompt(session.id, "Hello!")) {
 
 | 阶段 | 配置 | 说明 |
 |------|------|------|
-| 默认 | 省略 `model` 或 `hy3-preview` | [CloudBase AI](https://docs.cloudbase.net/ai/model/model-access)，环境 **API Key**；体验额度用完后可在控制台 [购买 Token](https://docs.cloudbase.net/ai/model/openai-sdk-access) |
+| 默认 | 省略 `model` 或 `hy3` | [CloudBase AI](https://docs.cloudbase.net/ai/model/model-access)，环境 **API Key**；体验额度用完后可在控制台 [购买 Token](https://docs.cloudbase.net/ai/model/openai-sdk-access) |
 | 可选 | `model: zen` | 箱内 OpenCode 内置，**不扣** CloudBase AI 额度（仅 opencode） |
 | 可选 | yaml 中 `model` 对象 | 自有 OpenAI / Anthropic 兼容 endpoint + Key |
 
@@ -221,7 +221,7 @@ Agent 通过 `agent.yaml` 文件配置，结构兼容 [Anthropic Agent Setup](ht
 ```yaml
 # agent.yaml
 name: My Coding Agent
-model: hy3-preview
+model: hy3
 system: |
   You are a helpful coding assistant.
   You can read, write, and execute code.
@@ -291,7 +291,7 @@ sessions_collection: acp_sessions   # Session 存储的集合名，启动时自�
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `name` | string | Agent 名称 |
-| `model` | string | 模型名。可选：`hy3-preview`、`deepseek-v4-flash` 等 |
+| `model` | string | 模型名。可选：`hy3`、`deepseek-v4-flash` 等 |
 | `system` | string | System prompt，定义 Agent 行为 |
 | `description` | string | Agent 描述 |
 | `tools` | array | 工具配置（见下方详细说明） |
@@ -766,7 +766,7 @@ magent agent:create --name my-agent --env <env-id>
 | `AGENT_CONFIG_B64` | 完整 JSON 配置（Base64，由 `magent agent:update` 写入） | - |
 | `AGENT_CONFIG` | 完整 JSON 配置（明文，手动设置时可用） | - |
 | `AGENT_ENV_OVERRIDES` | `1` 时允许 `AGENT_MODEL` / `AGENT_SYSTEM` / `AGENT_NAME` 覆盖 yaml / `AGENT_CONFIG`（研发） | 关闭 |
-| `AGENT_MODEL` | 覆盖模型名（需 `AGENT_ENV_OVERRIDES=1`；无 yaml 时作为配置源） | `hy3-preview` |
+| `AGENT_MODEL` | 覆盖模型名（需 `AGENT_ENV_OVERRIDES=1`；无 yaml 时作为配置源） | `hy3` |
 | `AGENT_SYSTEM` | 覆盖 system prompt（需 `AGENT_ENV_OVERRIDES=1`；无 yaml 时作为配置源） | `You are a helpful assistant.` |
 | `AGENT_NAME` | 覆盖 agent 名称（需 `AGENT_ENV_OVERRIDES=1`；无 yaml 时作为配置源） | `open-managed-agent` |
 | `PORT` | 服务监听端口 | `9000` |
@@ -777,7 +777,7 @@ magent agent:create --name my-agent --env <env-id>
 
 | Provider | 模型 | 推荐 |
 |----------|------|------|
-| `hunyuan-exp` | `hy3-preview`, `hunyuan-turbos-latest`, `hunyuan-2.0-instruct-20251111` | ✅ `hy3-preview` |
+| `hunyuan-exp` | `hy3`, `hunyuan-turbos-latest`, `hunyuan-2.0-instruct-20251111` | ✅ `hy3` |
 | `deepseek` | `deepseek-v4-flash`, `deepseek-r1-0528` | ✅ `deepseek-v4-flash` |
 
 ---

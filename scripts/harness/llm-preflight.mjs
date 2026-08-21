@@ -64,7 +64,7 @@ export async function runHarnessLlmPreflight(scenario, opts = {}) {
               mode: "byok-openai",
               scenario: id,
               probe: byokProbe,
-              fallback: "hy3-preview quota → OpenAI BYOK",
+              fallback: "hy3 quota → OpenAI BYOK",
               protocol: "openai-chat",
             };
           }
@@ -77,7 +77,7 @@ export async function runHarnessLlmPreflight(scenario, opts = {}) {
         mode: "zen",
         scenario: id,
         probe,
-        fallback: "hy3-preview quota → opencode zen",
+        fallback: "hy3 quota → opencode zen",
         protocol: "openai-chat",
       };
     }
@@ -100,7 +100,7 @@ export async function runHarnessLlmPreflight(scenario, opts = {}) {
       const byokProbe = await probeHarnessAnthropicLlmSandboxCompat();
       if (byokProbe.ok) {
         const reason = isPlatformQuotaExceeded(platformProbe)
-          ? "hy3-preview quota → Anthropic BYOK (test only)"
+          ? "hy3 quota → Anthropic BYOK (test only)"
           : "platform unreachable → Anthropic BYOK (test only)";
         console.warn(`⚠ ${reason}\n`);
         return {

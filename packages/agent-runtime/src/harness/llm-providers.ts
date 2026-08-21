@@ -6,7 +6,7 @@
  *
  * Resolution order:
  * 1. opencode only: explicit `model: zen` → built-in zen (no host LLM injection)
- * 2. CloudBase platform AI (CLOUDBASE_APIKEY + envId, default hy3-preview)
+ * 2. CloudBase platform AI (CLOUDBASE_APIKEY + envId, default hy3)
  * 3. Custom provider (ModelSpec or explicit LLM_* / non-platform base URLs)
  */
 
@@ -19,7 +19,7 @@ export interface CompatLlmProvider {
 }
 
 /** Default CloudBase AI model for harness landing (experience / resource pack). */
-export const HARNESS_CLOUDBASE_DEFAULT_MODEL = "hy3-preview";
+export const HARNESS_CLOUDBASE_DEFAULT_MODEL = "hy3";
 
 const CLOUDBASE_AI_PATH = "/v1/ai/cloudbase";
 

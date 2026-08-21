@@ -84,7 +84,7 @@ export interface Skill {
 }
 
 export interface ModelSpec {
-  /** Model ID, e.g. 'hy3-preview' / 'deepseek-v4-flash' / 'gpt-5' */
+  /** Model ID, e.g. 'hy3' / 'deepseek-v4-flash' / 'gpt-5' */
   id: string;
   /** Optional. When omitted, the runtime routes through CloudBase TokenHub
    *  (platform billing). When set, requests use this key directly. */
@@ -395,7 +395,7 @@ export async function loadAgentConfig(
   return applyDevEnvOverrides(
     normalize({
       name: process.env.AGENT_NAME ?? "open-managed-agent",
-      model: process.env.AGENT_MODEL ?? "hy3-preview",
+      model: process.env.AGENT_MODEL ?? "hy3",
       system: process.env.AGENT_SYSTEM
         ? decodeURIComponent(process.env.AGENT_SYSTEM)
         : "You are a helpful assistant.",

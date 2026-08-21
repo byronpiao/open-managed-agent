@@ -28,7 +28,7 @@ assert.deepEqual(projectCmaInboundToDriverCommand(userMessage), inputStart);
 
 const baseYaml = {
   name: "deployed",
-  model: "hy3-preview",
+  model: "hy3",
   system: "base",
   runtime: "harness",
   engine: "opencode",

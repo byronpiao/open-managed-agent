@@ -25,7 +25,7 @@
 
   <rect x="60" y="260" width="240" height="80" rx="8" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5"/>
   <text x="180" y="288" text-anchor="middle" class="l">CloudBase AI（默认）</text>
-  <text x="180" y="308" text-anchor="middle" class="d">省略 model 或 model: hy3-preview</text>
+  <text x="180" y="308" text-anchor="middle" class="d">省略 model 或 model: hy3</text>
   <text x="180" y="326" text-anchor="middle" class="d">走 Anthropic Messages 兼容网关</text>
 
   <line x1="300" y1="190" x2="300" y2="240" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,2"/>

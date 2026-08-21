@@ -70,7 +70,7 @@ ModelSpec 字段说明（与 kernel 的 `ModelSpec` 接口对齐）：
 
 | 字段         | 类型                       | 说明                                                      |
 | ------------ | -------------------------- | --------------------------------------------------------- |
-| `id`         | `string`                   | 模型 ID，如 `hy3-preview` / `deepseek-v4-flash` / `gpt-5` |
+| `id`         | `string`                   | 模型 ID，如 `hy3` / `deepseek-v4-flash` / `gpt-5` |
 | `apiKey`     | `string?`                  | 不传则走 CloudBase 网关代理（计费走平台）；传则用自带 key |
 | `apiBaseUrl` | `string?`                  | 自带 key 时的 endpoint（任意 Anthropic-compatible 代理）  |
 | `options`    | `Record<string, unknown>?` | 透传到底层 provider 的额外选项                            |
@@ -78,12 +78,12 @@ ModelSpec 字段说明（与 kernel 的 `ModelSpec` 接口对齐）：
 只用 ID 字符串的简写形式（适用于平台模型，如混元 / DeepSeek）：
 
 ```yaml
-model: hy3-preview
+model: hy3
 ```
 
 #### 方式 2：用 CloudBase TokenHub（仅 ID 字符串场景）
 
-如果你的 `model` 是字符串（如 `hy3-preview` / `deepseek-v4-flash`），runtime 会自动走 CloudBase TokenHub。
+如果你的 `model` 是字符串（如 `hy3` / `deepseek-v4-flash`），runtime 会自动走 CloudBase TokenHub。
 在 [TokenHub 控制台](https://console.cloud.tencent.com/tokenhub) 创建 API key 并设置：
 
 ```ini
@@ -136,7 +136,7 @@ $ magent agent:create \
 ```
 Creating agent...
   name: my-agent
-  model: hy3-preview
+  model: hy3
   code: ./packages/agent-runtime
   runtime: Nodejs20.19
 
@@ -208,7 +208,7 @@ Agent: 你好！我是一个编程助手，可以帮你写代码、读写文件�
 
 ```yaml
 name: my-agent
-model: hy3-preview
+model: hy3
 system: |
   You are a dev assistant with GitHub integration.
   When asked about capabilities, mention your MCP servers, skills, and tools.
@@ -262,7 +262,7 @@ Fetching current config... OK
 
 Updated config (942 bytes):
   name: my-agent
-  model: hy3-preview
+  model: hy3
   system: You are a dev assistant with GitHub integration...
   tools: 3 items
   mcp_servers: 1 items
@@ -314,7 +314,7 @@ Deleting cloud function 'agent-my-agent-65abf85e'... OK
 
 ```yaml
 name: My Agent                    # Agent 名称
-model: hy3-preview          # 模型
+model: hy3          # 模型
 system: |                         # System Prompt
   You are a helpful assistant.
 description: Agent description    # 描述（可选）
@@ -407,7 +407,7 @@ metadata:                         # 自定义元数据（可选）
 
 | Provider    | 模型                                        | 推荐      |
 | ----------- | ------------------------------------------- | --------- |
-| `cloudbase` | `hy3-preview`, `deepseek-v4-flash`, `glm-5` | ✅ `glm-5` |
+| `cloudbase` | `hy3`, `deepseek-v4-flash`, `glm-5` | ✅ `glm-5` |
 
 ---
 

@@ -24,7 +24,7 @@
 
   <rect x="60" y="240" width="240" height="70" rx="8" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5"/>
   <text x="180" y="265" text-anchor="middle" class="l">CloudBase AI（默认）</text>
-  <text x="180" y="288" text-anchor="middle" class="d">省略 model 或 model: hy3-preview</text>
+  <text x="180" y="288" text-anchor="middle" class="d">省略 model 或 model: hy3</text>
 
   <line x1="300" y1="190" x2="300" y2="225" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,2"/>
   <line x1="300" y1="225" x2="180" y2="240" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrow)"/>

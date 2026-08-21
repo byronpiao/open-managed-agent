@@ -26,7 +26,7 @@
 ## 开始之前
 
 1. **Node.js ≥ 20**，已 [安装 `magent`](../README.md#1-安装-magent-cli)（**推荐 clone 本仓库** 后 `npm install && npm link`；下文命令均在**仓库根目录**执行）。
-2. 已有 [CloudBase 环境](https://tcb.cloud.tencent.com)，并开通 **Agent 沙箱**、**CloudBase AI**（默认模型 `hy3-preview`）。
+2. 已有 [CloudBase 环境](https://tcb.cloud.tencent.com)，并开通 **Agent 沙箱**、**CloudBase AI**（默认模型 `hy3`）。
 3. 本机执行一次：
 
 ```bash
@@ -169,7 +169,7 @@ for await (const event of client.sessions.prompt(session.id, "列出当前目录
 
 | 你想… | yaml 写法 | 适用 engine |
 |--------|-----------|-------------|
-| CloudBase 平台 AI（**推荐起步**） | 省略 `model` 或 `model: hy3-preview` | opencode、claude |
+| CloudBase 平台 AI（**推荐起步**） | 省略 `model` 或 `model: hy3` | opencode、claude |
 | 不扣 CloudBase AI 额度 | `model: zen` | **仅 opencode** |
 | 自有 LLM 厂商（BYOK） | `model:` 对象含 `id` / `apiKey` / `apiBaseUrl` | opencode → OpenAI 兼容 URL；claude → Anthropic 兼容 URL |
 

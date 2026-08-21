@@ -254,7 +254,7 @@ function llmModeLabel(mode) {
   if (mode === "zen") return "zen";
   if (mode === "byok-openai") return "BYOK OpenAI";
   if (mode === "byok-anthropic") return "BYOK Anthropic";
-  return "hy3-preview";
+  return "hy3";
 }
 
 async function runProductAcceptance(extraArgs = []) {
