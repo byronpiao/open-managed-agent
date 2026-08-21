@@ -1,7 +1,7 @@
 /**
  * Harness 矩阵 LLM 预检 — 起 AGS / deploy 前按场景协议探活。
  *
- * opencode 平台额度用尽 → 测试可 fallback zen（写 AGENT_MODEL=zen）
+ * opencode 平台额度用尽 → 测试可 fallback zen（写 AGENT_MODEL=zen + AGENT_ENV_OVERRIDES=1）
  * claude 平台额度用尽 → 测试可 fallback scenarios ③ Anthropic BYOK（对客无 zen）
  */
 import {

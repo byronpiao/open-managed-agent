@@ -389,19 +389,21 @@ magent agent:update --system "new prompt"
     └─ 4. 写入环境变量: tcb agent update <id> --env "..." (~8s)
 ```
 
-> **注意**：若 agent 携带了 `agent.yaml`，yaml 文件优先级最高，`agent:update` 通过环境变量注入的配置将被覆盖。
+> **注意**：云上 `AGENT_CONFIG_B64` 优先于磁盘 `agent.yaml`。未注入 `AGENT_CONFIG*` 时才读 yaml。
 
 ### 配置加载优先级（Runtime 内部）
 
 ```
-agent.yaml 文件                             ← 用户主动放置时生效（最高优先级）
-        ↓ fallback
 AGENT_CONFIG / AGENT_CONFIG_B64 环境变量    ← magent agent:update 写入（默认云端路径）
         ↓ fallback
-AGENT_MODEL + AGENT_SYSTEM 环境变量         ← 向后兼容
+agent.yaml 文件                             ← 本地研发 / 首次 bootstrap
+        ↓ fallback
+AGENT_MODEL + AGENT_SYSTEM 环境变量         ← 无文件时的配置源
 ```
 
-> **设计原则**：`agent.yaml.example` 作为配置模板随代码发布，默认**不包含** `agent.yaml`，因此普通部署通过 `AGENT_CONFIG_B64` 管理配置。用户如需固定配置（如 GitOps 或容器 mounting），只需 `cp agent.yaml.example agent.yaml` 即可接管优先级。
+`AGENT_MODEL` / `AGENT_SYSTEM` / `AGENT_NAME` 覆盖 yaml 或 `AGENT_CONFIG` 仅当 `AGENT_ENV_OVERRIDES=1`（研发）。
+
+> **设计原则**：`agent.yaml.example` 作为配置模板随代码发布，默认**不包含** `agent.yaml`，因此普通部署通过 `AGENT_CONFIG_B64` 管理配置。本地研发放 `agent.yaml` 即可（勿同时设 `AGENT_CONFIG*`）。
 
 ---
 
@@ -763,9 +765,10 @@ magent agent:create --name my-agent --env <env-id>
 | `CLOUDBASE_ENV_ID` | **必需**。CloudBase 环境 ID | - |
 | `AGENT_CONFIG_B64` | 完整 JSON 配置（Base64，由 `magent agent:update` 写入） | - |
 | `AGENT_CONFIG` | 完整 JSON 配置（明文，手动设置时可用） | - |
-| `AGENT_MODEL` | 覆盖模型名 | `hy3-preview` |
-| `AGENT_SYSTEM` | 覆盖 system prompt | `You are a helpful assistant.` |
-| `AGENT_NAME` | 覆盖 agent 名称 | `open-managed-agent` |
+| `AGENT_ENV_OVERRIDES` | `1` 时允许 `AGENT_MODEL` / `AGENT_SYSTEM` / `AGENT_NAME` 覆盖 yaml / `AGENT_CONFIG`（研发） | 关闭 |
+| `AGENT_MODEL` | 覆盖模型名（需 `AGENT_ENV_OVERRIDES=1`；无 yaml 时作为配置源） | `hy3-preview` |
+| `AGENT_SYSTEM` | 覆盖 system prompt（需 `AGENT_ENV_OVERRIDES=1`；无 yaml 时作为配置源） | `You are a helpful assistant.` |
+| `AGENT_NAME` | 覆盖 agent 名称（需 `AGENT_ENV_OVERRIDES=1`；无 yaml 时作为配置源） | `open-managed-agent` |
 | `PORT` | 服务监听端口 | `9000` |
 
 ---
@@ -814,7 +817,7 @@ cloudbase-managed-agent/
 │   └── agent-runtime/        # 服务端运行时（部署到 SCF）
 │       ├── src/
 │       │   ├── index.ts      # Express 服务入口
-│       │   ├── config.ts     # 配置加载（agent.yaml > AGENT_CONFIG env var > env vars）
+│       │   ├── config.ts     # 配置加载（AGENT_CONFIG > agent.yaml > env vars）
 │       │   ├── acp-endpoint.ts # ACP JSON-RPC 处理
 │       │   └── hunyuan-agent.ts # AI Agent 核心逻辑
 │       ├── agent.yaml.example  # 配置模板（cp 为 agent.yaml 后生效，优先级最高）

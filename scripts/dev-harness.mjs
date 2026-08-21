@@ -6,7 +6,7 @@
  *   magent login && tcb env use <envId>
  *   npm run dev:harness
  *
- * 模型走 agent.yaml 常规字段（AGENT_MODEL=zen），不用 harness 内部 tier env。
+ * 模型走 AGENT_MODEL=zen + AGENT_ENV_OVERRIDES=1 覆盖 yaml，不用 harness 内部 tier env。
  * COS 不挂云 bucket；本地持久化以后用临时目录方案（见 CONTRIBUTING.md）。
  */
 import { spawn, spawnSync } from "node:child_process";
@@ -14,6 +14,7 @@ import { existsSync, lstatSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEnv, applyHarnessScenario, parseHarnessEngineArg } from "./harness/load-env.mjs";
+import { applyZenLlmEnv } from "../lib/harness-llm-env.mjs";
 import {
   applyScenarioEnv,
   ensureScenarioEnvFile,
@@ -115,7 +116,7 @@ async function main() {
   childEnv.CLOUDBASE_SERVER_URL = `http://127.0.0.1:${port}`;
   childEnv.OAK_USE_MEMORY_STORE = childEnv.OAK_USE_MEMORY_STORE ?? "1";
   if (engine === "opencode") {
-    childEnv.AGENT_MODEL = "zen";
+    applyZenLlmEnv(childEnv);
   }
 
   const modelLabel = engine === "opencode" ? "zen" : "yaml/scenario";

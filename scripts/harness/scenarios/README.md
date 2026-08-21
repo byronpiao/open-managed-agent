@@ -36,9 +36,9 @@ node scripts/harness/load-env.mjs --check --probe-matrix
 
 | scenario-id | 期望 mode | 来源 | preflight 行为 |
 |-------------|-----------|------|----------------|
-| `local-opencode` | `platform` 或 `zen` | 无 scenario 或空 `.env` | hy3 OpenAI Chat；429 → `AGENT_MODEL=zen`（**仅测试**） |
+| `local-opencode` | `platform` 或 `zen` | 无 scenario 或空 `.env` | hy3 OpenAI Chat；429 → `AGENT_MODEL=zen` + `AGENT_ENV_OVERRIDES=1`（**仅测试**） |
 | `local-claude` | `platform` 或 `byok-anthropic` | `.env.local-claude` ③ | hy3 Anthropic；失败 → scenario BYOK（**仅测试**） |
-| `cloud-tcbr-opencode` | `zen` | scenario `AGENT_MODEL=zen` | 跳过 probe |
+| `cloud-tcbr-opencode` | `zen` | scenario `AGENT_MODEL=zen` + `AGENT_ENV_OVERRIDES=1` | 跳过 probe |
 | `cloud-scf-opencode` | `byok-openai` | ③ `LLM_*` + `OPENAI_BASE_URL` | OpenAI Chat probe |
 | `cloud-tcbr-claude` | `byok-anthropic` | ③ Anthropic 三键 | sandbox-compat probe |
 | `cloud-scf-claude` | `byok-anthropic` | ③ Anthropic 三键 | sandbox-compat probe |

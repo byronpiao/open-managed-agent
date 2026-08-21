@@ -9,8 +9,10 @@
  *   - managed  uses the default no-op normalize here
  *
  * Loads agent configuration from AGENT_CONFIG (cloud) or agent.yaml (local).
- * Env vars AGENT_MODEL / AGENT_SYSTEM can override YAML values.
- * Falls back to pure env vars if no YAML file is found (backward compatible).
+ * Prefer agent.yaml (or AGENT_CONFIG_B64 on cloud) for name / model / system.
+ * AGENT_NAME / AGENT_MODEL / AGENT_SYSTEM overlay those sources only when
+ * AGENT_ENV_OVERRIDES=1 — debug / test only; do not use in product deploys.
+ * Falls back to pure env vars if no YAML or AGENT_CONFIG is found.
  */
 
 import fs from "fs/promises";
@@ -284,28 +286,61 @@ export function normalizeAgentConfig(config: AgentConfig): AgentConfig {
 }
 
 /**
- * Local `.env` / `.env.harness` overrides (dev only). Applied after agent.yaml or AGENT_CONFIG_B64.
+ * True when AGENT_ENV_OVERRIDES=1.
+ * Debug / test only. Product config belongs in agent.yaml (or AGENT_CONFIG_B64).
+ */
+export function envOverridesEnabled(): boolean {
+  return process.env.AGENT_ENV_OVERRIDES?.trim() === "1";
+}
+
+/**
+ * Overlay name/model/system from env after agent.yaml or AGENT_CONFIG_B64.
+ *
+ * No-op unless AGENT_ENV_OVERRIDES=1. For local debugging and harness tests
+ * (e.g. AGENT_MODEL=zen). Do not set this in product SCF/TCBR deploys — put
+ * name, model, and system in agent.yaml instead.
  */
 export function applyDevEnvOverrides(
   config: AgentConfig,
   normalize: ConfigNormalizer = normalizeAgentConfig,
 ): AgentConfig {
+  if (!envOverridesEnabled()) return normalize(config);
   const next: AgentConfig = { ...config };
   const name = process.env.AGENT_NAME?.trim();
   const system = process.env.AGENT_SYSTEM?.trim();
   const model = process.env.AGENT_MODEL?.trim();
-  if (name) next.name = name;
-  if (system) next.system = decodeURIComponent(system);
-  if (model) next.model = model;
+  const applied: string[] = [];
+  if (name) {
+    next.name = name;
+    applied.push(`AGENT_NAME=${name}`);
+  }
+  if (system) {
+    next.system = decodeURIComponent(system);
+    applied.push("AGENT_SYSTEM");
+  }
+  if (model) {
+    next.model = model;
+    applied.push(`AGENT_MODEL=${model}`);
+  }
+  if (applied.length > 0) {
+    console.warn(
+      `[Config] AGENT_ENV_OVERRIDES=1: env overlays yaml (${applied.join(", ")})`,
+    );
+  } else {
+    console.warn(
+      `[Config] AGENT_ENV_OVERRIDES=1: on, but no AGENT_NAME/MODEL/SYSTEM set`,
+    );
+  }
   return normalize(next);
 }
 
 // ── Loader ────────────────────────────────────────────────────────────────────
 //
 //   1. AGENT_CONFIG / AGENT_CONFIG_B64（magent agent:update 写入，云上权威）
-//   2. agent.yaml / agent.yml（本地研发 / 首次 bootstrap）
-//   3. AGENT_NAME / AGENT_MODEL / AGENT_SYSTEM
-//   4. applyDevEnvOverrides — `.env` / `.env.harness` 与 yaml 重叠项（研发本地）
+//   2. agent.yaml / agent.yml（本地研发 / 首次 bootstrap；对客改配置用这个）
+//   3. AGENT_NAME / AGENT_MODEL / AGENT_SYSTEM（无文件时的配置源）
+//   4. applyDevEnvOverrides — 仅 AGENT_ENV_OVERRIDES=1（调试/测试）时覆盖 1/2
+//      对客不要用这些变量改模型或 prompt，写 agent.yaml
 
 export async function loadAgentConfig(
   normalize: ConfigNormalizer = normalizeAgentConfig,

@@ -120,7 +120,7 @@ node scripts/harness/load-env.mjs --check
 infra=local · engine=opencode · model=zen（AGENT_MODEL）· 不挂云 COS
 ```
 
-- **zen**：`agent.harness.yaml` 同款的 `model: zen`，经 `AGENT_MODEL=zen` 注入 runtime（见 `config.ts` `applyDevEnvOverrides`）
+- **zen**：`agent.harness.yaml` 同款的 `model: zen`，经 `AGENT_MODEL=zen` + `AGENT_ENV_OVERRIDES=1` 注入 runtime（见 `config.ts` `applyDevEnvOverrides`）
 - **不挂云 COS**：`devLocal` 模式忽略 `.env.harness` ⑥ 段；本地盘持久化以后走**临时目录**模拟（与云 bucket 无关）
 - **不等价**于 `harness run`：后者走 platform preflight / 合入门禁
 

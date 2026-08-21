@@ -44,6 +44,7 @@ const LLM_KEYS = [
   "OPENAI_BASE_URL",
   "ANTHROPIC_BASE_URL",
   "AGENT_MODEL",
+  "AGENT_ENV_OVERRIDES",
 ];
 
 export function parseEnvLines(content) {

@@ -15,6 +15,7 @@ import {
   assertSandboxAcquireAllowed,
   buildAgsSandboxResources,
   normalizeAgentConfig,
+  applyDevEnvOverrides,
   SandboxConfigError,
   DEFAULT_SANDBOX_RESOURCES,
   normalizeSandboxEnv,
@@ -400,6 +401,59 @@ test("resolveHarnessByokModel falls back to HARNESS_BYOK_DEFAULT_MODEL", async (
   assert.equal(resolveHarnessByokModel({ LLM_MODEL: "custom" }), "custom");
 });
 
+test("applyZenLlmEnv sets AGENT_MODEL=zen and AGENT_ENV_OVERRIDES=1", async () => {
+  const { applyZenLlmEnv, applyPlatformLlmEnv } = await import(
+    "../../lib/harness-llm-env.mjs"
+  );
+  const env = { LLM_API_KEY: "x", AGENT_MODEL: "hy3-preview" };
+  applyZenLlmEnv(env);
+  assert.equal(env.AGENT_MODEL, "zen");
+  assert.equal(env.AGENT_ENV_OVERRIDES, "1");
+  assert.equal(env.LLM_API_KEY, undefined);
+  applyPlatformLlmEnv(env);
+  assert.equal(env.AGENT_MODEL, undefined);
+  assert.equal(env.AGENT_ENV_OVERRIDES, undefined);
+});
+
+test("applyDevEnvOverrides is off unless AGENT_ENV_OVERRIDES=1", () => {
+  const saved = {
+    flag: process.env.AGENT_ENV_OVERRIDES,
+    model: process.env.AGENT_MODEL,
+    name: process.env.AGENT_NAME,
+  };
+  const warns = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => {
+    warns.push(args.map(String).join(" "));
+  };
+  const base = { name: "from-yaml", model: "hy3-preview", system: "s" };
+  try {
+    delete process.env.AGENT_ENV_OVERRIDES;
+    process.env.AGENT_MODEL = "zen";
+    process.env.AGENT_NAME = "env-name";
+    const off = applyDevEnvOverrides(base);
+    assert.equal(off.model, "hy3-preview");
+    assert.equal(off.name, "from-yaml");
+    assert.equal(warns.length, 0);
+    process.env.AGENT_ENV_OVERRIDES = "1";
+    const on = applyDevEnvOverrides(base);
+    assert.equal(on.model, "zen");
+    assert.equal(on.name, "env-name");
+    assert.equal(warns.length, 1);
+    assert.match(warns[0], /AGENT_ENV_OVERRIDES=1/);
+    assert.match(warns[0], /AGENT_MODEL=zen/);
+    assert.match(warns[0], /AGENT_NAME=env-name/);
+  } finally {
+    console.warn = origWarn;
+    if (saved.flag === undefined) delete process.env.AGENT_ENV_OVERRIDES;
+    else process.env.AGENT_ENV_OVERRIDES = saved.flag;
+    if (saved.model === undefined) delete process.env.AGENT_MODEL;
+    else process.env.AGENT_MODEL = saved.model;
+    if (saved.name === undefined) delete process.env.AGENT_NAME;
+    else process.env.AGENT_NAME = saved.name;
+  }
+});
+
 test("parseCloudCosMount and applyHarnessScenario cos axes", async () => {
   const {
     applyHarnessScenario,
@@ -469,6 +523,7 @@ test("applyHarnessScenario cloud-tcbr-opencode sets zen via AGENT_MODEL", async 
   const env = { CLOUDBASE_ENV_ID: "test-6g2rfs50c69b7fb8" };
   applyHarnessScenario("cloud-tcbr-opencode", env);
   assert.equal(env.AGENT_MODEL, "zen");
+  assert.equal(env.AGENT_ENV_OVERRIDES, "1");
   assert.equal(env.LLM_API_KEY, undefined);
 });
 

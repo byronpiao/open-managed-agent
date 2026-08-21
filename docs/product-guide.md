@@ -563,7 +563,7 @@ AGENT_CONFIG_B64 环境变量    ← magent agent:update 写入
        ↓ fallback
 agent.yaml 文件              ← 随代码部署
        ↓ fallback
-AGENT_MODEL / AGENT_SYSTEM   ← 单独环境变量
+AGENT_MODEL / AGENT_SYSTEM   ← 单独环境变量（仅 AGENT_ENV_OVERRIDES=1 时覆盖 yaml）
 ```
 
 ---
